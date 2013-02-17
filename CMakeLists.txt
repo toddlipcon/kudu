@@ -127,10 +127,14 @@ find_package( Protobuf REQUIRED )
 include_directories(${PROTOBUF_INCLUDE_DIR})
 set(LIBS ${LIBS} ${PROTOBUF_LIBRARY})
 
+## LLVM
+find_package(Llvm REQUIRED)
+include_directories(${LLVM_INCLUDE_DIR})
+set(LIBS ${LIBS} ${LLVM_MODULE_LIBS})
+
 ## Google PerfTools
 find_package( GPerf REQUIRED )
 set(LIBS ${LIBS} ${TCMALLOC_LIBRARY})
-
 
 ############################################################
 # Linker setup
