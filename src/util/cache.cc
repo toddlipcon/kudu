@@ -5,14 +5,17 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include <boost/thread/mutex.hpp>
+#include <boost/thread/shared_mutex.hpp>
+#include <boost/thread/locks.hpp>
 #include <glog/logging.h>
 #include <gutil/hash/city.h>
 
 #include <stdlib.h>
 
+#include "gutil/atomic_refcount.h"
 #include "util/cache.h"
 #include "util/pthread_spinlock.h"
-
+#include "util/percpu_rwlock.h"
 namespace kudu {
 
 Cache::~Cache() {
@@ -22,358 +25,138 @@ namespace {
 
 typedef PThreadSpinLock MutexType;
 
-#define USE_GOOGLE_LRU        0
-#if USE_GOOGLE_LRU
-// LRU cache implementation
-
-// An entry is a variable length heap-allocated structure.  Entries
-// are kept in a circular doubly linked list ordered by access time.
-struct CacheHandle {
-  void* value;
-  void (*deleter)(const Slice&, void* value);
-  CacheHandle* next_hash;
-  CacheHandle* next;
-  CacheHandle* prev;
-  size_t charge;      // TODO(opt): Only allow uint32_t?
-  size_t key_length;
-  uint32_t refs;
-  uint32_t key_hash;      // Hash of key(); used for fast sharding and comparisons
-  uint8_t key_data[1];   // Beginning of key
-
-  Slice key() const {
-    // For cheaper lookups, we allow a temporary Handle object
-    // to store a pointer to a key in "value".
-    if (next == this) {
-      return *(reinterpret_cast<Slice*>(value));
-    } else {
-      return Slice(key_data, key_length);
-    }
-  }
-};
-
-// We provide our own simple hash table since it removes a whole bunch
-// of porting hacks and is also faster than some of the built-in hash
-// table implementations in some of the compiler/runtime combinations
-// we have tested.  E.g., readrandom speeds up by ~5% over the g++
-// 4.4.3's builtin hashtable.
-class HandleTable {
- public:
-  HandleTable() : length_(0), elems_(0), list_(NULL) { Resize(); }
-  ~HandleTable() { delete[] list_; }
-
-  CacheHandle* Lookup(const Slice& key, uint32_t hash) {
-    return *FindPointer(key, hash);
-  }
-
-  CacheHandle* Insert(CacheHandle* h) {
-    CacheHandle** ptr = FindPointer(h->key(), h->key_hash);
-    CacheHandle* old = *ptr;
-    h->next_hash = (old == NULL ? NULL : old->next_hash);
-    *ptr = h;
-    if (old == NULL) {
-      ++elems_;
-      if (elems_ > length_) {
-        // Since each cache entry is fairly large, we aim for a small
-        // average linked list length (<= 1).
-        Resize();
-      }
-    }
-    return old;
-  }
-
-  CacheHandle* Remove(const Slice& key, uint32_t hash) {
-    CacheHandle** ptr = FindPointer(key, hash);
-    CacheHandle* result = *ptr;
-    if (result != NULL) {
-      *ptr = result->next_hash;
-      --elems_;
-    }
-    return result;
-  }
-
- private:
-  // The table consists of an array of buckets where each bucket is
-  // a linked list of cache entries that hash into the bucket.
-  uint32_t length_;
-  uint32_t elems_;
-  CacheHandle** list_;
-
-  // Return a pointer to slot that points to a cache entry that
-  // matches key/hash.  If there is no such cache entry, return a
-  // pointer to the trailing slot in the corresponding linked list.
-  CacheHandle** FindPointer(const Slice& key, uint32_t hash) {
-    CacheHandle** ptr = &list_[hash & (length_ - 1)];
-    while (*ptr != NULL &&
-           ((*ptr)->key_hash != hash || key != (*ptr)->key())) {
-      ptr = &(*ptr)->next_hash;
-    }
-    return ptr;
-  }
-
-  void Resize() {
-    uint32_t new_length = 4;
-    while (new_length < elems_) {
-      new_length *= 2;
-    }
-    CacheHandle** new_list = new CacheHandle*[new_length];
-    memset(new_list, 0, sizeof(new_list[0]) * new_length);
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < length_; i++) {
-      CacheHandle* h = list_[i];
-      while (h != NULL) {
-        CacheHandle* next = h->next_hash;
-        uint32_t hash = h->key_hash;
-        CacheHandle** ptr = &new_list[hash & (new_length - 1)];
-        h->next_hash = *ptr;
-        *ptr = h;
-        h = next;
-        count++;
-      }
-    }
-    DCHECK_EQ(elems_, count);
-    delete[] list_;
-    list_ = new_list;
-    length_ = new_length;
-  }
-};
-
-// A single shard of sharded cache.
-class LRUCache {
- public:
-  LRUCache();
-  ~LRUCache();
-
-  // Separate from constructor so caller can easily make an array of LRUCache
-  void SetCapacity(size_t capacity) { capacity_ = capacity; }
-
-  // Like Cache methods, but with an extra "hash" parameter.
-  Cache::Handle* Insert(const Slice& key, uint32_t hash,
-                        void* value, size_t charge,
-                        void (*deleter)(const Slice& key, void* value));
-  Cache::Handle* Lookup(const Slice& key, uint32_t hash);
-  void Release(Cache::Handle* handle);
-  void Erase(const Slice& key, uint32_t hash);
-
- private:
-  void LRU_Remove(CacheHandle* e);
-  void LRU_Append(CacheHandle* e);
-  void Unref(CacheHandle* e);
-
-  // Initialized before use.
-  size_t capacity_;
-
-  // mutex_ protects the following state.
-  MutexType mutex_;
-  size_t usage_;
-  uint64_t last_id_;
-
-  // Dummy head of LRU list.
-  // lru.prev is newest entry, lru.next is oldest entry.
-  CacheHandle lru_;
-
-  HandleTable table_;
-};
-
-LRUCache::LRUCache()
-    : usage_(0),
-      last_id_(0) {
-  // Make empty circular linked list
-  lru_.next = &lru_;
-  lru_.prev = &lru_;
-}
-
-LRUCache::~LRUCache() {
-  for (CacheHandle* e = lru_.next; e != &lru_; ) {
-    CacheHandle* next = e->next;
-    DCHECK_EQ(e->refs, 1);  // Error if caller has an unreleased handle
-    Unref(e);
-    e = next;
-  }
-}
-
-void LRUCache::Unref(CacheHandle* e) {
-  DCHECK_GT(e->refs, 0);
-  e->refs--;
-  if (e->refs <= 0) {
-    usage_ -= e->charge;
-    (*e->deleter)(e->key(), e->value);
-    free(e);
-  }
-}
-
-void LRUCache::LRU_Remove(CacheHandle* e) {
-  e->next->prev = e->prev;
-  e->prev->next = e->next;
-}
-
-void LRUCache::LRU_Append(CacheHandle* e) {
-  // Make "e" newest entry by inserting just before lru_
-  e->next = &lru_;
-  e->prev = lru_.prev;
-  e->prev->next = e;
-  e->next->prev = e;
-}
-
-Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash) {
-  boost::lock_guard<MutexType> l(mutex_);
-  CacheHandle* e = table_.Lookup(key, hash);
-  if (e != NULL) {
-    e->refs++;
-    LRU_Remove(e);
-    LRU_Append(e);
-  }
-  return reinterpret_cast<Cache::Handle*>(e);
-}
-
-void LRUCache::Release(Cache::Handle* handle) {
-  boost::lock_guard<MutexType> l(mutex_);
-  Unref(reinterpret_cast<CacheHandle*>(handle));
-}
-
-Cache::Handle* LRUCache::Insert(
-    const Slice& key, uint32_t hash, void* value, size_t charge,
-    void (*deleter)(const Slice& key, void* value)) {
-  boost::lock_guard<MutexType> l(mutex_);
-
-  CacheHandle* e = reinterpret_cast<CacheHandle*>(
-      malloc(sizeof(CacheHandle)-1 + key.size()));
-  e->value = value;
-  e->deleter = deleter;
-  e->charge = charge;
-  e->key_length = key.size();
-  e->key_hash = hash;
-  e->refs = 2;  // One from LRUCache, one for the returned handle
-  memcpy(e->key_data, key.data(), key.size());
-  LRU_Append(e);
-  usage_ += charge;
-
-  CacheHandle* old = table_.Insert(e);
-  if (old != NULL) {
-    LRU_Remove(old);
-    Unref(old);
-  }
-
-  while (usage_ > capacity_ && lru_.next != &lru_) {
-    CacheHandle* old = lru_.next;
-    LRU_Remove(old);
-    table_.Remove(old->key(), old->key_hash);
-    Unref(old);
-  }
-
-  return reinterpret_cast<Cache::Handle*>(e);
-}
-
-void LRUCache::Erase(const Slice& key, uint32_t hash) {
-  boost::lock_guard<MutexType> l(mutex_);
-  CacheHandle* e = table_.Remove(key, hash);
-  if (e != NULL) {
-    LRU_Remove(e);
-    Unref(e);
-  }
-}
-#else
-/* ================================================================================================
+/* ============================================================================
+ *  Read-Write lock. 32bit uint that contains the number of readers.
+ *  When someone wants to write, tries to set the 32bit, and waits until
+ *  the readers have finished. Readers are spinning while the write flag is set.
  */
-#define NoBarrier_AtomicIncrement       __sync_add_and_fetch
-#define Acquire_CompareAndSwap          __sync_val_compare_and_swap
-
-#define RefCountInc(x)                  __sync_add_and_fetch(x, 1)
-#define RefCountDec(x)                  __sync_sub_and_fetch(x, 1)
-
-typedef uint32_t Atomic64;
-typedef uint32_t Atomic32;
+#if 0
+  #define CompareAndSwap          __sync_val_compare_and_swap
+  #define AtomicIncrement         __sync_add_and_fetch
+  #define RefCountInc(x)          AtomicIncrement(x, 1)
+  #define RefCountDec(x)          AtomicIncrement(x, -1)
+#else
+  #define CompareAndSwap          base::subtle::Acquire_CompareAndSwap
+  #define AtomicIncrement         base::subtle::Barrier_AtomicIncrement
+  #define RefCountInc(x)          base::RefCountInc(x)
+  #define RefCountDec(x)          base::RefCountDec(x)
+#endif
 
 class RwLock {
   public:
     RwLock() : state_(0) {}
     ~RwLock() {}
 
-    void ReadLock() {
+    void lock_shared() {
       Atomic32 new_state;
       Atomic32 expected;
-      do {
+      int loop_count = 0;
+      while (true) {
         expected = state_ & 0x7fffffff;   // I expect no write lock
         new_state = expected + 1;         // Add me as reader
-      } while (Acquire_CompareAndSwap(&state_, expected, new_state) != expected);
+        if (CompareAndSwap(&state_, expected, new_state) == expected)
+          break;
+        // Either was already locked by someone else, or CAS failed.
+        boost::detail::yield(loop_count++);
+      }
     }
 
-    void ReadUnlock() {
+    void unlock_shared() {
       Atomic32 new_state;
       Atomic32 expected;
-      do {
+      int loop_count = 0;
+      while (true) {
         expected = state_;          // I expect a write lock and other readers
         new_state = expected - 1;   // Drop me as reader
-      } while (Acquire_CompareAndSwap(&state_, expected, new_state) != expected);
+        if (CompareAndSwap(&state_, expected, new_state) == expected)
+          break;
+        // Either was already locked by someone else, or CAS failed.
+        boost::detail::yield(loop_count++);
+      }
     }
 
-    bool WriteTryLock() {
+    bool try_lock() {
       Atomic32 expected = state_ & 0x7fffffff;    // I expect some 0+ readers
       Atomic32 new_state = (1 << 31) | expected;  // I want to lock the other writers
-      if (Acquire_CompareAndSwap(&state_, expected, new_state) != expected)
+      if (CompareAndSwap(&state_, expected, new_state) != expected)
         return false;
 
       // Wait pending reads
-      while ((state_ & 0x7fffffff) > 0) /* cpu_relax(); */;
+      int loop_count = 0;
+      while ((state_ & 0x7fffffff) > 0)
+        boost::detail::yield(loop_count++);
 
       return true;
     }
 
-    void WriteLock() {
-      while (!WriteTryLock());
+    void lock() {
+      int loop_count = 0;
+      while (!try_lock())
+        boost::detail::yield(loop_count++);
     }
 
-    void WriteUnlock() {
-      Atomic32 new_state;
-      Atomic32 expected;
-      do {
-        expected = 1 << 31;  // I expect to be the only writer
-        new_state = 0;       // reset: no writers/no readers
-      } while (Acquire_CompareAndSwap(&state_, expected, new_state) != expected);
+    void unlock() {
+      // I expect to be the only writer
+      DCHECK_EQ(state_, 1 << 31);
+      // reset: no writers/no readers
+      state_ = 0;
     }
 
   private:
-    Atomic32 state_;
+     volatile Atomic32 state_;
 };
 
-enum entry_states {
+enum CacheEntryStates {
   CACHE_ENTRY_IS_NEW,
   CACHE_ENTRY_IS_EVICTED,
   CACHE_ENTRY_IS_REPLACED,
   /* LRU */
   CACHE_ENTRY_IS_IN_LRU_QUEUE,
-  /* 2Q */
-  CACHE_ENTRY_IS_IN_2Q_AM,
-  CACHE_ENTRY_IS_IN_2Q_A1IN,
-  CACHE_ENTRY_IS_IN_2Q_A1OUT,
   /* Freq */
   CACHE_ENTRY_IS_IN_FREQ_ACTIVE,
   CACHE_ENTRY_IS_IN_FREQ_INACTIVE,
 };
 
 struct CacheHandle {
-  Atomic64 freq;
-  Atomic32 refs;
-  uint32_t state;
+  volatile Atomic32 refs;     // number of users that are referencing this object + the cache
+  CacheEntryStates state;     // entry state, used by the cache policy or debug
 
-  CacheHandle *hash;
-  CacheHandle *next;
-  CacheHandle *prev;
+  volatile base::subtle::Atomic64 freq; // number of times this item was requested
+  uint64_t time;              // time of the last hit
 
-  uint32_t key_hash;
-  uint32_t charge;
-  size_t key_size;
-  void *value;
+  CacheHandle *ht_next;       // Pointer to the next entry in the same hash table bucket
+  CacheHandle *queue_next;    // Pointer to the next entry in the queue (LRU, ...)
+  CacheHandle *queue_prev;    // Pointer to the previous entry in the queue (LRU, ...)
+
+  uint32_t key_hash;          // Hash of the key, used to lookup the hash table bucket
+  uint64_t charge;            // space taken in the cache
+  size_t key_size;            // key_data size
+  void *value;                // Value associated with this entry
+
+  // called when the element is removed from the cache.
+  // The user is responsible to delete the "value".
   void (*deleter)(const Slice&, void* value);
-  uint8_t key_data[1];
+
+  // called when the element becames hot. (used by the freq cache)
+  // The user is responsible to replace/delete the "value" and return the new one.
+  void *(*hot)(const Slice&, void* value);
+
+  uint8_t key_data[1];        // key of the entry, allocated as part of the CacheHandle
 
   Slice key() const {
     return Slice(key_data, key_size);
   }
 
-  bool isDeletable() const {
+  bool is_deletable() const {
     return state == CACHE_ENTRY_IS_EVICTED || state == CACHE_ENTRY_IS_REPLACED;
   }
 };
+
+static uint64_t GetCurrentTime(void) {
+  struct timeval now;
+  gettimeofday(&now, NULL);
+  return(now.tv_sec * 1000000ull + now.tv_usec);
+}
 
 /* ===========================================================================
  *  Hash Table
@@ -381,7 +164,7 @@ struct CacheHandle {
  *  Each node has a rwlock taken during each operation.
  */
 #if 1
-class BucketLock : public RwLock { };
+#define BucketLock    RwLock
 #else
 class BucketLock {
 public:
@@ -396,12 +179,32 @@ private:
 };
 #endif
 
+#if 1
+  #define TableRwLock   RwLock
+#else
+class TableRwLock {
+  public:
+    TableRwLock() {}
+    ~TableRwLock() {}
+
+    void lock_shared() { lock_.get_lock().lock(); }
+    void unlock_shared() { lock_.get_lock().unlock(); }
+    bool try_lock() { return lock_.try_lock(); }
+    void lock() { lock_.lock(); }
+    void unlock() { lock_.unlock(); }
+
+  private:
+    percpu_rwlock lock_;
+};
+#endif
+
 class HandleTable {
   private:
     struct Bucket {
       BucketLock lock;
-      CacheHandle *entry;
-      Bucket() : entry(NULL) {}
+      // First entry chained from this bucket, or NULL if the bucket is empty.
+      CacheHandle *chain_head;
+      Bucket() : chain_head(NULL) {}
     };
 
   public:
@@ -415,13 +218,13 @@ class HandleTable {
 
   private:
     Bucket *FindBucket (uint32_t hash) {
-      return &(list_[hash & mask_]);
+      return &(buckets_[hash & mask_]);
     }
 
     CacheHandle **FindHandle (Bucket *bucket, const Slice& key, uint32_t hash) {
-      CacheHandle **node = &(bucket->entry);
+      CacheHandle **node = &(bucket->chain_head);
       while (*node && ((*node)->key_hash != hash || key != (*node)->key())) {
-        node = &((*node)->hash);
+        node = &((*node)->ht_next);
       }
       return node;
     }
@@ -429,48 +232,50 @@ class HandleTable {
     void Resize();
 
   private:
-    RwLock lock_;
-    size_t mask_;
-    size_t used_;
-    size_t size_;
-    Bucket *list_;
+    TableRwLock lock_;      // table rwlock used as write on resize
+    uint64_t mask_;         // size - 1 used to lookup the bucket (hash & mask_)
+    uint64_t size_;         // number of bucket in the table
+    gscoped_array<Bucket> buckets_;              // table buckets
+    volatile base::subtle::Atomic64 item_count_; // number of items in the table
 };
 
 HandleTable::HandleTable()
-  : mask_(0), used_(0), size_(0), list_(NULL)
+  : mask_(0), size_(0), item_count_(0)
 {
   Resize();
 }
 
 HandleTable::~HandleTable() {
-  delete[] list_;
 }
 
 CacheHandle *HandleTable::Insert(CacheHandle *entry) {
-  lock_.ReadLock();
-  Bucket *bucket = FindBucket(entry->key_hash);
-  bucket->lock.WriteLock();
-  CacheHandle **node = FindHandle(bucket, entry->key(), entry->key_hash);
-  CacheHandle *old = *node;
-  *node = entry;
-  if (old != NULL) {
-    DCHECK(!old->isDeletable());
-    entry->hash = old->hash;
-    entry->freq = old->freq;
-    entry->state = old->state;
-    old->state = CACHE_ENTRY_IS_REPLACED;
-  } else {
-    entry->hash = NULL;
-    entry->state = CACHE_ENTRY_IS_NEW;
-  }
-  bucket->lock.WriteUnlock();
-  lock_.ReadUnlock();
+  CacheHandle *old;
 
-  if (old == NULL && NoBarrier_AtomicIncrement(&used_, 1) > size_) {
+  {
+    boost::shared_lock<TableRwLock> table_rdlock(lock_);
+    Bucket *bucket = FindBucket(entry->key_hash);
+    {
+      boost::unique_lock<BucketLock> bucket_wrlock(bucket->lock);
+      CacheHandle **node = FindHandle(bucket, entry->key(), entry->key_hash);
+      old = *node;
+      *node = entry;
+      if (old != NULL) {
+        DCHECK(!old->is_deletable());
+        entry->ht_next = old->ht_next;
+        entry->state = old->state;
+        old->state = CACHE_ENTRY_IS_REPLACED;
+      } else {
+        entry->ht_next = NULL;
+        entry->state = CACHE_ENTRY_IS_NEW;
+      }
+    }
+  }
+
+  if (old == NULL && AtomicIncrement(&item_count_, 1) > size_) {
     // if we can't take the lock, means that someone else is resizing
-    if (lock_.WriteTryLock()) {
+    if (lock_.try_lock()) {
       Resize();
-      lock_.WriteUnlock();
+      lock_.unlock();
     }
   }
 
@@ -478,63 +283,70 @@ CacheHandle *HandleTable::Insert(CacheHandle *entry) {
 }
 
 CacheHandle *HandleTable::Lookup(const Slice& key, uint32_t hash) {
-  CacheHandle *entry;
-  lock_.ReadLock();
+  boost::shared_lock<TableRwLock> table_rdlock(lock_);
   Bucket *bucket = FindBucket(hash);
-  bucket->lock.ReadLock();
-  if ((entry = *FindHandle(bucket, key, hash)) != NULL) {
-    DCHECK(!entry->isDeletable());
-    RefCountInc(&(entry->refs));
+  {
+    boost::shared_lock<BucketLock> bucket_rdlock(bucket->lock);
+    CacheHandle *entry = *FindHandle(bucket, key, hash);
+    if (entry != NULL) {
+      DCHECK(!entry->is_deletable());
+      RefCountInc(&(entry->refs));
+      return entry;
+    }
   }
-  bucket->lock.ReadUnlock();
-  lock_.ReadUnlock();
-  return entry;
+  return NULL;
 }
 
 CacheHandle *HandleTable::Remove(const Slice& key, uint32_t hash) {
-  CacheHandle **node;
   CacheHandle *entry;
-  lock_.ReadLock();
-  Bucket *bucket = FindBucket(hash);
-  bucket->lock.WriteLock();
-  node = FindHandle(bucket, key, hash);
-  if ((entry = *node) != NULL) {
-    DCHECK(!entry->isDeletable());
-    *node = entry->hash;
-    RefCountInc(&(entry->refs));
+
+  {
+    boost::shared_lock<TableRwLock> table_rdlock(lock_);
+    Bucket *bucket = FindBucket(hash);
+    {
+      boost::unique_lock<BucketLock> bucket_wrlock(bucket->lock);
+      CacheHandle **node = FindHandle(bucket, key, hash);
+      if ((entry = *node) != NULL) {
+        DCHECK(!entry->is_deletable());
+        *node = entry->ht_next;
+        RefCountInc(&(entry->refs));
+      }
+    }
   }
-  bucket->lock.WriteUnlock();
-  lock_.ReadUnlock();
+
   if (entry != NULL)
-    NoBarrier_AtomicIncrement(&used_, -1);
+    AtomicIncrement(&item_count_, -1);
   return entry;
 }
 
 bool HandleTable::Remove(CacheHandle *entry) {
-  CacheHandle **node;
   bool found = false;
-  lock_.ReadLock();
-  Bucket *bucket = FindBucket(entry->key_hash);
-  bucket->lock.WriteLock();
-  for (node = &(bucket->entry); *node != NULL; node = &((*node)->hash)) {
-    if (*node == entry) {
-      *node = entry->hash;
-      entry->state = CACHE_ENTRY_IS_EVICTED;
-      found = true;
-      break;
+
+  {
+    boost::shared_lock<TableRwLock> table_rdlock(lock_);
+    Bucket *bucket = FindBucket(entry->key_hash);
+    {
+      boost::unique_lock<BucketLock> bucket_wrlock(bucket->lock);
+      for (CacheHandle **node = &(bucket->chain_head); *node != NULL; node = &((*node)->ht_next)) {
+        if (*node == entry) {
+          *node = entry->ht_next;
+          entry->state = CACHE_ENTRY_IS_EVICTED;
+          found = true;
+          break;
+        }
+      }
     }
   }
-  bucket->lock.WriteUnlock();
-  lock_.ReadUnlock();
+
   if (found)
-    NoBarrier_AtomicIncrement(&used_, -1);
+    AtomicIncrement(&item_count_, -1);
   return found;
 }
 
 void HandleTable::Resize() {
   // Calculate a new table size
   size_t new_size = 4;
-  while (new_size < used_) {
+  while (new_size < item_count_) {
     new_size <<= 1;
   }
 
@@ -542,74 +354,74 @@ void HandleTable::Resize() {
     return;
 
   // Allocate a new bucket list
-  Bucket *new_list = new Bucket[new_size];
+  gscoped_array<Bucket> new_buckets(new Bucket[new_size]);
   size_t new_mask = new_size - 1;
-  if (list_ != NULL) {
-    // Copy entries
-    for (size_t i = 0; i < size_; ++i) {
-      CacheHandle *p = list_[i].entry;
-      while (p != NULL) {
-        CacheHandle *next = p->hash;
 
-        // Insert Entry
-        Bucket *bucket = &(new_list[p->key_hash & new_mask]);
-        p->hash = bucket->entry;
-        bucket->entry = p;
+  // Copy entries
+  for (size_t i = 0; i < size_; ++i) {
+    CacheHandle *p = buckets_[i].chain_head;
+    while (p != NULL) {
+      CacheHandle *queue_next = p->ht_next;
 
-        p = next;
-      }
+      // Insert Entry
+      Bucket *bucket = &(new_buckets[p->key_hash & new_mask]);
+      p->ht_next = bucket->chain_head;
+      bucket->chain_head = p;
+
+      p = queue_next;
     }
-    // Delete the old bucket
-    delete[] list_;
   }
 
   // Swap the bucket
   mask_ = new_mask;
   size_ = new_size;
-  list_ = new_list;
+  buckets_.swap(new_buckets);
 }
 
 /* ===========================================================================
  *  List
  */
-#define __list_init(list)                       \
-  do {                                          \
-    (list)->next = list;                        \
-    (list)->prev = list;                        \
+#define __list_init(list)                                       \
+  do {                                                          \
+    (list)->queue_next = list;                                  \
+    (list)->queue_prev = list;                                  \
   } while (0)
 
-#define __list_add(inew, iprev, inext)          \
-  do {                                          \
-    (inew)->next = inext;                       \
-    (inew)->prev = iprev;                       \
-    (inext)->prev = inew;                       \
-    (iprev)->next = inew;                       \
+#define __list_add(inew, iqueue_prev, iqueue_next)              \
+  do {                                                          \
+    (inew)->queue_next = iqueue_next;                           \
+    (inew)->queue_prev = iqueue_prev;                           \
+    (iqueue_next)->queue_prev = inew;                           \
+    (iqueue_prev)->queue_next = inew;                           \
   } while (0)
 
-#define __list_del(iprev, inext)                \
-  do {                                          \
-    (inext)->prev = iprev;                      \
-    (iprev)->next = inext;                      \
+#define __list_del(iqueue_prev, iqueue_next)                    \
+  do {                                                          \
+    (iqueue_next)->queue_prev = iqueue_prev;                    \
+    (iqueue_prev)->queue_next = iqueue_next;                    \
   } while (0)
 
-#define list_add(inew, head)                    \
-  __list_add(inew, head, (head)->next)
+#define list_add(inew, head)                                    \
+  __list_add(inew, head, (head)->queue_next)
 
-#define list_del(entry)                         \
-  do {                                          \
-    __list_del((entry)->prev, (entry)->next);   \
-    __list_init(entry);                         \
+#define list_del(entry)                                         \
+  do {                                                          \
+    __list_del((entry)->queue_prev, (entry)->queue_next);       \
+    __list_init(entry);                                         \
   } while (0);
 
-#define list_move(list, head)                   \
-  do {                                          \
-    __list_del((list)->prev, (list)->next);     \
-    list_add(list, head);                       \
+#define list_move(list, head)                                   \
+  do {                                                          \
+    __list_del((list)->queue_prev, (list)->queue_next);         \
+    list_add(list, head);                                       \
   } while (0);
 
-#define list_for_each_safe(pos, n, head)        \
-  for (pos = (head)->next, n = (pos)->next;     \
-       pos != (head); pos = n, n = (pos)->next)
+#define list_for_each(pos, head)                                \
+  for (pos = (head)->queue_next; pos != (head); pos = (pos)->queue_next)
+
+#define list_for_each_safe(pos, n, head)                        \
+  for (pos = (head)->queue_next, n = (pos)->queue_next;         \
+       pos != (head); pos = n, n = (pos)->queue_next)
 
 /* ===========================================================================
  *  Cache
@@ -621,7 +433,8 @@ class AbstractCache {
     virtual ~AbstractCache();
 
     Cache::Handle *Insert (const Slice& key, uint32_t hash, void *value, size_t charge,
-                           void (*deleter)(const Slice& key, void* value));
+                           void (*deleter)(const Slice& key, void* value),
+                           void *(*hot)(const Slice& key, void* value));
     Cache::Handle *Lookup (const Slice& key, uint32_t hash);
     void Erase (const Slice& key, uint32_t hash);
 
@@ -637,23 +450,26 @@ class AbstractCache {
       return capacity_;
     }
 
-    uint64_t usage (void) const {
-      return usage_;
+    uint64_t space_used (void) const {
+      return space_used_;
     }
 
   private:
     CacheHandle *CreateNewHandle(const Slice& key, uint32_t hash, void *value, size_t charge,
-                                 void (*deleter)(const Slice& key, void* value));
+                                 void (*deleter)(const Slice& key, void* value),
+                                 void *(*hot)(const Slice& key, void* value));
+    void EntryIsHot(CacheHandle *entry);
     void EntryUnref(CacheHandle *entry);
     void EntryReclaim(CacheHandle *entry);
 
   private:
-    Atomic64 hit_;
-    Atomic64 miss_;
-    Atomic64 usage_;
-    uint64_t capacity_;
-    HandleTable table_;
-    CachePolicy *policy_;
+     volatile base::subtle::Atomic64 hit_count_;    // Number of lookups with the element found
+     volatile base::subtle::Atomic64 miss_count_;   // Number of lookups with the element not found
+     volatile base::subtle::Atomic64 space_used_;   // Space used, accumulated from entry->charge
+
+    uint64_t capacity_;       // Total Space available in the cache
+    HandleTable table_;       // Hash Table
+    CachePolicy *policy_;     // Pluggable Cache Policy (LRU, Freq, ...)
     friend class CachePolicy;
 };
 
@@ -668,6 +484,10 @@ class CachePolicy {
     virtual void Erase (AbstractCache *cache) = 0;
 
   protected:
+    void EntryIsHot(AbstractCache *cache, CacheHandle *entry) {
+      cache->EntryIsHot(entry);
+    }
+
     void EntryUnref(AbstractCache *cache, CacheHandle *entry) {
       cache->EntryUnref(entry);
     }
@@ -678,10 +498,10 @@ class CachePolicy {
 };
 
 /* ===========================================================================
- *  Cache
+ *  Abstract Cache helpers.
  */
 AbstractCache::AbstractCache(CachePolicy *policy)
-  : hit_(0), miss_(0), usage_(0), capacity_(0), policy_(policy)
+  : hit_count_(0), miss_count_(0), space_used_(0), capacity_(0), policy_(policy)
 {
 }
 
@@ -691,8 +511,9 @@ AbstractCache::~AbstractCache() {
 }
 
 Cache::Handle *AbstractCache::Insert(const Slice& key, uint32_t hash, void *value, size_t charge,
-                                     void (*deleter)(const Slice& key, void* value)) {
-  CacheHandle *entry = CreateNewHandle(key, hash, value, charge, deleter);
+                                     void (*deleter)(const Slice& key, void* value),
+                                     void *(*hot)(const Slice& key, void* value)) {
+  CacheHandle *entry = CreateNewHandle(key, hash, value, charge, deleter, hot);
   CacheHandle *old = table_.Insert(entry);
   policy_->Insert(this, entry, old);
   if (old != NULL) {
@@ -709,10 +530,11 @@ Cache::Handle *AbstractCache::Insert(const Slice& key, uint32_t hash, void *valu
 Cache::Handle *AbstractCache::Lookup(const Slice& key, uint32_t hash) {
   CacheHandle *entry;
   if ((entry = table_.Lookup(key, hash)) != NULL) {
+    entry->time = GetCurrentTime();
     policy_->Update(this, entry);
-    NoBarrier_AtomicIncrement(&hit_, 1);
+    AtomicIncrement(&hit_count_, 1);
   } else {
-    NoBarrier_AtomicIncrement(&miss_, 1);
+    AtomicIncrement(&miss_count_, 1);
   }
   return reinterpret_cast<Cache::Handle *>(entry);
 }
@@ -726,21 +548,24 @@ void AbstractCache::Erase(const Slice& key, uint32_t hash) {
 }
 
 CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, void *value,
-    size_t charge, void (*deleter)(const Slice& key, void* value)) {
+    size_t charge, void (*deleter)(const Slice& key, void* value),
+    void *(*hot)(const Slice& key, void* value)) {
   CacheHandle *entry = reinterpret_cast<CacheHandle*>(malloc(sizeof(CacheHandle)-1 + key.size()));
 
   entry->value = value;
   entry->deleter = deleter;
+  entry->hot = hot;
 
   // One from the cache, one for the user returned pointer and one for the lookup func
   entry->refs = 3;
-
-  entry->freq = 0;
   entry->state = CACHE_ENTRY_IS_NEW;
 
-  entry->hash = NULL;
-  entry->next = entry;
-  entry->prev = entry;
+  entry->freq = 0;
+  entry->time = GetCurrentTime();
+
+  entry->ht_next = NULL;
+  entry->queue_next = entry;
+  entry->queue_prev = entry;
 
   entry->key_hash = hash;
   entry->charge = charge;
@@ -748,14 +573,26 @@ CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, voi
 
   memcpy(entry->key_data, key.data(), key.size());
 
-  NoBarrier_AtomicIncrement(&usage_, charge);
+  AtomicIncrement(&space_used_, charge);
   return(entry);
+}
+
+void AbstractCache::EntryIsHot(CacheHandle *entry) {
+  if (entry->hot == NULL)
+    return;
+
+  void *new_value = entry->hot(entry->key(), entry->value);
+  if (new_value != NULL) {
+    // the user has returned a new value as replacement for the old one.
+    // the user is repsponsible for calling the deleter on the value.
+    entry->value = new_value;
+  }
 }
 
 void AbstractCache::EntryUnref(CacheHandle *entry) {
   DCHECK_GT(entry->refs, 0);
-  if (!RefCountDec(&(entry->refs))) {
-    NoBarrier_AtomicIncrement(&usage_, -entry->charge);
+  if (RefCountDec(&(entry->refs)) == 0) {
+    AtomicIncrement(&space_used_, -(entry->charge));
     entry->deleter(entry->key(), entry->value);
     free(entry);
   }
@@ -786,7 +623,7 @@ class LRUCachePolicy : public CachePolicy {
     }
 
     void Insert (AbstractCache *cache, CacheHandle *entry, CacheHandle *old) {
-      mutex_.lock();
+      boost::lock_guard<MutexType> lock(mutex_);
       if (old != NULL)
         list_del(old);
       if (entry->state == CACHE_ENTRY_IS_NEW) {
@@ -797,34 +634,32 @@ class LRUCachePolicy : public CachePolicy {
         /* Move to the head of LRU */
         list_move(entry, &lru_);
       }
-      mutex_.unlock();
     }
 
     void Update(AbstractCache *cache, CacheHandle *entry) {
-      mutex_.lock();
+      boost::lock_guard<MutexType> lock(mutex_);
       if (entry->state != CACHE_ENTRY_IS_REPLACED)
         list_move(entry, &lru_);
-      mutex_.unlock();
     }
 
     void Remove(AbstractCache *cache, CacheHandle *entry) {
-      mutex_.lock();
-      list_del(entry);
-      mutex_.unlock();
+      {
+        boost::lock_guard<MutexType> lock(mutex_);
+        list_del(entry);
+      }
       EntryUnref(cache, entry);
     }
 
     void Reclaim(AbstractCache *cache) {
-      mutex_.lock();
-      CacheHandle *tail = lru_.prev;
-      uint64_t usage = cache->usage();
-      while (usage > cache->capacity() && tail != &lru_) {
+      boost::lock_guard<MutexType> lock(mutex_);
+      CacheHandle *tail = lru_.queue_prev;
+      int64_t space_used = cache->space_used();
+      while (space_used > cache->capacity() && tail != &lru_) {
         CacheHandle *evicted = tail;
-        tail = tail->prev;
-        usage -= evicted->charge;
+        tail = tail->queue_prev;
+        space_used -= evicted->charge;
         EntryReclaim(cache, evicted);
       }
-      mutex_.unlock();
     }
 
   private:
@@ -832,12 +667,135 @@ class LRUCachePolicy : public CachePolicy {
     CacheHandle lru_;
 };
 
-class MyLRUCache : public AbstractCache {
+class LRUCache : public AbstractCache {
   public:
-    MyLRUCache() : AbstractCache(new LRUCachePolicy) {};
+    LRUCache() : AbstractCache(new LRUCachePolicy) {};
 };
-#endif
 
+/* ===========================================================================
+ *  Freq Cache
+ */
+static inline double CalcTimeFreq(const CacheHandle *entry) {
+  return (entry->freq * 0.6) + (entry->time * 0.4);
+}
+
+static bool CacheHandleFreqComparer (CacheHandle *a, CacheHandle *b) {
+  return CalcTimeFreq(a) < CalcTimeFreq(b);
+}
+
+class FreqCachePolicy : public CachePolicy {
+  public:
+    FreqCachePolicy() {
+      __list_init(&active_);
+      __list_init(&inactive_);
+    }
+
+    void Erase (AbstractCache *cache) {
+      CacheHandle *p, *n;
+      list_for_each_safe(p, n, &inactive_) {
+        DCHECK_EQ(p->refs, 1);  // Error if caller has an unreleased handle
+        EntryUnref(cache, p);
+      }
+      list_for_each_safe(p, n, &active_) {
+        DCHECK_EQ(p->refs, 1);  // Error if caller has an unreleased handle
+        EntryUnref(cache, p);
+      }
+    }
+
+    void Insert (AbstractCache *cache, CacheHandle *entry, CacheHandle *old) {
+      boost::lock_guard<MutexType> lock(mutex_);
+      if (old != NULL)
+        list_del(old);
+      if (entry->state == CACHE_ENTRY_IS_NEW) {
+        /* Insert to the inactive queue */
+        entry->state = CACHE_ENTRY_IS_IN_FREQ_INACTIVE;
+        list_add(entry, &inactive_);
+      } else if (entry->state != CACHE_ENTRY_IS_REPLACED) {
+        /* Move to head of the inactive queue */
+        entry->state = CACHE_ENTRY_IS_IN_FREQ_INACTIVE;
+        list_move(entry, &inactive_);
+      }
+    }
+
+    void Update(AbstractCache *cache, CacheHandle *entry) {
+      if (AtomicIncrement(&(entry->freq), 1) == 1) {
+        {
+          // Promote to Active queue
+          boost::lock_guard<MutexType> lock(mutex_);
+          if (entry->state != CACHE_ENTRY_IS_REPLACED) {
+            entry->state = CACHE_ENTRY_IS_IN_FREQ_ACTIVE;
+            list_move(entry, &active_);
+          }
+        }
+        EntryIsHot(cache, entry);
+      }
+    }
+
+    void Remove(AbstractCache *cache, CacheHandle *entry) {
+      {
+        boost::lock_guard<MutexType> lock(mutex_);
+        list_del(entry);
+      }
+      EntryUnref(cache, entry);
+    }
+
+    void Reclaim(AbstractCache *cache) {
+      boost::lock_guard<MutexType> lock(mutex_);
+
+      uint64_t space_used = cache->space_used();
+      CacheHandle *tail = inactive_.queue_prev;
+      while (space_used > cache->capacity() && tail != &inactive_) {
+        CacheHandle *evicted = tail;
+        tail = tail->queue_prev;
+        space_used -= evicted->charge;
+        EntryReclaim(cache, evicted);
+      }
+      if (space_used > cache->capacity()) {
+        SortActiveQueue();
+        tail = active_.queue_prev;
+        while (space_used > cache->capacity() && tail != &active_) {
+          CacheHandle *evicted = tail;
+          tail = tail->queue_prev;
+          space_used -= evicted->charge;
+          EntryReclaim(cache, evicted);
+        }
+      }
+    }
+
+  private:
+    void SortActiveQueue (void) {
+      std::vector<CacheHandle *> v;
+
+      CacheHandle *p;
+      list_for_each(p, &active_) {
+        v.push_back(p);
+      }
+
+      // TODO: This will take a while...
+      // Sort the list by time & freqency
+      std::sort(v.begin(), v.end(), CacheHandleFreqComparer);
+
+      // Rebuild the sorted list
+      __list_init(&active_);
+      for (std::vector<CacheHandle *>::iterator it = v.begin(); it != v.end(); ++it) {
+        list_add(*it, &active_);
+      }
+    }
+
+  private:
+    MutexType mutex_;
+    CacheHandle active_;
+    CacheHandle inactive_;
+};
+
+class FreqCache : public AbstractCache {
+  public:
+    FreqCache() : AbstractCache(new FreqCachePolicy) {};
+};
+
+/* ===========================================================================
+ *  Sharded Cache
+ */
 static const int kNumShardBits = 4;
 static const int kNumShards = 1 << kNumShardBits;
 
@@ -854,9 +812,10 @@ public:
   virtual ~ShardedCache() { }
 
   virtual Handle *Insert(const Slice& key, void* value, size_t charge,
-                         void (*deleter)(const Slice& key, void* value)) {
+                         void (*deleter)(const Slice& key, void* value),
+                         void *(*hot)(const Slice& key, void* value)) {
     const uint32_t hash = HashSlice(key);
-    return shard_[Shard(hash)].Insert(key, hash, value, charge, deleter);
+    return shard_[Shard(hash)].Insert(key, hash, value, charge, deleter, hot);
   }
 
   virtual Handle *Lookup(const Slice& key) {
@@ -902,12 +861,12 @@ private:
 
 }  // end anonymous namespace
 
-Cache* NewLRUCache(size_t capacity) {
-#if USE_GOOGLE_LRU
+Cache *NewLRUCache(size_t capacity) {
   return new ShardedCache<LRUCache>(capacity);
-#else
-  return new ShardedCache<MyLRUCache>(capacity);
-#endif
+}
+
+Cache *NewFreqCache(size_t capacity) {
+  return new ShardedCache<FreqCache>(capacity);
 }
 
 }  // namespace kudu

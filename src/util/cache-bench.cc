@@ -1,3 +1,5 @@
+#include <boost/intrusive/list.hpp>
+
 #include <sys/time.h>
 #include <pthread.h>
 #include <assert.h>
@@ -129,13 +131,19 @@ static void *__test_cache_lookup (void *arg) {
 }
 
 void __run_threaded_tests (struct options *opts, void *(func) (void *)) {
+  int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
   pthread_t threads[NTHREADS];
   int i;
 
   printf("Testing %u threads\n", NTHREADS);
 
-  for (i = 0; i < NTHREADS; ++i)
+  for (i = 0; i < NTHREADS; ++i) {
     pthread_create(&(threads[i]), NULL, func, opts);
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(i % num_cores, &cpuset);
+    pthread_setaffinity_np(threads[i], sizeof(cpu_set_t), &cpuset);
+  }
 
   for (i = 0; i < NTHREADS; ++i)
     pthread_join(threads[i], NULL);
