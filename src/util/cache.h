@@ -84,13 +84,6 @@ class Cache : boost::noncopyable {
   virtual uint64_t NewId() = 0;
 
  private:
-  void LRU_Remove(Handle* e);
-  void LRU_Append(Handle* e);
-  void Unref(Handle* e);
-
-  struct Rep;
-  Rep* rep_;
-
   // No copying allowed
   Cache(const Cache&);
   void operator=(const Cache&);
