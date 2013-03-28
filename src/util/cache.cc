@@ -36,8 +36,8 @@ typedef PThreadSpinLock MutexType;
   #define RefCountInc(x)          AtomicIncrement(x, 1)
   #define RefCountDec(x)          AtomicIncrement(x, -1)
 #else
-  #define CompareAndSwap          base::subtle::Acquire_CompareAndSwap
-  #define AtomicIncrement         base::subtle::Barrier_AtomicIncrement
+  #define CompareAndSwap          base::subtle::NoBarrier_CompareAndSwap
+  #define AtomicIncrement         base::subtle::NoBarrier_AtomicIncrement
   #define RefCountInc(x)          base::RefCountInc(x)
   #define RefCountDec(x)          base::RefCountDec(x)
 #endif
