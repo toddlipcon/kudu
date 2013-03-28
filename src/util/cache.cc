@@ -179,7 +179,7 @@ private:
 };
 #endif
 
-#if 1
+#if 0
   #define TableRwLock   RwLock
 #else
 class TableRwLock {
@@ -676,11 +676,11 @@ class LRUCache : public AbstractCache {
  *  Freq Cache
  */
 static inline double CalcTimeFreq(const CacheHandle *entry) {
-  return (entry->freq * 0.6) + (entry->time * 0.4);
+  return ((double)(100000 + entry->freq) / entry->time) * 100.0f;
 }
 
 static bool CacheHandleFreqComparer (CacheHandle *a, CacheHandle *b) {
-  return CalcTimeFreq(a) < CalcTimeFreq(b);
+  return CalcTimeFreq(a) > CalcTimeFreq(b);
 }
 
 class FreqCachePolicy : public CachePolicy {
@@ -849,7 +849,7 @@ private:
   }
 
   static uint32_t Shard(uint32_t hash) {
-    return hash >> (32 - kNumShardBits);
+    return kNumShards > 0 ? hash >> (32 - kNumShardBits) : 0;
   }
 
 private:
