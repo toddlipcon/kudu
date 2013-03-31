@@ -149,9 +149,38 @@ void __run_threaded_tests (struct options *opts, void *(func) (void *)) {
     pthread_join(threads[i], NULL);
 }
 
+void __run_threaded_tests2 (struct options *opts,
+                            void *(func) (void *),
+                            void *(func2) (void *))
+{
+  int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+  pthread_t threads[NTHREADS];
+  int i;
+
+  printf("Testing %u threads\n", NTHREADS);
+
+  for (i = 0; i < (NTHREADS / 2); ++i) {
+    pthread_create(&(threads[i]), NULL, func, opts);
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(i % num_cores, &cpuset);
+    pthread_setaffinity_np(threads[i], sizeof(cpu_set_t), &cpuset);
+  }
+
+  for (; i < NTHREADS; ++i) {
+    pthread_create(&(threads[i]), NULL, func2, opts);
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(i % num_cores, &cpuset);
+    pthread_setaffinity_np(threads[i], sizeof(cpu_set_t), &cpuset);
+  }
+
+  for (i = 0; i < NTHREADS; ++i)
+    pthread_join(threads[i], NULL);
+}
+
 int main (int argc, char **argv) {
   struct options opts;
-  int i;
 
   __parse_opts(&opts, argc, argv);
 
@@ -160,7 +189,7 @@ int main (int argc, char **argv) {
 
 #if 1
   #if 0
-    for (i = 0; i < opts.cache_capacity; ++i) {
+    for (int i = 0; i < opts.cache_capacity; ++i) {
       uint64_t key = __key(i, opts.cache_capacity);
       Cache::Handle *entry = cache->Insert(
         Slice(reinterpret_cast<uint8_t *>(&key), 8), reinterpret_cast<void *>(key), 1, __deleter);
@@ -168,6 +197,7 @@ int main (int argc, char **argv) {
     }
   #else
     __run_threaded_tests(&opts, __test_cache_insert);
+    //__run_threaded_tests2(&opts, __test_cache_insert, __test_cache_lookup);
   #endif
   __run_threaded_tests(&opts, __test_cache_lookup);
 #else
