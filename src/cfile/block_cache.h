@@ -49,6 +49,8 @@ private:
 
   static void ValueDeleter(const Slice &key, void *value);
 
+  static const CacheEntryCallbacks block_cache_callbacks_;
+
   gscoped_ptr<Cache> cache_;
 };
 

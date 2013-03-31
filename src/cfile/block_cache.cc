@@ -14,6 +14,11 @@ DEFINE_int64(block_cache_capacity_mb, 512, "block cache capacity in MB");
 namespace kudu {
 namespace cfile {
 
+const CacheEntryCallbacks BlockCache::block_cache_callbacks_ = {
+  .deleter = &BlockCache::ValueDeleter,
+  .promoteHot = NULL,
+};
+
 struct CacheKey {
   CacheKey(BlockCache::FileId file_id, uint64_t offset) :
     file_id_(file_id),
@@ -62,7 +67,7 @@ void BlockCache::Insert(FileId file_id, uint64_t offset, const Slice &block_data
   Slice *value = new Slice(block_data);
 
   Cache::Handle *h = cache_->Insert(key.slice(), value, value->size(),
-                             BlockCache::ValueDeleter);
+                                    &block_cache_callbacks_);
   inserted->SetHandle(cache_.get(), h);
 }
 

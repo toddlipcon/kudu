@@ -35,6 +35,11 @@ struct random {
 static void __deleter (const Slice& key, void* value) {
 }
 
+static kudu::CacheEntryCallbacks __cache_callbacks = {
+  .deleter = __deleter,
+  .promoteHot = NULL,
+};
+
 static uint64_t __time_micros (void) {
 #if 0
     struct timeval now;
@@ -96,7 +101,7 @@ static void *__test_cache_insert (void *arg) {
     uint64_t key = __key(__rand(&rnd), opts->cache_capacity);
 
     Cache::Handle *entry = opts->cache->Insert(
-      Slice(reinterpret_cast<uint8_t *>(&key), 8), reinterpret_cast<void *>(key), 1, __deleter);
+      Slice(reinterpret_cast<uint8_t *>(&key), 8), reinterpret_cast<void *>(key), 1, &__cache_callbacks);
     opts->cache->Release(entry);
   }
   et = __time_micros();
@@ -192,7 +197,8 @@ int main (int argc, char **argv) {
     for (int i = 0; i < opts.cache_capacity; ++i) {
       uint64_t key = __key(i, opts.cache_capacity);
       Cache::Handle *entry = cache->Insert(
-        Slice(reinterpret_cast<uint8_t *>(&key), 8), reinterpret_cast<void *>(key), 1, __deleter);
+        Slice(reinterpret_cast<uint8_t *>(&key), 8),
+          reinterpret_cast<void *>(key), 1, &__cache_callbacks);
       cache->Release(entry);
     }
   #else

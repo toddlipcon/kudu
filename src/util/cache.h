@@ -27,9 +27,35 @@ namespace kudu {
 
 class Cache;
 
+// Callback to free the specified value
+typedef void (*CacheEntryValueDeleter) (const Slice& key, void *value);
+
+// Callback to notify the user that the "key" is hot.
+// The user should return true, if the "value" should be replaced
+// with the "new_value" and the "new_charge".
+// The cache will call the value deleter once no one else is referencing it.
+typedef bool (*CacheEntryValuePromoteHot) (const Slice& key,
+                                           const void *value,
+                                           size_t charge,
+                                           void **new_value,
+                                           size_t *new_charge);
+
+struct CacheEntryCallbacks {
+  // called when the element is removed from the cache.
+  // The user is responsible to delete the "value".
+  CacheEntryValueDeleter deleter;
+
+  // called when the element becames hot. (used by the freq cache)
+  CacheEntryValuePromoteHot promoteHot;
+};
+
 // Create a new cache with a fixed size capacity.  This implementation
 // of Cache uses a least-recently-used eviction policy.
 extern Cache* NewLRUCache(size_t capacity);
+
+// Create a new cache with a fixed size capacity.  This implementation
+// of Cache uses a frequency eviction policy.
+extern Cache *NewFreqCache(size_t capacity);
 
 class Cache : boost::noncopyable {
  public:
@@ -52,8 +78,7 @@ class Cache : boost::noncopyable {
   // When the inserted entry is no longer needed, the key and
   // value will be passed to "deleter".
   virtual Handle* Insert(const Slice& key, void* value, size_t charge,
-                         void (*deleter)(const Slice& key, void* value),
-                         void *(*hot)(const Slice& key, void* value) = NULL) = 0;
+                         const CacheEntryCallbacks *callbacks) = 0;
 
   // If the cache has no mapping for "key", returns NULL.
   //

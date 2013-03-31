@@ -35,6 +35,8 @@ class CacheTest : public ::testing::Test {
     current_->deleted_values_.push_back(DecodeValue(v));
   }
 
+  static const CacheEntryCallbacks cache_callbacks_;
+
   static const int kCacheSize = 1000;
   std::vector<int> deleted_keys_;
   std::vector<int> deleted_values_;
@@ -59,7 +61,7 @@ class CacheTest : public ::testing::Test {
 
   void Insert(int key, int value, int charge = 1) {
     cache_->Release(cache_->Insert(EncodeKey(key), EncodeValue(value), charge,
-                                   &CacheTest::Deleter));
+                                   &CacheTest::cache_callbacks_));
   }
 
   void Erase(int key) {
@@ -67,6 +69,11 @@ class CacheTest : public ::testing::Test {
   }
 };
 CacheTest* CacheTest::current_;
+
+const CacheEntryCallbacks CacheTest::cache_callbacks_ = {
+  .deleter = &CacheTest::Deleter,
+  .promoteHot = NULL,
+};
 
 TEST_F(CacheTest, HitAndMiss) {
   ASSERT_EQ(-1, Lookup(100));
@@ -180,6 +187,15 @@ TEST_F(CacheTest, NewId) {
   uint64_t a = cache_->NewId();
   uint64_t b = cache_->NewId();
   ASSERT_NE(a, b);
+}
+
+bool PromoteToHot (const Slice& key, const void *value,
+  size_t charge, void **new_value, size_t *new_charge)
+{
+  printf("IS HOT\n");
+  *new_value = EncodeValue(5);
+  *new_charge = charge;
+  return true;
 }
 
 }  // namespace kudu
