@@ -35,10 +35,7 @@ struct random {
 static void __deleter (const Slice& key, void* value) {
 }
 
-static kudu::CacheEntryCallbacks __cache_callbacks = {
-  .deleter = __deleter,
-  .promoteHot = NULL,
-};
+static kudu::CacheEntryCallbacks __cache_callbacks(__deleter);
 
 static uint64_t __time_micros (void) {
 #if 0

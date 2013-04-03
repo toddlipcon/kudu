@@ -70,10 +70,7 @@ class CacheTest : public ::testing::Test {
 };
 CacheTest* CacheTest::current_;
 
-const CacheEntryCallbacks CacheTest::cache_callbacks_ = {
-  .deleter = &CacheTest::Deleter,
-  .promoteHot = NULL,
-};
+const CacheEntryCallbacks CacheTest::cache_callbacks_(&CacheTest::Deleter);
 
 TEST_F(CacheTest, HitAndMiss) {
   ASSERT_EQ(-1, Lookup(100));

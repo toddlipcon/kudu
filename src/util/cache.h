@@ -47,6 +47,13 @@ struct CacheEntryCallbacks {
 
   // called when the element becames hot. (used by the freq cache)
   CacheEntryValuePromoteHot promoteHot;
+
+  CacheEntryCallbacks(CacheEntryValueDeleter deleterFunc,
+                      CacheEntryValuePromoteHot promoteHotFunc = NULL)
+  {
+    deleter = deleterFunc;
+    promoteHot = promoteHotFunc;
+  }
 };
 
 // Create a new cache with a fixed size capacity.  This implementation
