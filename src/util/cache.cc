@@ -30,30 +30,33 @@ typedef PThreadSpinLock MutexType;
 
 enum CacheEntryStates {
   // The entry is new. Not added to any queue
-  CACHE_ENTRY_IS_NEW,
+  CACHE_ENTRY_IS_NEW                = (1 << 0),
   // The entry was removed from the hashtable and cache queue
-  CACHE_ENTRY_IS_EVICTED,
+  CACHE_ENTRY_IS_EVICTED            = (1 << 1),
   // The entry is replaced by a newer entry/value
-  CACHE_ENTRY_IS_REPLACED,
+  CACHE_ENTRY_IS_REPLACED           = (1 << 2),
 
   // The entry is in the lru queue
-  CACHE_ENTRY_IS_IN_LRU_QUEUE,
+  CACHE_ENTRY_IS_IN_LRU_QUEUE       = (1 << 3),
 
   // The entry is in the active queue of the freq cache
-  CACHE_ENTRY_IS_IN_FREQ_ACTIVE,
+  CACHE_ENTRY_IS_IN_FREQ_ACTIVE     = (1 << 4),
   // The entry is in the inactive queue of the freq cache
-  CACHE_ENTRY_IS_IN_FREQ_INACTIVE,
+  CACHE_ENTRY_IS_IN_FREQ_INACTIVE   = (1 << 5),
+
+  // The entry is promoted to hot
+  CACHE_ENTRY_IS_HOT                = (1 << 15),
 };
 
 struct CacheHandle {
   // number of users that are referencing this object + the cache
   volatile Atomic32 refs;
 
-  // entry state, used by the cache policy or debug
-  CacheEntryStates state;
-
   // number of times this item was requested
   volatile base::subtle::Atomic64 freq;
+
+  // entry state, used by the cache policy or debug
+  uint16_t state;
 
   // time of the last hit
   uint64_t time;
@@ -80,14 +83,37 @@ struct CacheHandle {
   const CacheEntryCallbacks *callbacks;
 
   // key of the entry, allocated as part of the CacheHandle
-  uint8_t key_data[1];
-
   Slice key() const {
-    return Slice(key_data, key_size);
+    const uint8_t *mem = reinterpret_cast<const uint8_t *>(this) + sizeof(CacheHandle);
+    return Slice(mem, key_size);
   }
 
+  // returns true if the entry is evicted or replaced
   bool is_deletable() const {
-    return state == CACHE_ENTRY_IS_EVICTED || state == CACHE_ENTRY_IS_REPLACED;
+    return state & CACHE_ENTRY_IS_EVICTED || state & CACHE_ENTRY_IS_REPLACED;
+  }
+
+  CacheEntryStates get_state() const {
+    return static_cast<CacheEntryStates>(this->state & 0x7fff);
+  }
+
+  void set_state(CacheEntryStates state) {
+    this->state = (this->state & CACHE_ENTRY_IS_HOT) | state;
+  }
+
+  // returns true if the specified state is set
+  bool check_state(CacheEntryStates state) const {
+    return this->state & state;
+  }
+
+  // mark the entry as hot
+  void promote_to_hot() {
+    this->state |= CACHE_ENTRY_IS_HOT;
+  }
+
+  // returns true if the entry was promoted to hot
+  bool is_hot() const {
+    return state & CACHE_ENTRY_IS_HOT;
   }
 };
 
@@ -106,27 +132,10 @@ static inline uint64_t GetCurrentTime(void) {
  *  Chained hashtable with a read-write lock used to block everyone on table resize.
  *  Each node has a rwlock taken during each operation.
  */
-#define BucketLock    RwSpinLock
-
-class TableRwLock {
-  public:
-    TableRwLock() {}
-    ~TableRwLock() {}
-
-    void lock_shared() { lock_.get_lock().lock(); }
-    void unlock_shared() { lock_.get_lock().unlock(); }
-    bool try_lock() { return lock_.try_lock(); }
-    void lock() { lock_.lock(); }
-    void unlock() { lock_.unlock(); }
-
-  private:
-    percpu_rwlock lock_;
-};
-
 class HandleTable {
   private:
     struct Bucket {
-      BucketLock lock;
+      RwSpinLock lock;
       // First entry chained from this bucket, or NULL if the bucket is empty.
       CacheHandle *chain_head;
       Bucket() : chain_head(NULL) {}
@@ -160,7 +169,7 @@ class HandleTable {
     void Resize();
 
   private:
-    TableRwLock lock_;      // table rwlock used as write on resize
+    percpu_rwlock lock_;    // table rwlock used as write on resize
     uint64_t mask_;         // size - 1 used to lookup the bucket (hash & mask_)
     uint64_t size_;         // number of bucket in the table
     gscoped_array<Bucket> buckets_;              // table buckets
@@ -180,28 +189,28 @@ CacheHandle *HandleTable::Insert(CacheHandle *entry) {
   CacheHandle *old;
 
   {
-    boost::shared_lock<TableRwLock> table_rdlock(lock_);
+    boost::lock_guard<simple_spinlock> table_rdlock(lock_.get_lock());
     Bucket *bucket = FindBucket(entry->key_hash);
     {
-      boost::unique_lock<BucketLock> bucket_wrlock(bucket->lock);
+      boost::unique_lock<RwSpinLock> bucket_wrlock(bucket->lock);
       CacheHandle **node = FindPointer(bucket, entry->key(), entry->key_hash);
       old = *node;
       *node = entry;
       if (old != NULL) {
         DCHECK(!old->is_deletable());
         entry->ht_next = old->ht_next;
-        entry->state = old->state;
+        entry->set_state(old->get_state());
         entry->freq = old->freq;
-        old->state = CACHE_ENTRY_IS_REPLACED;
+        old->set_state(CACHE_ENTRY_IS_REPLACED);
       } else {
         entry->ht_next = NULL;
-        entry->state = CACHE_ENTRY_IS_NEW;
+        entry->set_state(CACHE_ENTRY_IS_NEW);
       }
     }
   }
 
   if (old == NULL && base::subtle::NoBarrier_AtomicIncrement(&item_count_, 1) > size_) {
-    boost::unique_lock<TableRwLock> table_wrlock(lock_, boost::try_to_lock);
+    boost::unique_lock<percpu_rwlock> table_wrlock(lock_, boost::try_to_lock);
     // if we can't take the lock, means that someone else is resizing
     if (table_wrlock.owns_lock()) {
       Resize();
@@ -212,10 +221,10 @@ CacheHandle *HandleTable::Insert(CacheHandle *entry) {
 }
 
 CacheHandle *HandleTable::Lookup(const Slice& key, uint32_t hash) {
-  boost::shared_lock<TableRwLock> table_rdlock(lock_);
+  boost::lock_guard<simple_spinlock> table_rdlock(lock_.get_lock());
   Bucket *bucket = FindBucket(hash);
   {
-    boost::shared_lock<BucketLock> bucket_rdlock(bucket->lock);
+    boost::shared_lock<RwSpinLock> bucket_rdlock(bucket->lock);
     CacheHandle *entry = *FindPointer(bucket, key, hash);
     if (entry != NULL) {
       DCHECK(!entry->is_deletable());
@@ -230,10 +239,10 @@ CacheHandle *HandleTable::Remove(const Slice& key, uint32_t hash) {
   CacheHandle *entry;
 
   {
-    boost::shared_lock<TableRwLock> table_rdlock(lock_);
+    boost::lock_guard<simple_spinlock> table_rdlock(lock_.get_lock());
     Bucket *bucket = FindBucket(hash);
     {
-      boost::unique_lock<BucketLock> bucket_wrlock(bucket->lock);
+      boost::unique_lock<RwSpinLock> bucket_wrlock(bucket->lock);
       CacheHandle **node = FindPointer(bucket, key, hash);
       if ((entry = *node) != NULL) {
         DCHECK(!entry->is_deletable());
@@ -252,14 +261,14 @@ bool HandleTable::Remove(CacheHandle *entry) {
   bool found = false;
 
   {
-    boost::shared_lock<TableRwLock> table_rdlock(lock_);
+    boost::lock_guard<simple_spinlock> table_rdlock(lock_.get_lock());
     Bucket *bucket = FindBucket(entry->key_hash);
     {
-      boost::unique_lock<BucketLock> bucket_wrlock(bucket->lock);
+      boost::unique_lock<RwSpinLock> bucket_wrlock(bucket->lock);
       for (CacheHandle **node = &(bucket->chain_head); *node != NULL; node = &((*node)->ht_next)) {
         if (*node == entry) {
           *node = entry->ht_next;
-          entry->state = CACHE_ENTRY_IS_EVICTED;
+          entry->set_state(CACHE_ENTRY_IS_EVICTED);
           found = true;
           break;
         }
@@ -318,7 +327,7 @@ class AbstractCache {
     virtual ~AbstractCache();
 
     Cache::Handle *Insert (const Slice& key, uint32_t hash, void *value, size_t charge,
-                           const CacheEntryCallbacks *callbacks);
+                           const CacheEntryCallbacks *callbacks, bool is_hot=false);
     Cache::Handle *Lookup (const Slice& key, uint32_t hash);
     void Erase (const Slice& key, uint32_t hash);
 
@@ -340,7 +349,7 @@ class AbstractCache {
 
   private:
     CacheHandle *CreateNewHandle(const Slice& key, uint32_t hash, void *value, size_t charge,
-                                 const CacheEntryCallbacks *callbacks);
+                                 const CacheEntryCallbacks *callbacks, bool is_hot);
     CacheHandle *PromoteHotEntry(CacheHandle *entry);
     void EntryUnref(CacheHandle *entry);
     void EntryReclaim(CacheHandle *entry);
@@ -428,8 +437,8 @@ AbstractCache::~AbstractCache() {
 }
 
 Cache::Handle *AbstractCache::Insert(const Slice& key, uint32_t hash, void *value, size_t charge,
-                                     const CacheEntryCallbacks *callbacks) {
-  CacheHandle *entry = CreateNewHandle(key, hash, value, charge, callbacks);
+                                     const CacheEntryCallbacks *callbacks, bool is_hot) {
+  CacheHandle *entry = CreateNewHandle(key, hash, value, charge, callbacks, is_hot);
 
   CacheHandle *old = table_.Insert(entry);
   policy_->Insert(this, entry, old);
@@ -465,17 +474,21 @@ void AbstractCache::Erase(const Slice& key, uint32_t hash) {
 }
 
 CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, void *value,
-                                            size_t charge, const CacheEntryCallbacks *callbacks)
+                          size_t charge, const CacheEntryCallbacks *callbacks, bool is_hot)
 {
-  void *mem = malloc(sizeof(CacheHandle)-1 + key.size());
+  uint8_t *mem = static_cast<uint8_t *>(malloc(sizeof(CacheHandle) + key.size()));
   CacheHandle *entry = new (mem) CacheHandle();
+  memcpy(mem + sizeof(CacheHandle), key.data(), key.size());
 
   entry->value = value;
   entry->callbacks = callbacks;
 
   // One from the cache, one for the user returned pointer and one for the lookup func
   entry->refs = 3;
-  entry->state = CACHE_ENTRY_IS_NEW;
+  entry->set_state(CACHE_ENTRY_IS_NEW);
+  if (is_hot) {
+    entry->promote_to_hot();
+  }
 
   entry->freq = 0;
   entry->time = GetCurrentTime();
@@ -486,8 +499,6 @@ CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, voi
   entry->key_hash = hash;
   entry->charge = charge;
   entry->key_size = key.size();
-
-  memcpy(entry->key_data, key.data(), key.size());
 
   base::subtle::NoBarrier_AtomicIncrement(&space_used_, charge);
   return(entry);
@@ -503,7 +514,7 @@ CacheHandle *AbstractCache::PromoteHotEntry(CacheHandle *entry) {
   if (callbacks->promoteHot(entry->key(), entry->value, entry->charge, &new_value, &new_charge)) {
     // the user has returned a new value as replacement for the old one.
     CacheHandle *newEntry = reinterpret_cast<CacheHandle *>(Insert(entry->key(), entry->key_hash,
-        new_value, new_charge, callbacks));
+        new_value, new_charge, callbacks, true));
     // the old value will be deleted on zero-references.
     EntryUnref(entry);
     return newEntry;
@@ -541,10 +552,10 @@ class LRUCachePolicy : public CachePolicy {
       boost::lock_guard<MutexType> lock(mutex_);
       if (old != NULL)
         EntryRemoveFromQueue(&lru_, old);
-      if (entry->state == CACHE_ENTRY_IS_NEW) {
+      if (entry->check_state(CACHE_ENTRY_IS_NEW)) {
         // Insert to the head of LRU
         EntryMoveToQueueHead(&lru_, entry);
-        entry->state = CACHE_ENTRY_IS_IN_LRU_QUEUE;
+        entry->set_state(CACHE_ENTRY_IS_IN_LRU_QUEUE);
       } else if (!entry->is_deletable()) {
         // Move to the head of LRU
         EntryMoveToQueueHead(&lru_, entry);
@@ -610,18 +621,18 @@ class FreqCachePolicy : public CachePolicy {
       if (old != NULL)
         EntryRemoveFromQueue(old);
 
-      if (entry->state == CACHE_ENTRY_IS_NEW) {
+      if (entry->check_state(CACHE_ENTRY_IS_NEW)) {
         // Insert to the inactive queue
-        entry->state = CACHE_ENTRY_IS_IN_FREQ_INACTIVE;
+        entry->set_state(CACHE_ENTRY_IS_IN_FREQ_INACTIVE);
         EntryMoveToQueueHead(&inactive_, entry);
       } else if (!entry->is_deletable()) {
         if (entry->freq < kActiveFreq) {
           // Move to head of the inactive queue
-          entry->state = CACHE_ENTRY_IS_IN_FREQ_INACTIVE;
+          entry->set_state(CACHE_ENTRY_IS_IN_FREQ_INACTIVE);
           EntryMoveToQueueHead(&inactive_, entry);
         } else {
           // Move to head of the active queue
-          entry->state = CACHE_ENTRY_IS_IN_FREQ_ACTIVE;
+          entry->set_state(CACHE_ENTRY_IS_IN_FREQ_ACTIVE);
           EntryMoveToQueueHead(&active_, entry);
         }
       }
@@ -633,7 +644,7 @@ class FreqCachePolicy : public CachePolicy {
         // Promote to Active queue
         boost::lock_guard<MutexType> lock(mutex_);
         if (!entry->is_deletable()) {
-          entry->state = CACHE_ENTRY_IS_IN_FREQ_ACTIVE;
+          entry->set_state(CACHE_ENTRY_IS_IN_FREQ_ACTIVE);
           EntryMoveToQueueHead(&active_, entry);
         }
       } else if (freq == kHotFreq) {
@@ -718,6 +729,10 @@ public:
 
   virtual void* Value(Handle* handle) {
     return reinterpret_cast<CacheHandle *>(handle)->value;
+  }
+
+  virtual bool IsHot(Handle* handle) {
+    return reinterpret_cast<CacheHandle *>(handle)->is_hot();
   }
 
   virtual void Erase(const Slice& key) {

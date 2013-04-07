@@ -105,6 +105,11 @@ class Cache : boost::noncopyable {
   // REQUIRES: handle must have been returned by a method on *this.
   virtual void* Value(Handle* handle) = 0;
 
+  // Return true if the value encapsulated in a handle was promoted to hot entry
+  // REQUIRES: handle must not have been released yet.
+  // REQUIRES: handle must have been returned by a method on *this.
+  virtual bool IsHot(Handle* handle) = 0;
+
   // If the cache contains entry for key, erase it.  Note that the
   // underlying entry will be kept around until all existing handles
   // to it have been released.
