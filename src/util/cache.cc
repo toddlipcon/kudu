@@ -44,9 +44,17 @@ enum CacheEntryStates {
   // The entry is in the inactive queue of the freq cache
   CACHE_ENTRY_IS_IN_FREQ_INACTIVE   = (1 << 5),
 
+
+  // The entry is compressed
+  CACHE_ENTRY_IS_COMPRESSED         =  (1 << 14),
+  CACHE_ENTRY_NOT_COMPRESSED_MASK   = ~(1 << 14),
+
   // The entry is promoted to hot
-  CACHE_ENTRY_IS_HOT                = (1 << 15),
+  CACHE_ENTRY_IS_HOT                =  (1 << 15),
+  CACHE_ENTRY_NOT_HOT_MASK          = ~(1 << 15),
 };
+
+static uint16_t kEntryStateMask = (1 << 14) - 1;
 
 struct CacheHandle {
   // number of users that are referencing this object + the cache
@@ -56,7 +64,7 @@ struct CacheHandle {
   volatile base::subtle::Atomic64 freq;
 
   // entry state, used by the cache policy or debug
-  uint16_t state;
+  volatile Atomic32 state;
 
   // time of the last hit
   uint64_t time;
@@ -71,10 +79,13 @@ struct CacheHandle {
   uint32_t key_hash;
 
   // space taken in the cache
-  uint64_t charge;
+  size_t charge;
 
   // key_data size
   size_t key_size;
+
+  // Entry lock, used to compress/uncompress the value
+  MutexType lock;
 
   // Value associated with this entry
   void *value;
@@ -90,30 +101,69 @@ struct CacheHandle {
 
   // returns true if the entry is evicted or replaced
   bool is_deletable() const {
-    return state & CACHE_ENTRY_IS_EVICTED || state & CACHE_ENTRY_IS_REPLACED;
+    Atomic32 cur_state = base::subtle::NoBarrier_Load(&this->state);
+    return cur_state & CACHE_ENTRY_IS_EVICTED || cur_state & CACHE_ENTRY_IS_REPLACED;
   }
 
   CacheEntryStates get_state() const {
-    return static_cast<CacheEntryStates>(this->state & 0x7fff);
+    Atomic32 cur_state = base::subtle::NoBarrier_Load(&this->state);
+    return static_cast<CacheEntryStates>(cur_state & kEntryStateMask);
   }
 
-  void set_state(CacheEntryStates state) {
-    this->state = (this->state & CACHE_ENTRY_IS_HOT) | state;
+  void set_state(CacheEntryStates new_state) {
+    int loop_count = 0;
+    Atomic32 cur_state = base::subtle::NoBarrier_Load(&this->state);
+    while (true) {
+      if (cur_state & CACHE_ENTRY_IS_EVICTED || cur_state & CACHE_ENTRY_IS_REPLACED)
+        break;
+
+      Atomic32 expected = cur_state;
+      Atomic32 try_new_state;
+      switch (new_state) {
+        case CACHE_ENTRY_IS_HOT:
+        case CACHE_ENTRY_IS_COMPRESSED:
+          try_new_state = expected | new_state;
+          break;
+        case CACHE_ENTRY_NOT_HOT_MASK:
+        case CACHE_ENTRY_NOT_COMPRESSED_MASK:
+          try_new_state = expected & new_state;
+          break;
+        default:
+          try_new_state = (expected & ~kEntryStateMask) | new_state;
+          break;
+      }
+
+      cur_state = base::subtle::Acquire_CompareAndSwap(&this->state, expected, try_new_state);
+      if (cur_state == expected)
+        break;
+
+      // Either was already locked by someone else, or CAS failed.
+      boost::detail::yield(loop_count++);
+    }
   }
 
   // returns true if the specified state is set
   bool check_state(CacheEntryStates state) const {
-    return this->state & state;
+    return base::subtle::NoBarrier_Load(&this->state) & state;
+  }
+
+  // mark the entry as compressed or uncompressed
+  void set_compressed(bool compressed) {
+    set_state(compressed ? CACHE_ENTRY_IS_COMPRESSED : CACHE_ENTRY_NOT_COMPRESSED_MASK);
+  }
+
+  bool is_compressed() const {
+    return check_state(CACHE_ENTRY_IS_COMPRESSED);
   }
 
   // mark the entry as hot
-  void promote_to_hot() {
-    this->state |= CACHE_ENTRY_IS_HOT;
+  void promote_to_hot(bool is_hot = true) {
+    return set_state(is_hot ? CACHE_ENTRY_IS_HOT : CACHE_ENTRY_NOT_HOT_MASK);
   }
 
   // returns true if the entry was promoted to hot
   bool is_hot() const {
-    return state & CACHE_ENTRY_IS_HOT;
+    return check_state(CACHE_ENTRY_IS_HOT);
   }
 };
 
@@ -353,15 +403,26 @@ class AbstractCache {
     CacheHandle *PromoteHotEntry(CacheHandle *entry);
     void EntryUnref(CacheHandle *entry);
     void EntryReclaim(CacheHandle *entry);
+    void EntryCompress(CacheHandle *entry);
+    bool EntryUncompress(CacheHandle *entry);
 
   private:
-    volatile base::subtle::Atomic64 hit_count_;    // Number of lookups with the element found
-    volatile base::subtle::Atomic64 miss_count_;   // Number of lookups with the element not found
-    volatile base::subtle::Atomic64 space_used_;   // Space used, accumulated from entry->charge
+    // Number of lookups with the element found
+    volatile base::subtle::Atomic64 hit_count_;
+    // Number of lookups with the element not found
+    volatile base::subtle::Atomic64 miss_count_;
+    // Space used, accumulated from entry->charge
+    volatile base::subtle::Atomic64 space_used_;
 
-    uint64_t capacity_;       // Total Space available in the cache
-    HandleTable table_;       // Hash Table
-    CachePolicy *policy_;     // Pluggable Cache Policy (LRU, Freq, ...)
+    // Total Space available in the cache
+    uint64_t capacity_;
+    // Cache entries hashtable
+    HandleTable table_;
+    // entry events callbacks (deleter, promoteHot)
+    //const CacheEntryCallbacks *callbacks_;
+    // Pluggable Cache Policy (LRU, Freq, ...)
+    CachePolicy *policy_;
+
     friend class CachePolicy;
 };
 
@@ -459,6 +520,12 @@ Cache::Handle *AbstractCache::Lookup(const Slice& key, uint32_t hash) {
     entry->time = GetCurrentTime();
     entry = policy_->Update(this, entry);
     base::subtle::NoBarrier_AtomicIncrement(&hit_count_, 1);
+    if (!EntryUncompress(entry)) {
+      // Something went wrong during uncompression...
+      // ask the user to fetch the block again.
+      EntryUnref(entry);
+      return NULL;
+    }
   } else {
     base::subtle::NoBarrier_AtomicIncrement(&miss_count_, 1);
   }
@@ -506,8 +573,13 @@ CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, voi
 
 CacheHandle *AbstractCache::PromoteHotEntry(CacheHandle *entry) {
   const CacheEntryCallbacks *callbacks = entry->callbacks;
-  if (callbacks->promoteHot == NULL)
+  if (callbacks->promoteHot == NULL) {
+    entry->promote_to_hot();
+    if (!EntryUncompress(entry)) {
+      // TODO: Handle this
+    }
     return entry;
+  }
 
   void *new_value = NULL;
   size_t new_charge = entry->charge;
@@ -519,13 +591,17 @@ CacheHandle *AbstractCache::PromoteHotEntry(CacheHandle *entry) {
     EntryUnref(entry);
     return newEntry;
   }
-
   return entry;
 }
 
 void AbstractCache::EntryUnref(CacheHandle *entry) {
   DCHECK_GT(entry->refs, 0);
-  if (RefCountDec(&(entry->refs)) == 0) {
+
+  if (base::subtle::Acquire_Load(&(entry->refs)) == 2) {
+    EntryCompress(entry);
+  }
+
+  if (RefCountDec(&(entry->refs)) == false) {
     DCHECK(!entry->queue_hook.is_linked());
     base::subtle::NoBarrier_AtomicIncrement(&space_used_, -(entry->charge));
     entry->callbacks->deleter(entry->key(), entry->value);
@@ -537,6 +613,41 @@ void AbstractCache::EntryReclaim(CacheHandle *entry) {
   if (table_.Remove(entry)) {
     EntryUnref(entry);
   }
+}
+
+void AbstractCache::EntryCompress(CacheHandle *entry) {
+  if (entry->callbacks->compressor != NULL && !entry->is_hot()) {
+    boost::lock_guard<MutexType> lock(entry->lock);
+    if (entry->is_compressed() || entry->is_deletable() ||
+        base::subtle::Acquire_Load(&(entry->refs)) > 2)
+    {
+      return;
+    }
+
+    size_t charge = entry->charge;
+    void *new_value = entry->value;
+    if (entry->callbacks->compressor(entry->key(), &new_value, &charge)) {
+      entry->value = new_value;
+      entry->set_compressed(true);
+    }
+  }
+}
+
+bool AbstractCache::EntryUncompress(CacheHandle *entry) {
+  if (entry->callbacks->decompressor != NULL) {
+    boost::lock_guard<MutexType> entry_lock(entry->lock);
+    if (!entry->is_compressed())
+      return true;
+
+    size_t charge = entry->charge;
+    void *new_value = entry->value;
+    if (!entry->callbacks->decompressor(entry->key(), &new_value, &charge))
+      return false;
+
+    entry->value = new_value;
+    entry->set_compressed(false);
+  }
+  return true;
 }
 
 /* ===========================================================================
@@ -554,8 +665,8 @@ class LRUCachePolicy : public CachePolicy {
         EntryRemoveFromQueue(&lru_, old);
       if (entry->check_state(CACHE_ENTRY_IS_NEW)) {
         // Insert to the head of LRU
-        EntryMoveToQueueHead(&lru_, entry);
         entry->set_state(CACHE_ENTRY_IS_IN_LRU_QUEUE);
+        EntryMoveToQueueHead(&lru_, entry);
       } else if (!entry->is_deletable()) {
         // Move to the head of LRU
         EntryMoveToQueueHead(&lru_, entry);
@@ -680,7 +791,7 @@ class FreqCachePolicy : public CachePolicy {
     }
 
     static const unsigned int kActiveFreq = 1;
-    static const unsigned int kHotFreq = 2;
+    static const unsigned int kHotFreq = 3;
 
   private:
     MutexType mutex_;

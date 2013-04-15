@@ -40,19 +40,36 @@ typedef bool (*CacheEntryValuePromoteHot) (const Slice& key,
                                            void **new_value,
                                            size_t *new_charge);
 
+typedef bool (*CacheEntryCompressor) (const Slice& key, void **value, size_t *charge);
+typedef bool (*CacheEntryDecompressor) (const Slice& key, void **value, size_t *charge);
+
 struct CacheEntryCallbacks {
   // called when the element is removed from the cache.
   // The user is responsible to delete the "value".
   CacheEntryValueDeleter deleter;
 
+  CacheEntryCompressor compressor;
+  CacheEntryDecompressor decompressor;
+
   // called when the element becames hot. (used by the freq cache)
   CacheEntryValuePromoteHot promoteHot;
 
-  CacheEntryCallbacks(CacheEntryValueDeleter deleterFunc,
-                      CacheEntryValuePromoteHot promoteHotFunc = NULL)
-  {
+  CacheEntryCallbacks(CacheEntryValueDeleter deleterFunc = NULL,
+      CacheEntryCompressor compressFunc = NULL,
+      CacheEntryDecompressor decompressFunc = NULL,
+      CacheEntryValuePromoteHot promoteHotFunc = NULL) {
     deleter = deleterFunc;
+    compressor = compressFunc;
+    decompressor = decompressFunc;
     promoteHot = promoteHotFunc;
+  }
+
+  void setValueDeleter(CacheEntryValueDeleter deleterFunc) {
+    this->deleter = deleterFunc;
+  }
+
+  void setPromoteToHotFunc(CacheEntryValuePromoteHot promoteHotFunc) {
+    this->promoteHot = promoteHotFunc;
   }
 };
 

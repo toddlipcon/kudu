@@ -4,6 +4,7 @@
 
 #include <glog/logging.h>
 
+#include "cfile/compression_codec.h"
 #include "gutil/gscoped_ptr.h"
 #include "util/cache.h"
 
@@ -48,6 +49,8 @@ public:
 private:
 
   static void ValueDeleter(const Slice &key, void *value);
+  static bool ValueCompressor(const Slice &key, void **cached_value, size_t *charge);
+  static bool ValueDecompressor(const Slice &key, void **cached_value, size_t *charge);
 
   static const CacheEntryCallbacks block_cache_callbacks_;
 
@@ -86,10 +89,7 @@ public:
   //
   // NOTE: this slice is only valid until the block cache handle is
   // destructed or explicitly Released().
-  const Slice &data() const {
-    const Slice *slice = reinterpret_cast<const Slice *>(cache_->Value(handle_));
-    return *slice;
-  }
+  const Slice data() const;
 
   bool valid() const {
     return handle_ != NULL;

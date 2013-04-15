@@ -42,6 +42,8 @@ public:
 Status GetCompressionCodec (CompressionType compression,
                             shared_ptr<CompressionCodec> *codec);
 
+CompressionType GetCompressionCodecType(const std::string& name);
+
 } // namespace cfile
 } // namespace kudu
 #endif
