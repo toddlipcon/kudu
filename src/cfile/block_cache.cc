@@ -45,13 +45,11 @@ struct CacheValue {
   size_t uncompressed_len;
   size_t compressed_len;
   const uint8_t *data;
-  bool is_compressed;
 
   CacheValue(const Slice& value) {
     uncompressed_len = value.size();
     compressed_len = 0;
     data = value.data();
-    is_compressed = false;
   }
 };
 
@@ -134,7 +132,6 @@ bool BlockCache::ValueCompressor(const Slice &key, void **cached_value, size_t *
   // Assign the compressed data
   value->compressed_len = compressed_len;
   value->data = compressed.release();
-  value->is_compressed = true;
   return true;
 }
 
@@ -161,14 +158,11 @@ Status BlockCache::ValueDecompressor(const Slice &key, void **cached_value, size
 
   // Assign the uncompressed data
   value->data = uncompressed.release();
-  value->is_compressed = false;
   return Status::OK();
 }
 
 const Slice BlockCacheHandle::data() const {
   const CacheValue *value = reinterpret_cast<const CacheValue *>(cache_->Value(handle_));
-  DCHECK_EQ(value->is_compressed, false);
-  if (value->is_compressed) printf("DHO COMPRESSED! %p\n", value);
   return Slice(value->data, value->uncompressed_len);
 }
 
