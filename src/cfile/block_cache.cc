@@ -12,6 +12,8 @@
 DEFINE_int64(block_cache_capacity_mb, 512, "block cache capacity in MB");
 DEFINE_string(block_cache_default_compression_codec, "",
               "Default block cache compression codec.");
+DEFINE_int64(block_cache_min_compression_size, 128,
+             "Default block cache compression min size, in byte.");
 
 namespace kudu {
 namespace cfile {
@@ -43,11 +45,13 @@ struct CacheValue {
   size_t uncompressed_len;
   size_t compressed_len;
   const uint8_t *data;
+  bool is_compressed;
 
   CacheValue(const Slice& value) {
     uncompressed_len = value.size();
     compressed_len = 0;
     data = value.data();
+    is_compressed = false;
   }
 };
 
@@ -56,7 +60,7 @@ BlockCache::BlockCache() :
 {}
 
 BlockCache::BlockCache(size_t capacity) :
-  cache_(CHECK_NOTNULL(NewLRUCache(capacity)))
+  cache_(CHECK_NOTNULL(NewFreqCache(capacity)))
 {}
 
 BlockCache *BlockCache::GetSingleton() {
@@ -97,8 +101,8 @@ void BlockCache::ValueDeleter(const Slice &key, void *cached_value) {
 
 bool BlockCache::ValueCompressor(const Slice &key, void **cached_value, size_t *charge) {
   CacheValue *value = reinterpret_cast<CacheValue *>(*cached_value);
-  //if (value->uncompressed_len <= 128)
-  //  return false;
+  if (value->uncompressed_len <= FLAGS_block_cache_min_compression_size)
+    return false;
 
   CompressionType compressionType = GetDefaultCompressionCodec();
   if (compressionType == NO_COMPRESSION)
@@ -106,7 +110,10 @@ bool BlockCache::ValueCompressor(const Slice &key, void **cached_value, size_t *
 
   shared_ptr<CompressionCodec> compression_codec;
   Status s = GetCompressionCodec(compressionType, &compression_codec);
-  if (!s.ok()) return false;
+  if (!s.ok()) {
+    LOG(WARNING) << "Failed retrieve the compression codec " << s.ToString();
+    return false;
+  }
 
   size_t compressed_len = value->compressed_len;
   if (compressed_len == 0) {
@@ -117,7 +124,7 @@ bool BlockCache::ValueCompressor(const Slice &key, void **cached_value, size_t *
   s = compression_codec->Compress(Slice(value->data, value->uncompressed_len),
                                   compressed.get(), &compressed_len);
   if (!s.ok()) {
-    LOG(WARNING) << "Failed to decompress " << s.ToString();
+    LOG(WARNING) << "Failed to compress " << s.ToString();
     return false;
   }
 
@@ -127,26 +134,26 @@ bool BlockCache::ValueCompressor(const Slice &key, void **cached_value, size_t *
   // Assign the compressed data
   value->compressed_len = compressed_len;
   value->data = compressed.release();
+  value->is_compressed = true;
   return true;
 }
 
-bool BlockCache::ValueDecompressor(const Slice &key, void **cached_value, size_t *charge) {
+Status BlockCache::ValueDecompressor(const Slice &key, void **cached_value, size_t *charge) {
   CacheValue *value = reinterpret_cast<CacheValue *>(*cached_value);
 
   CompressionType compressionType = GetDefaultCompressionCodec();
   if (compressionType == NO_COMPRESSION)
-    return true;
+    return Status::OK();
 
   shared_ptr<CompressionCodec> compression_codec;
-  Status s = GetCompressionCodec(compressionType, &compression_codec);
-  if (!s.ok()) return false;
+  RETURN_NOT_OK(GetCompressionCodec(compressionType, &compression_codec));
 
   gscoped_array<uint8_t> uncompressed(new uint8_t[value->uncompressed_len]);
-  s = compression_codec->Uncompress(Slice(value->data, value->compressed_len),
-                                    uncompressed.get(), value->uncompressed_len);
+  Status s = compression_codec->Uncompress(Slice(value->data, value->compressed_len),
+                                           uncompressed.get(), value->uncompressed_len);
   if (!s.ok()) {
     LOG(WARNING) << "Failed to decompress " << s.ToString();
-    return false;
+    return s;
   }
 
   // free the compressed data
@@ -154,11 +161,14 @@ bool BlockCache::ValueDecompressor(const Slice &key, void **cached_value, size_t
 
   // Assign the uncompressed data
   value->data = uncompressed.release();
-  return true;
+  value->is_compressed = false;
+  return Status::OK();
 }
 
 const Slice BlockCacheHandle::data() const {
   const CacheValue *value = reinterpret_cast<const CacheValue *>(cache_->Value(handle_));
+  DCHECK_EQ(value->is_compressed, false);
+  if (value->is_compressed) printf("DHO COMPRESSED! %p\n", value);
   return Slice(value->data, value->uncompressed_len);
 }
 

@@ -17,7 +17,7 @@ using kudu::Slice;
 /* ===========================================================================
  */
 #define NTHREADS                      16
-#define NTESTS                        7000000
+#define NTESTS                        70000
 #define DEFAULT_CACHE_CAPACITY        512
 
 #define __key(k, capacity)            (k % ((capacity) >> 0))

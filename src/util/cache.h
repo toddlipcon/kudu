@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 #include "util/slice.h"
+#include "util/status.h"
 
 namespace kudu {
 
@@ -40,15 +41,27 @@ typedef bool (*CacheEntryValuePromoteHot) (const Slice& key,
                                            void **new_value,
                                            size_t *new_charge);
 
+// Callback to compress the value of the entry identified by "key".
+// This function is called only when no one else is referencing the object
+// and the user is responsible to free the value object if replaced.
+// Returning "false" means that the item was not compressed, and the cache will
+// keep having the uncompressed version.
 typedef bool (*CacheEntryCompressor) (const Slice& key, void **value, size_t *charge);
-typedef bool (*CacheEntryDecompressor) (const Slice& key, void **value, size_t *charge);
+
+// Callback to uncompress the value of the entry identified by "key"
+// This function is called on Cache->Lookup() if the entry is compressed.
+// the user is responsible to free the value object if replaced.
+typedef Status (*CacheEntryDecompressor) (const Slice& key, void **value, size_t *charge);
 
 struct CacheEntryCallbacks {
   // called when the element is removed from the cache.
   // The user is responsible to delete the "value".
   CacheEntryValueDeleter deleter;
 
+  // called on Cache::Release() if there're no other user of this entry.
   CacheEntryCompressor compressor;
+
+  // called when the element is retrieved: Cache::Lookup()
   CacheEntryDecompressor decompressor;
 
   // called when the element becames hot. (used by the freq cache)
@@ -62,14 +75,6 @@ struct CacheEntryCallbacks {
     compressor = compressFunc;
     decompressor = decompressFunc;
     promoteHot = promoteHotFunc;
-  }
-
-  void setValueDeleter(CacheEntryValueDeleter deleterFunc) {
-    this->deleter = deleterFunc;
-  }
-
-  void setPromoteToHotFunc(CacheEntryValuePromoteHot promoteHotFunc) {
-    this->promoteHot = promoteHotFunc;
   }
 };
 

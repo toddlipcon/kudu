@@ -50,7 +50,7 @@ private:
 
   static void ValueDeleter(const Slice &key, void *value);
   static bool ValueCompressor(const Slice &key, void **cached_value, size_t *charge);
-  static bool ValueDecompressor(const Slice &key, void **cached_value, size_t *charge);
+  static Status ValueDecompressor(const Slice &key, void **cached_value, size_t *charge);
 
   static const CacheEntryCallbacks block_cache_callbacks_;
 
