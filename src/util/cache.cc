@@ -101,6 +101,7 @@ struct CacheHandle {
 };
 
 typedef boost::intrusive::list<CacheHandle,
+    boost::intrusive::constant_time_size<true>,
     boost::intrusive::member_hook<CacheHandle, boost::intrusive::list_member_hook<>,
       &CacheHandle::queue_hook> > CacheQueue;
 
@@ -315,6 +316,10 @@ class AbstractCache {
     capacity_ = capacity;
   }
 
+  bool IsOverCapacity (void) const {
+    return space_used_ > capacity_;
+  }
+
   uint64_t capacity (void) const {
     return capacity_;
   }
@@ -434,10 +439,10 @@ Cache::Handle *AbstractCache::Insert(const Slice& key, uint32_t hash, void *valu
   CacheHandle *old = table_.Insert(entry);
   policy_->Insert(this, entry, old);
   if (old != NULL) {
-    if (charge > old->charge)
+    if (charge > old->charge && IsOverCapacity())
       policy_->Reclaim(this);
     EntryUnref(old);
-  } else {
+  } else if (IsOverCapacity()) {
     policy_->Reclaim(this);
   }
   EntryUnref(entry);
@@ -476,12 +481,9 @@ CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, voi
   CacheHandle *entry = new (mem) CacheHandle();
   memcpy(mem + sizeof(CacheHandle), key.data(), key.size());
 
-  entry->value = value;
-  entry->callbacks = callbacks;
-
-  // One from the cache, one for the user returned pointer and one for the lookup func
+  // One ref from the cache, one ref for the user returned pointer and one ref for the lookup func
   entry->refs = 3;
-  entry->set_state(CACHE_ENTRY_IS_NEW);
+  entry->state = CACHE_ENTRY_IS_NEW;
   entry->is_compressed = false;
   entry->is_hot = is_hot;
   entry->freq = 0;
@@ -492,6 +494,9 @@ CacheHandle *AbstractCache::CreateNewHandle(const Slice& key, uint32_t hash, voi
   entry->key_hash = hash;
   entry->charge = charge;
   entry->key_size = key.size();
+
+  entry->value = value;
+  entry->callbacks = callbacks;
 
   base::subtle::NoBarrier_AtomicIncrement(&space_used_, charge);
   return(entry);
@@ -628,8 +633,8 @@ class LRUCachePolicy : public CachePolicy {
 };
 
 class LRUCache : public AbstractCache {
-  public:
-    LRUCache() : AbstractCache(new LRUCachePolicy) {};
+ public:
+  LRUCache() : AbstractCache(new LRUCachePolicy) {};
 };
 
 /* ===========================================================================
@@ -696,19 +701,18 @@ class FreqCachePolicy : public CachePolicy {
 
   void Reclaim(AbstractCache *cache) {
     boost::lock_guard<MutexType> lock(mutex_);
-    for (int priority = 12; cache->space_used() > cache->capacity(); priority--) {
-      size_t inactive = (inactive_.size() >> priority) + 1;
-      size_t active = (active_.size() >> priority) + 1;
-      ShrinkActive(active);
-      EntryReclaim(cache, &inactive_, inactive);
-    }
-  }
+    for (int priority = 12; cache->IsOverCapacity(); priority--) {
+      // Move some active pages to the inactive queue head
+      size_t active_to_move = (active_.size() >> priority) + 1;
+      while (active_to_move-- && !active_.empty()) {
+        CacheHandle *entry = EntryPopFromQueue(&active_);
+        EntryAddToQueueHead(&inactive_, entry);
+        Release_Store(&(entry->freq), kActiveFreq - 1);
+      }
 
-  void ShrinkActive (unsigned long entriesCount) {
-    while (entriesCount-- && !active_.empty()) {
-      CacheHandle *entry = EntryPopFromQueue(&active_);
-      EntryAddToQueueHead(&inactive_, entry);
-      Release_Store(&(entry->freq), kActiveFreq - 1);
+      // Reclaim entries from the inactive queue
+      size_t inactive_to_reclaim = (inactive_.size() >> priority) + 1;
+      EntryReclaim(cache, &inactive_, inactive_to_reclaim);
     }
   }
 
@@ -720,13 +724,13 @@ class FreqCachePolicy : public CachePolicy {
       CachePolicy::EntryRemoveFromQueue(&active_, entry);
   }
 
-  static const unsigned int kActiveFreq = 1;
-  static const unsigned int kHotFreq = 3;
-
  private:
   MutexType mutex_;
   CacheQueue active_;
   CacheQueue inactive_;
+
+  static const unsigned int kHotFreq = 3;
+  static const unsigned int kActiveFreq = 1;
 };
 
 class FreqCache : public AbstractCache {
