@@ -300,6 +300,9 @@ IF (UNIX)
   ADD_CUSTOM_TARGET(ctags ctags -R --languages=c++,c --exclude=thirdparty/installed)
 ENDIF (UNIX)
 
+# allow linking of static libs into dynamic libs
+ADD_DEFINITIONS(-fPIC)
+
 ############################################################
 # "make etags" target
 ############################################################
@@ -374,5 +377,7 @@ add_subdirectory(src/integration-tests)
 add_subdirectory(src/experiments)
 
 add_subdirectory(src/benchmarks)
+
+add_subdirectory(src/libkudu)
 
 add_subdirectory(src/twitter-demo)
