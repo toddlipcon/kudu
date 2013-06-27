@@ -5,6 +5,7 @@
 #include <boost/foreach.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/thread/mutex.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <iostream>
@@ -18,6 +19,8 @@
 #include "rpc/transfer.h"
 #include "util/status.h"
 
+using boost::lock_guard;
+using boost::unique_lock;
 using std::tr1::shared_ptr;
 using std::vector;
 
@@ -121,12 +124,13 @@ void Connection::QueueOutbound(gscoped_ptr<OutboundTransfer> transfer) {
     return;
   }
 
-  DVLOG(3) << "Queued transfer: " << transfer->HexDump();
+  lock_guard<simple_spinlock> l(outbound_transfer_lock_);
   if (outbound_transfers_.empty()) {
     // If we weren't currently in the middle of sending anything,
     // then our write_io_ interest is stopped. Need to re-start it.
     write_io_.start();
   }
+  DVLOG(3) << "Queued transfer: " << transfer->HexDump();
   outbound_transfers_.push_back(*transfer.release());
 }
 
@@ -285,6 +289,25 @@ class QueueTransferTask : public ReactorTask {
   Connection *conn_;
 };
 
+class ContinueAlreadyQueuedTransferTask : public ReactorTask {
+ public:
+  ContinueAlreadyQueuedTransferTask(Connection *conn)
+    : conn_(conn)
+  {}
+
+  virtual void Run(ReactorThread *thr) {
+    conn_->write_io_.start();
+    delete this;
+  }
+
+  virtual void Abort(const Status &status) {
+    delete this;
+  }
+
+ private:
+  Connection *conn_;
+};
+
 void Connection::QueueResponseForCall(gscoped_ptr<InboundCall> call) {
   // This is called by the IPC worker thread when the response is set.
   DCHECK(!reactor_thread_->IsCurrentThread());
@@ -301,8 +324,33 @@ void Connection::QueueResponseForCall(gscoped_ptr<InboundCall> call) {
   // After the response is sent, can delete the InboundCall object.
   gscoped_ptr<OutboundTransfer> t(new OutboundTransfer(slices, cb));
 
+  {
+    unique_lock<simple_spinlock> l(outbound_transfer_lock_, boost::try_to_lock);
+    if (l.owns_lock() && outbound_transfers_.empty() && !connect_in_progress_) {
+      DVLOG(3) << "Sending from non-reactor thread";
+      // No one else was already sending on this connection, try to send it immediately.
+      last_activity_time_ = reactor_thread_->cur_time();
+
+      Status s = t->SendBuffer(socket_);
+      CHECK(s.ok()) << "TODO: handle error here";
+      if (t->TransferFinished()) {
+        DVLOG(3) << "Fully sent from non-reactor thread";
+
+        return;
+      }
+
+      outbound_transfers_.push_back(*t.release());
+      ContinueAlreadyQueuedTransferTask *task = new ContinueAlreadyQueuedTransferTask(
+        this);
+      reactor_thread_->reactor()->ScheduleReactorTask(task);
+      return;
+    }
+  }
+  // LOG(INFO) << "Unable to send from non-reactor thread, queueing it";
+
   QueueTransferTask *task = new QueueTransferTask(t.Pass(), this);
   reactor_thread_->reactor()->ScheduleReactorTask(task);
+
 }
 
 const Sockaddr& Connection::remote() const {
@@ -428,31 +476,35 @@ void Connection::WriteHandler(ev::io &watcher, int revents) {
   }
 
   OutboundTransfer *transfer;
-  if (outbound_transfers_.empty()) {
-    LOG(WARNING) << ToString() << " got a ready-to-write callback, but there is "
-      "nothing to write.";
-    write_io_.stop();
-    return;
-  }
 
-  while (!outbound_transfers_.empty()) {
-    transfer = &(outbound_transfers_.front());
-
-    last_activity_time_ = reactor_thread_->cur_time();
-    Status status = transfer->SendBuffer(socket_);
-    if (PREDICT_FALSE(!status.ok())) {
-      LOG(WARNING) << ToString() << " send error: " << status.ToString();
-      reactor_thread_->DestroyConnection(this, status);
+  lock_guard<simple_spinlock> l(outbound_transfer_lock_);
+  {
+    if (outbound_transfers_.empty()) {
+      LOG(WARNING) << ToString() << " got a ready-to-write callback, but there is "
+        "nothing to write.";
+      write_io_.stop();
       return;
     }
 
-    if (!transfer->TransferFinished()) {
-      DVLOG(3) << ToString() << ": writeHandler: xfer not finished.";
-      return;
-    }
+    while (!outbound_transfers_.empty()) {
+      transfer = &(outbound_transfers_.front());
 
-    outbound_transfers_.pop_front();
-    delete transfer;
+      last_activity_time_ = reactor_thread_->cur_time();
+      Status status = transfer->SendBuffer(socket_);
+      if (PREDICT_FALSE(!status.ok())) {
+        LOG(WARNING) << ToString() << " send error: " << status.ToString();
+        reactor_thread_->DestroyConnection(this, status);
+        return;
+      }
+
+      if (!transfer->TransferFinished()) {
+        DVLOG(3) << ToString() << ": writeHandler: xfer not finished.";
+        return;
+      }
+
+      outbound_transfers_.pop_front();
+      delete transfer;
+    }
   }
 
 

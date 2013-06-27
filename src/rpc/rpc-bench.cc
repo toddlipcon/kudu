@@ -45,7 +45,7 @@ class ClientThread {
   }
 
   void Run() {
-    shared_ptr<Messenger> client_messenger = bench_->client_messenger_;//CreateMessenger("Client");
+    shared_ptr<Messenger> client_messenger = bench_->CreateMessenger("Client", 1);
 
     CalculatorServiceProxy p(client_messenger, bench_->server_addr_);
 
@@ -69,7 +69,7 @@ class ClientThread {
 
 // Test making successful RPC calls.
 TEST_F(RpcBench, BenchmarkCalls) {
-  n_worker_threads_ = 1;
+  n_worker_threads_ = 4;
 
   // Set up server.
   StartTestServerWithGeneratedCode(&server_addr_);
@@ -82,7 +82,7 @@ TEST_F(RpcBench, BenchmarkCalls) {
   sw.start();
 
   boost::ptr_vector<ClientThread> threads;
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < 4; i++) {
     ClientThread *thr = new ClientThread(this);
     thr->Start();
     threads.push_back(thr);

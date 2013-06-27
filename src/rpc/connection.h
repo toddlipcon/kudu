@@ -16,6 +16,7 @@
 #include "rpc/sockaddr.h"
 #include "rpc/socket.h"
 #include "rpc/transfer.h"
+#include "util/locks.h"
 #include "util/monotime.h"
 #include "util/object_pool.h"
 #include "util/status.h"
@@ -109,6 +110,7 @@ class Connection : public std::tr1::enable_shared_from_this<Connection> {
 
 private:
   friend struct CallAwaitingResponse;
+  friend class ContinueAlreadyQueuedTransferTask;
   friend class QueueTransferTask;
   friend struct ResponseTransferCallbacks;
 
@@ -176,6 +178,7 @@ private:
   ev::io read_io_;
 
   // waiting to be sent
+  simple_spinlock outbound_transfer_lock_;
   boost::intrusive::list<OutboundTransfer> outbound_transfers_;
 
   // Calls which have been sent and are now waiting for a response.

@@ -51,6 +51,7 @@ TEST_F(TestRpc, TestCall) {
   Proxy p(client_messenger, server_addr);
 
   for (int i = 0; i < 10; i++) {
+    LOG(INFO) << "Making call " << i;
     ASSERT_STATUS_OK(DoTestSyncCall(p, GenericCalculatorService::kAddMethodName));
   }
 }
