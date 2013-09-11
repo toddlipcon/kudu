@@ -1,0 +1,8 @@
+[dashboard]
+  title = Kudu dashboard
+  description = Recent open and merged changes
+[section "Open Changes"]
+  query = status:open project:kudu limit:15
+[section "Merged Changes"]
+  query = status:merged project:kudu limit:15
+
