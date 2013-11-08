@@ -21,7 +21,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/bind.hpp>
 #include <google/malloc_extension.h>
-
+#include <gperftools/heap-checker.h>
 #include "server/pprof-path-handlers.cc"
 #include "server/webserver.h"
 #include "util/metrics.h"
@@ -116,12 +116,23 @@ static void MemUsageHandler(const Webserver::ArgumentMap& args, stringstream* ou
 #endif
 }
 
+static void LeaksHandler(const Webserver::ArgumentMap& args, stringstream* output) {
+  if (!HeapLeakChecker::IsActive()) {
+    (*output) << "Heap checker not active";
+    return;
+  }
+  bool success = HeapLeakChecker::NoGlobalLeaks();
+  (*output) << (success ? "successful" : "failed");
+}
+
 void AddDefaultPathHandlers(Webserver* webserver) {
   webserver->RegisterPathHandler("/logs", LogsHandler);
   webserver->RegisterPathHandler("/varz", FlagsHandler);
   webserver->RegisterPathHandler("/memz", MemUsageHandler);
 
 #ifndef ADDRESS_SANITIZER
+  webserver->RegisterPathHandler("/leakz", LeaksHandler);
+
   // Remote (on-demand) profiling is disabled if the process is already being profiled.
   if (!FLAGS_enable_process_lifetime_heap_profiling) {
     AddPprofPathHandlers(webserver);

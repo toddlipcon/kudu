@@ -3,6 +3,7 @@
 #include <boost/thread/thread.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <google/heap-profiler.h>
 #include <iostream>
 
 #include "common/schema.h"
@@ -20,6 +21,9 @@
 using kudu::tablet::Tablet;
 using kudu::tablet::TabletPeer;
 using kudu::tserver::TabletServer;
+
+DECLARE_string(heap_profile_dir);
+DECLARE_bool(enable_process_lifetime_heap_profiling);
 
 DEFINE_int32(flush_threshold_mb, 64, "Minimum memrowset size to flush");
 
@@ -102,6 +106,13 @@ static int TabletServerMain(int argc, char** argv) {
     std::cerr << "usage: " << argv[0] << std::endl;
     return 1;
   }
+
+#ifndef ADDRESS_SANITIZER
+  // tcmalloc and address sanitizer can not be used together
+  if (FLAGS_enable_process_lifetime_heap_profiling) {
+    HeapProfilerStart(FLAGS_heap_profile_dir.c_str());
+  }
+#endif
 
   TabletServerOptions opts;
   TabletServer server(opts);
