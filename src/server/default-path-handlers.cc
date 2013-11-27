@@ -20,16 +20,25 @@
 #include <sys/stat.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/bind.hpp>
+#include <boost/foreach.hpp>
 #include <google/malloc_extension.h>
+#include <vector>
+#include <tr1/unordered_map>
 
+#include "gutil/stl_util.h"
+#include "gutil/stringprintf.h"
+#include "gutil/strings/substitute.h"
 #include "server/pprof-path-handlers.cc"
 #include "server/webserver.h"
+#include "util/debug-util.h"
 #include "util/metrics.h"
 #include "util/jsonwriter.h"
 
 using boost::replace_all;
 using google::CommandlineFlagsIntoString;
 using std::string;
+using std::tr1::unordered_map;
+using std::vector;
 
 DECLARE_bool(enable_process_lifetime_heap_profiling);
 DEFINE_int64(web_log_bytes, 1024 * 1024,
@@ -116,11 +125,45 @@ static void MemUsageHandler(const Webserver::ArgumentMap& args, stringstream* ou
 #endif
 }
 
+static void StacksHandler(const Webserver::ArgumentMap& args, stringstream* output) {
+  bool as_text = (args.find("raw") != args.end());
+  Tags tags(as_text);
+
+  unordered_map<pid_t, vector<void*>* > stacks;
+  ValueDeleter d(&stacks);
+  CollectAllThreadStacks(&stacks);
+
+  *output << tags.pre_tag;
+
+  StackFrameResolver srf;
+
+  bool first = true;
+  typedef pair<pid_t, vector<void*>* > entry_type;
+  BOOST_FOREACH(const entry_type &e, stacks) {
+    if (!first) {
+      *output << tags.line_break << tags.line_break;
+    }
+    first = false;
+
+    pid_t p = e.first;
+    *output << "Thread ID " << p << tags.line_break;
+    BOOST_FOREACH(const void* frame, *e.second) {
+      FrameInfo fi;
+      srf.GetInfo(frame, &fi);
+      *output << StringPrintf("%p ", frame);
+      *output << strings::Substitute("$0 at $1:$2", fi.function, fi.file, fi.line_number);
+      *output << tags.line_break;
+    }
+  }
+
+  *output << tags.end_pre_tag;
+}
+
 void AddDefaultPathHandlers(Webserver* webserver) {
   webserver->RegisterPathHandler("/logs", LogsHandler);
   webserver->RegisterPathHandler("/varz", FlagsHandler);
   webserver->RegisterPathHandler("/memz", MemUsageHandler);
-
+  webserver->RegisterPathHandler("/stackz", StacksHandler);
 #ifndef ADDRESS_SANITIZER
   // Remote (on-demand) profiling is disabled if the process is already being profiled.
   if (!FLAGS_enable_process_lifetime_heap_profiling) {

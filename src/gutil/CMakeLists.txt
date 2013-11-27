@@ -36,6 +36,8 @@ ADD_LIBRARY(gutil
 ./once.cc
 ./atomicops-internals-x86.cc
 ./spinlock_wait.cc
+./thread_lister.c
+./linuxthreads.cc
 ./walltime.cc
 ./hash/hash.cc
 ./hash/jenkins.cc

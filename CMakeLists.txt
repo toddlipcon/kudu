@@ -271,6 +271,12 @@ find_package(Squeasel REQUIRED)
 include_directories(SYSTEM ${SQUEASEL_INCLUDE_DIR})
 set(LIBS ${LIBS} ${SQUEASEL_STATIC_LIB})
 
+## libunwind
+set(LIBS ${LIBS} /home/todd/git/kudu/thirdparty/installed/lib/libunwind.a)
+set(LIBS ${LIBS} /home/todd/git/kudu/thirdparty/installed/lib/libunwind-ptrace.a)
+set(LIBS ${LIBS} /home/todd/git/kudu/thirdparty/installed/lib/libunwind-generic.a)
+set(LIBS ${LIBS} /home/todd/git/kudu/thirdparty/installed/lib/libunwind-x86_64.a)
+
 ## Google PerfTools
 find_package( GPerf REQUIRED )
 if (NOT "${KUDU_USE_ASAN}")
