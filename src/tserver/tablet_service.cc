@@ -214,10 +214,8 @@ void TabletServiceImpl::AlterSchema(const AlterSchemaRequestPB* req,
   }
 
   AlterSchemaTransactionState *tx_state =
-    new AlterSchemaTransactionState(tablet_peer.get(), req, resp);
-
-  tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-      new RpcTransactionCompletionCallback(context, resp)).Pass());
+    new AlterSchemaTransactionState(tablet_peer.get(), req, resp,
+                                    make_gscoped_ptr(new RpcTransactionCompletionCallback(context, resp)));
 
   // Submit the alter schema op. The RPC will be responded to asynchronously.
   Status s = tablet_peer->SubmitAlterSchema(tx_state);
@@ -299,10 +297,8 @@ void TabletServiceImpl::ChangeConfig(const ChangeConfigRequestPB* req,
   if (!LookupTabletOrRespond(req->tablet_id(), &tablet_peer, resp, context)) return;
 
   ChangeConfigTransactionState *tx_state =
-    new ChangeConfigTransactionState(tablet_peer.get(), req, resp);
-
-  tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-      new RpcTransactionCompletionCallback(context, resp)).Pass());
+    new ChangeConfigTransactionState(tablet_peer.get(), req, resp,
+                                     make_gscoped_ptr(new RpcTransactionCompletionCallback(context, resp)));
 
   // Submit the change config op. The RPC will be responded to asynchronously.
   Status s = tablet_peer->SubmitChangeConfig(tx_state);
@@ -333,7 +329,8 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
   }
 
   WriteTransactionState *state =
-    new WriteTransactionState(tablet_peer.get(), req, resp);
+    new WriteTransactionState(tablet_peer.get(), req, resp,
+                              make_gscoped_ptr(new RpcTransactionCompletionCallback(context, resp)));
 
   // If the consistency mode is set to CLIENT_PROPAGATED and the client
   // sent us a timestamp, decode it and set it in the transaction context.
@@ -349,6 +346,7 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
         s = server_->clock()->Update(ts);
       }
     }
+    // TODO(dralves): doesn't this leak 'state'?
     if (PREDICT_FALSE(!s.ok())) {
       SetupErrorAndRespond(resp->mutable_error(), s,
                            TabletServerErrorPB::UNKNOWN_ERROR,
@@ -356,9 +354,6 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
       return;
     }
   }
-
-  state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-      new RpcTransactionCompletionCallback(context, resp)).Pass());
 
   // Submit the write. The RPC will be responded to asynchronously.
   WARN_NOT_OK(tablet_peer->SubmitWrite(state), "Could not execute write transaction.");

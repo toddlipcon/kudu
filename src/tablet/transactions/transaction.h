@@ -130,10 +130,6 @@ class TransactionState {
     return &tx_metrics_;
   }
 
-  void set_completion_callback(gscoped_ptr<TransactionCompletionCallback> completion_clbk) {
-    completion_clbk_.reset(completion_clbk.release());
-  }
-
   // Returns the completion callback.
   TransactionCompletionCallback* completion_callback() {
     return DCHECK_NOTNULL(completion_clbk_.get());
@@ -192,7 +188,8 @@ class TransactionState {
   }
 
  protected:
-  explicit TransactionState(TabletPeer* tablet_peer);
+  TransactionState(TabletPeer* tablet_peer,
+                   gscoped_ptr<TransactionCompletionCallback> callback);
   virtual ~TransactionState();
 
   TransactionMetrics tx_metrics_;

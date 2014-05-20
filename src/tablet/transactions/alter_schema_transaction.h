@@ -23,24 +23,18 @@ namespace tablet {
 // Keeps track of the Transaction states (request, result, ...)
 class AlterSchemaTransactionState : public TransactionState {
  public:
-  explicit AlterSchemaTransactionState(const tserver::AlterSchemaRequestPB* request)
-      : TransactionState(NULL),
+  AlterSchemaTransactionState(TabletPeer* tablet_peer,
+                              const tserver::AlterSchemaRequestPB* request,
+                              tserver::AlterSchemaResponsePB* response,
+                              gscoped_ptr<TransactionCompletionCallback> callback)
+      : TransactionState(tablet_peer, callback),
         schema_(NULL),
         request_(request),
-        response_(NULL) {
+        response_(response) {
   }
 
   ~AlterSchemaTransactionState() {
     release_component_lock();
-  }
-
-  AlterSchemaTransactionState(TabletPeer* tablet_peer,
-                              const tserver::AlterSchemaRequestPB* request,
-                              tserver::AlterSchemaResponsePB* response)
-      : TransactionState(tablet_peer),
-        schema_(NULL),
-        request_(request),
-        response_(response) {
   }
 
   const tserver::AlterSchemaRequestPB* request() const { return request_; }

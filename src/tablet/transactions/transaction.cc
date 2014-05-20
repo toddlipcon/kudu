@@ -10,9 +10,10 @@ Transaction::Transaction(TransactionState* state, DriverType type)
       type_(type) {
 }
 
-TransactionState::TransactionState(TabletPeer* tablet_peer)
+TransactionState::TransactionState(TabletPeer* tablet_peer,
+                                   gscoped_ptr<TransactionCompletionCallback> callback)
     : tablet_peer_(tablet_peer),
-      completion_clbk_(new TransactionCompletionCallback()),
+      completion_clbk_(callback.Pass()),
       timestamp_error_(0),
       arena_(32 * 1024, 4 * 1024 * 1024),
       external_consistency_mode_(NO_CONSISTENCY) {

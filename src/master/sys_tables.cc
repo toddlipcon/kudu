@@ -137,8 +137,8 @@ Status SysTable::SyncWrite(const WriteRequestPB *req, WriteResponsePB *resp) {
   gscoped_ptr<tablet::TransactionCompletionCallback> txn_callback(
     new LatchTransactionCompletionCallback<WriteResponsePB>(&latch, resp));
   tablet::WriteTransactionState *tx_state =
-    new tablet::WriteTransactionState(tablet_peer_.get(), req, resp);
-  tx_state->set_completion_callback(txn_callback.Pass());
+    new tablet::WriteTransactionState(tablet_peer_.get(), req, resp,
+                                      txn_callback.Pass());
 
   RETURN_NOT_OK(tablet_peer_->SubmitWrite(tx_state));
   latch.Wait();

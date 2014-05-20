@@ -126,13 +126,12 @@ class TabletPeerTest : public KuduTabletTest {
   }
 
   Status ExecuteWriteAndRollLog(TabletPeer* tablet_peer, const WriteRequestPB& req) {
-    WriteResponsePB resp;
-    WriteTransactionState* tx_state =
-        new WriteTransactionState(tablet_peer, &req, &resp);
-
     CountDownLatch rpc_latch(1);
-    tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-        new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, &resp)).Pass());
+    gscoped_ptr<TransactionCompletionCallback> callback(
+      new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, &resp));
+    WriteResponsePB resp;
+    WriteTransactionState* tx_state = new WriteTransactionState(tablet_peer, &req, &resp, callback);
+
 
     CHECK_OK(tablet_peer->SubmitWrite(tx_state));
     rpc_latch.Wait();
@@ -340,11 +339,11 @@ TEST_F(TabletPeerTest, TestActiveTransactionPreventsLogGC) {
     // Long-running mutation.
     ASSERT_STATUS_OK(GenerateSequentialDeleteRequest(&req));
     WriteResponsePB resp;
-    WriteTransactionState* tx_state =
-      new WriteTransactionState(tablet_peer_.get(), &req, &resp);
 
-    tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-          new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, &resp)).Pass());
+    gscoped_ptr<TransactionCompletionCallback> callback(
+      new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, &resp));
+    WriteTransactionState* tx_state =
+      new WriteTransactionState(tablet_peer_.get(), &req, &resp, callback.Pass());
 
     LeaderTransactionDriver* driver = new LeaderTransactionDriver(
         &tablet_peer_->txn_tracker_,

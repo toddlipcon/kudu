@@ -226,7 +226,7 @@ Status LeaderTransactionDriver::ApplyAndCommit() {
 }
 
 void LeaderTransactionDriver::ApplyAndCommitSucceeded() {
-  boost::lock_guard<simple_spinlock> lock(lock_);
+  boost::unique_lock<simple_spinlock> lock(lock_);
   transaction_->Finish();
   state()->completion_callback()->TransactionCompleted();
   txn_tracker_->Release(this);
