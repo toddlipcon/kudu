@@ -18,6 +18,7 @@
 #include "consensus/opid_anchor_registry.h"
 #include "gutil/ref_counted.h"
 #include "gutil/stl_util.h"
+#include "gutil/strings/substitute.h"
 #include "gutil/strings/util.h"
 #include "gutil/walltime.h"
 #include "server/clock.h"

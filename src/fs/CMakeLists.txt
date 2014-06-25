@@ -5,13 +5,14 @@ PROTOBUF_GENERATE_CPP(FS_PROTO_SRCS FS_PROTO_HDRS
   BINARY_ROOT ${CMAKE_CURRENT_BINARY_DIR}/..
   PROTO_FILES fs.proto)
 
-add_library(fs_proto ${FS_PROTO_SRCS} ${FS_PROTO_HDRS})
+add_library(kudu_fs_proto ${FS_PROTO_SRCS} ${FS_PROTO_HDRS})
 
 add_library(kudu_fs
+  block_id.cc
   fs_manager.cc)
 
 target_link_libraries(kudu_fs
-  fs_proto
+  kudu_fs_proto
   kudu_util
   gutil)
 
