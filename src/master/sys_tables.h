@@ -7,7 +7,7 @@
 
 #include "master/master.pb.h"
 #include "server/metadata.h"
-#include "server/oid_generator.h"
+#include "util/oid_generator.h"
 #include "tablet/tablet_peer.h"
 #include "util/status.h"
 

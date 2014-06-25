@@ -22,7 +22,7 @@
 #include "gutil/walltime.h"
 #include "server/clock.h"
 #include "server/metadata.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "tablet/lock_manager.h"
 #include "tablet/tablet.h"
 #include "tablet/transactions/alter_schema_transaction.h"

@@ -16,7 +16,7 @@
 #include "master/master.h"
 #include "master/master.pb.h"
 #include "rpc/rpc_context.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "tablet/tablet_bootstrap.h"
 #include "tablet/transactions/write_transaction.h"
 #include "tablet/tablet.h"

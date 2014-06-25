@@ -17,7 +17,7 @@
 #include "gutil/strings/substitute.h"
 #include "gutil/strings/util.h"
 #include "master/master.pb.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "server/metadata.pb.h"
 #include "tablet/tablet.pb.h"
 #include "tablet/tablet.h"

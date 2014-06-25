@@ -46,6 +46,7 @@ target_link_libraries(tablet
   cfile
   gutil
   server_common
+  kudu_fs
   kudu_util
   consensus)
 

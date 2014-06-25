@@ -10,7 +10,7 @@
 #include "common/wire_protocol.pb.h"
 #include "rpc/messenger.h"
 #include "server/default-path-handlers.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "server/hybrid_clock.h"
 #include "server/logical_clock.h"
 #include "server/rpc_server.h"

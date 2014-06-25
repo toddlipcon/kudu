@@ -20,7 +20,7 @@
 #include "gutil/gscoped_ptr.h"
 #include "gutil/stl_util.h"
 #include "gutil/stringprintf.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "server/metadata.h"
 #include "tablet/transactions/write_util.h"
 #include "tserver/tserver.pb.h"

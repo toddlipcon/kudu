@@ -9,7 +9,7 @@
 #include "gutil/ref_counted.h"
 #include "gutil/stl_util.h"
 #include "gutil/strings/substitute.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "util/coding.h"
 #include "util/countdown_latch.h"
 #include "util/env_util.h"

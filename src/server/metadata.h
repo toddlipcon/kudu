@@ -11,7 +11,7 @@
 #include "common/schema.h"
 #include "gutil/atomicops.h"
 #include "gutil/ref_counted.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "server/metadata.pb.h"
 #include "util/env.h"
 #include "util/locks.h"

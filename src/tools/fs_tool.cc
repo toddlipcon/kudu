@@ -18,7 +18,7 @@
 #include "util/env.h"
 #include "util/memory/arena.h"
 #include "util/logging.h"
-#include "server/fsmanager.h"
+#include "fs/fs_manager.h"
 #include "common/rowblock.h"
 #include "common/row_changelist.h"
 #include "consensus/log_util.h"
