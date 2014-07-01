@@ -1,10 +1,13 @@
 # Copyright (c) 2013, Cloudera, inc.
 
+TP_DIR=$(dirname $BASH_SOURCE)
 PREFIX=$TP_DIR/installed
 
 # This URL corresponds to the CloudFront Distribution for the S3
 # bucket cloudera-thirdparty-libs which is directly accessible at
 # http://cloudera-thirdparty-libs.s3.amazonaws.com/
+S3_BUCKET_S3_URL=s3://cloudera-thirdparty-libs
+S3_BUCKET_HTTP_URL=http://cloudera-thirdparty-libs.s3.amazonaws.com
 CLOUDFRONT_URL_PREFIX=http://d3dr9sfxru4sde.cloudfront.net
 
 GFLAGS_VERSION=1.5
