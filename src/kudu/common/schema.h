@@ -483,6 +483,14 @@ class Schema {
     return Schema(key_cols, num_key_columns_);
   }
 
+  // Return a new Schema which is the same as this one, but with IDs assigned.
+  // Requires that the current schema has no IDs.
+  Schema CopyWithColumnIds() const;
+
+  // Return a new Schema which is the same as this one, but without any column
+  // IDs assigned.
+  Schema CopyWithoutColumnIds() const;
+
   // Create a new Schema which only includes columns specified by 'col_indexes'
   // (which must be sorted, but do not need to be contiguous) and write it into
   // 'out'; mapping between old and new column indexes is written to 'old_to_new'.
