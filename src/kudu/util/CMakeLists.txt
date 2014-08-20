@@ -50,6 +50,7 @@ add_library(kudu_util
   os-util.cc
   path_util.cc
   pb_util.cc
+  perf.cc
   random_util.cc
   resettable_heartbeater.cc
   rwc_lock.cc

@@ -12,6 +12,7 @@
 #include "kudu/server/logical_clock.h"
 #include "kudu/tablet/compaction.h"
 #include "kudu/tablet/tablet-test-util.h"
+#include "kudu/util/perf.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
 
@@ -307,6 +308,7 @@ class TestCompaction : public KuduRowSetTest {
 
     LOG_TIMING(INFO, "Compacting " +
                std::string((OVERLAP_INPUTS ? "with overlap" : "without overlap"))) {
+      PerfRecord perf;
       DoCompact(rowsets, schema_);
     }
   }
