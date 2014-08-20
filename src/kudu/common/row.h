@@ -46,26 +46,25 @@ template <class SrcCellType, class DstCellType, class ArenaType>
 Status CopyCellData(const SrcCellType &src, DstCellType* dst, ArenaType *dst_arena) {
   DCHECK_EQ(src.type(), dst->type());
 
+  const void* __restrict src_ptr = src.ptr();
+  void* __restrict dst_ptr = dst->mutable_ptr();
+
   if (src.type() == STRING) {
     // If it's a Slice column, need to relocate the referred-to data
     // as well as the slice itself.
     // TODO: potential optimization here: if the new value is smaller than
     // the old value, we could potentially just overwrite in some cases.
-    const Slice *src_slice = reinterpret_cast<const Slice *>(src.ptr());
-    Slice *dst_slice = reinterpret_cast<Slice *>(dst->mutable_ptr());
     if (dst_arena != NULL) {
+      const Slice *src_slice = reinterpret_cast<const Slice *>(src_ptr);
+      Slice *dst_slice = reinterpret_cast<Slice *>(dst_ptr);
       if (PREDICT_FALSE(!dst_arena->RelocateSlice(*src_slice, dst_slice))) {
         return Status::IOError("out of memory copying slice", src_slice->ToString());
       }
-    } else {
-      // Just copy the slice without relocating.
-      // This is used by callers who know that the source row's data is going
-      // to stick around for the scope of the destination.
-      *dst_slice = *src_slice;
+      return Status::OK();
     }
-  } else {
-    memcpy(dst->mutable_ptr(), src.ptr(), src.size()); // TODO: inline?
   }
+
+  memcpy(dst_ptr, src_ptr, src.size());
   return Status::OK();
 }
 
@@ -440,6 +439,9 @@ class ContiguousRowCell {
   DataType type() const { return type_info()->type(); }
   size_t size() const { return type_info()->size(); }
   const void* ptr() const { return row_->cell_ptr(col_idx_); }
+  const void* nullable_ptr() const {
+    return is_nullable() ? row_->nullable_cell_ptr(col_idx_) : ptr();
+  }
   void* mutable_ptr() const { return row_->mutable_cell_ptr(col_idx_); }
   bool is_nullable() const { return row_->schema()->column(col_idx_).is_nullable(); }
   bool is_null() const { return row_->is_null(col_idx_); }

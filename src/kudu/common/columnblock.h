@@ -117,9 +117,10 @@ class ColumnBlockCell {
 
   DataType type() const { return block_.type_info()->type(); }
   size_t size() const { return block_.type_info()->size(); }
-  const void* ptr() const {
+  const void* ptr() const { return block_.cell_ptr(row_idx_); }
+  const void* nullable_ptr() const {
     return is_nullable() ? block_.nullable_cell_ptr(row_idx_)
-      : block_.cell_ptr(row_idx_);
+      : ptr();
   }
   void* mutable_ptr() { return block_.mutable_cell_ptr(row_idx_); }
   bool is_nullable() const { return block_.is_nullable(); }

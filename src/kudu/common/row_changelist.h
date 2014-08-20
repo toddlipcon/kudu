@@ -246,7 +246,7 @@ class RowChangeListDecoder {
       typename RowType::Cell dst_cell = dst_row->cell(updated_col);
 
       // save the old cell on the undo encoder
-      undo_encoder->AddColumnUpdate(updated_col, dst_cell.ptr());
+      undo_encoder->AddColumnUpdate(updated_col, dst_cell.nullable_ptr());
 
       // copy the new cell to the row
       RETURN_NOT_OK(CopyCell(src, &dst_cell, arena));
