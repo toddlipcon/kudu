@@ -33,7 +33,8 @@ typedef llvm::ExecutionEngine JITCodeOwner;
 class JITWrapper : public RefCountedThreadSafe<JITWrapper> {
  public:
   enum JITWrapperType {
-    ROW_PROJECTOR
+    ROW_PROJECTOR,
+    ROWBLOCK_CONVERTER
   };
 
   // Returns the key encoding (for the code cache) for this upon success.

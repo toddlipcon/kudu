@@ -21,6 +21,7 @@ class ThreadPool;
 
 namespace codegen {
 
+class RowBlockConverter;
 class RowProjector;
 
 // The compilation manager is a top-level class which manages the actual
@@ -51,16 +52,20 @@ class CompilationManager {
     return Singleton<CompilationManager>::get();
   }
 
-  // If a codegenned row projector with compatible schemas (see
-  // codegen::JITSchemaPair::ProjectionsCompatible) is ready,
+  // For each of the following methods, if a cached output
+  // that is compatible with the given input is available,
   // then it is written to 'out' and true is returned.
-  // Otherwise, this enqueues a compilation task for the parameter
-  // schemas in the CompilationManager's thread pool and returns
-  // false. Upon any failure, false is returned.
+  // Otherwise, the methods enqueue a compilation task for the parameter
+  // input in the CompilationManager's thread pool and return false.
+  // Upon any other failure, false is returned.
   // Does not write to 'out' if false is returned.
+
   bool RequestRowProjector(const Schema* base_schema,
                            const Schema* projection,
                            gscoped_ptr<RowProjector>* out);
+  bool RequestRowBlockConverter(const Schema* src_schema,
+                                const Schema* dst_schema,
+                                gscoped_ptr<RowBlockConverter>* out);
 
   // Waits for all asynchronous compilation tasks to finish.
   void Wait();
@@ -76,6 +81,9 @@ class CompilationManager {
   CompilationManager();
 
   static void Shutdown();
+
+  template<class Traits>
+  scoped_refptr<typename Traits::Output> MakeRequest(const typename Traits::Input& in);
 
   CodeGenerator generator_;
   CodeCache cache_;

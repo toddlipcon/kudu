@@ -20,6 +20,7 @@ class Schema;
 
 namespace codegen {
 
+class RowBlockConverterFunction;
 class RowProjectorFunctions;
 
 // CodeGenerator is a top-level class that manages a per-module
@@ -51,6 +52,12 @@ class CodeGenerator {
   // calls exactly once.
   CodeGenerator();
   ~CodeGenerator();
+
+  // Attempts to initialize RowBlock to PB conversion function by
+  // compiling code for the parameter schemas. Writes to 'out' upon success.
+  Status CompileRowBlockConverter(const Schema& src_schema,
+                                  const Schema& dst_schema,
+                                  scoped_refptr<RowBlockConverterFunction>* out);
 
   // Attempts to initialize row projector functions by compiling code
   // for the parameter schemas. Writes to 'out' upon success.

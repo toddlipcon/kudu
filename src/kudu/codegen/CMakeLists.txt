@@ -17,6 +17,7 @@ add_library(codegen
   jit_wrapper.cc
   module_builder.cc
   row_projector.cc
+  rowblock_converter.cc
 )
 
 #######################################

@@ -24,7 +24,9 @@
 
 #include "kudu/common/rowblock.h"
 #include "kudu/util/bitmap.h"
+#include "kudu/util/faststring.h"
 #include "kudu/util/memory/arena.h"
+#include "kudu/util/slice.h"
 
 // Even though this file is only needed for IR purposes, we need to check for
 // IR_BUILD because we use a fake static library target to workaround a cmake
@@ -123,7 +125,7 @@ bool _PrecompiledCopyCellToRowBlockNullable(
   return _PrecompiledCopyCellToRowBlock(size, src, dst, col, is_string, arena);
 }
 
-// declare void @_PrecompiledSetRowBlockCellSetNull
+// declare void @_PrecompiledSetRowBlockCellSetNull(
 //   RowBlockRow* %dst, i64 <column index>, i1 %is_null)
 //
 //   Sets the cell at column 'col' for destination RowBlockRow 'dst'
@@ -131,6 +133,65 @@ bool _PrecompiledCopyCellToRowBlockNullable(
 void _PrecompiledCopyCellToRowBlockSetNull(
   RowBlockRow* dst, uint64_t col, bool is_null) {
   dst->cell(col).set_null(is_null);
+}
+
+// declare void @_PrecompiledCopyColumn(
+//   RowBlock* rb, i8* dst_base, faststring* indirect, i64 col_idx,
+//   i64 dst_col_idx, i64 row_stride, i64 offset_to_dst_col,
+//   i64 offset_to_null_bitmap, i64 cell_size, i1 is_nullable, i1 is_string)
+//
+//   Copies column 'col_idx' from RowBlock 'rb' to the destination column
+//   'dst_col_idx' (copied with rowwise orientation using 'row_stride')
+//   into 'dst_base', moving all indirect data over to 'indirect_data' and
+//   using 'offset_to_null_bitmap' to access each row's null bitmap if
+//   is_string or is_nullable are true, respectively.
+void _PrecompiledCopyColumn(
+  RowBlock* rb, uint8_t* dst_base, faststring* indirect, uint64_t col_idx,
+  uint64_t dst_col_idx, uint64_t row_stride, uint64_t offset_to_dst_col,
+  uint64_t offset_to_null_bitmap, uint64_t cell_size, bool is_nullable,
+  bool is_string) {
+  // We can use the ColumnBlock to read null cells but we don't want to use
+  // it for accessing cells because it won't be using 'cell_size' to do so.
+  ColumnBlock cblock = rb->column_block(col_idx);
+  uint8_t* src_cell = rb->column_data_base_ptr(col_idx);
+
+  uint8_t* dst_cell = dst_base + offset_to_dst_col;
+  uint8_t* dst_bitmap = dst_base + offset_to_null_bitmap;
+
+  BitmapIterator selected_row_iter(rb->selection_vector()->bitmap(),
+                                   rb->nrows());
+
+  int run_size;
+  bool selected;
+  int row_idx = 0;
+  while ((run_size = selected_row_iter.Next(&selected))) {
+    if (!selected) {
+      src_cell += run_size * cell_size;
+      row_idx += run_size;
+      continue;
+    }
+    for (int i = 0; i < run_size; ++i, dst_cell += row_stride,
+             dst_bitmap += row_stride, src_cell += cell_size, ++row_idx) {
+      if (is_nullable) {
+        if (cblock.is_null(row_idx)) {
+          memset(dst_cell, 0, cell_size); // avoid leaking server memory
+          BitmapChange(dst_bitmap, dst_col_idx, true);
+          continue;
+        }
+        BitmapChange(dst_bitmap, dst_col_idx, false);
+      }
+      if (is_string) {
+        const Slice *slice = reinterpret_cast<const Slice*>(src_cell);
+        size_t offset_in_indirect = indirect->size();
+        indirect->append(slice->data(), slice->size());
+        Slice *dst_slice = reinterpret_cast<Slice*>(dst_cell);
+        *dst_slice = Slice(reinterpret_cast<const uint8_t*>(offset_in_indirect),
+                           slice->size());
+      } else { // non-string
+        memcpy(dst_cell, src_cell, cell_size);
+      }
+    }
+  }
 }
 
 } // extern "C"

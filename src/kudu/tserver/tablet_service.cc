@@ -8,6 +8,8 @@
 #include <tr1/memory>
 #include <vector>
 
+#include "kudu/codegen/compilation_manager.h"
+#include "kudu/codegen/rowblock_converter.h"
 #include "kudu/common/iterator.h"
 #include "kudu/common/schema.h"
 #include "kudu/common/wire_protocol.h"
@@ -47,6 +49,9 @@ DEFINE_int32(scanner_max_batch_size_bytes, 8 * 1024 * 1024,
              "scan results.");
 DEFINE_int32(scanner_batch_size_rows, 100,
              "The number of rows to batch for servicing scan requests.");
+DEFINE_bool(tablet_service_use_codegen, true,
+            "Whether the tablet service should use code generation (for"
+            " faster RowBlock serialization");
 
 namespace kudu {
 namespace tserver {
@@ -242,9 +247,28 @@ class ScanResultCopier : public ScanResultCollector {
 
   virtual void HandleRowBlock(const Schema* client_projection_schema,
                               const RowBlock& row_block) OVERRIDE {
+    // cache me
+    gscoped_ptr<codegen::RowBlockConverter> converter;
+
+    // Get a RowBlockConverter if available.
+    const Schema* client_schema = scanner->client_projection_schema();
+    if (client_schema == NULL) {
+      client_schema = &block.schema();
+    }
+    if (FLAGS_tablet_service_use_codegen) {
+      codegen::CompilationManager::GetSingleton()->RequestRowBlockConverter(
+          &block.schema(), client_schema, &converter_);
+    }
+
     blocks_processed_++;
-    SerializeRowBlock(row_block, rowblock_pb_, client_projection_schema,
-                      rows_data_, indirect_data_);
+
+    if (PREDICT_TRUE(converter)) {
+      converter->ConvertRowBlockToPB(row_block, resp->mutable_data(),
+                                     rows_data.get(), indirect_data.get());
+    } else {
+      SerializeRowBlock(row_block, rowblock_pb_, client_projection_schema,
+                        rows_data_, indirect_data_);
+    }
     SetLastRow(row_block, &encoded_last_row_);
   }
 
@@ -1307,7 +1331,10 @@ Status TabletServiceImpl::HandleContinueScanRequest(const ScanRequestPB* req,
     }
 
     if (PREDICT_TRUE(block.nrows() > 0)) {
+<<<<<<< HEAD
       result_collector->HandleRowBlock(scanner->client_projection_schema(), block);
+=======
+>>>>>>> fe32aef... RB to PB Code generation.
     }
 
     int64_t response_size = result_collector->ResponseSize();

@@ -168,6 +168,7 @@ class HdrHistogram {
   base::subtle::Atomic64 total_count_;
   base::subtle::Atomic64 min_value_;
   base::subtle::Atomic64 max_value_;
+
   gscoped_array<base::subtle::Atomic64> counts_;
 
   HdrHistogram& operator=(const HdrHistogram& other); // Disable assignment operator.
