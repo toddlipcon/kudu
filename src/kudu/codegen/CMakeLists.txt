@@ -20,6 +20,7 @@
 # see http://llvm.org/docs/CMake.html#embedding-llvm-in-your-project
 ################################################################################
 
+
 FLATBUFFERS_GENERATE_CPP(CODEGEN_FBS_HDRS CODEGEN_FBS_TGTS
   SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..
   BINARY_ROOT ${CMAKE_CURRENT_BINARY_DIR}/../..
@@ -164,6 +165,7 @@ add_library(codegen
   jit_wrapper.cc
   module_builder.cc
   row_projector.cc
+  rowblock_converter.cc
   ${IR_OUTPUT_CC})
 
 target_link_libraries(codegen

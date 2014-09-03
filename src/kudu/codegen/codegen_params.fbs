@@ -26,7 +26,8 @@ struct CellInfo {
   offset: uint;
   size: uint;
   nullable: bool;
-  default_ptr: ulong;
+  read_default_ptr: ulong;
+  write_default_ptr: ulong;
 }
 
 table RowProjectorParam {
@@ -37,4 +38,11 @@ table RowProjectorParam {
   src_null_bitmap_offset: uint;
   src_cell_info: [CellInfo];
   dst_cell_info: [CellInfo];
+}
+
+table SerializeRowBlockParam {
+  dst_to_src_idx_mapping: [uint];
+  dst_cols: [CellInfo];
+  dst_row_stride: uint;
+  offset_to_null_bitmap: uint;
 }

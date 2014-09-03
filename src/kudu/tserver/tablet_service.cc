@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "kudu/codegen/compilation_manager.h"
+#include "kudu/codegen/rowblock_converter.h"
 #include "kudu/common/iterator.h"
 #include "kudu/common/scan_spec.h"
 #include "kudu/common/schema.h"
@@ -83,6 +85,11 @@ TAG_FLAG(scanner_inject_latency_on_each_batch_ms, unsafe);
 
 DECLARE_int32(memory_limit_warn_threshold_percentage);
 
+DEFINE_bool(tablet_service_use_codegen, true,
+            "Whether the tablet service should use code generation (for"
+            " faster RowBlock serialization");
+
+
 namespace kudu {
 namespace tserver {
 
@@ -109,6 +116,7 @@ using consensus::VoteResponsePB;
 using google::protobuf::RepeatedPtrField;
 using rpc::RpcContext;
 using std::shared_ptr;
+using std::unique_ptr;
 using std::vector;
 using strings::Substitute;
 using tablet::AlterSchemaTransactionState;
@@ -357,10 +365,27 @@ class ScanResultCopier : public ScanResultCollector {
 
   virtual void HandleRowBlock(const Schema* client_projection_schema,
                               const RowBlock& row_block) OVERRIDE {
+
+    if (FLAGS_tablet_service_use_codegen && !converter_) {
+      // Get a RowBlockConverter if available.
+      const Schema* client_schema = client_projection_schema;
+      if (client_schema == NULL) {
+        // TODO: this is sketchy, when would it be null?
+        client_schema = &row_block.schema();
+      }
+      codegen::CompilationManager::GetSingleton()->RequestRowBlockConverter(
+          &row_block.schema(), client_schema, &converter_);
+    }
+
     blocks_processed_++;
     num_rows_returned_ += row_block.selection_vector()->CountSelected();
-    SerializeRowBlock(row_block, rowblock_pb_, client_projection_schema,
-                      rows_data_, indirect_data_);
+    if (PREDICT_TRUE(converter_)) {
+      converter_->ConvertRowBlockToPB(row_block, rowblock_pb_,
+                                     rows_data_, indirect_data_);
+    } else {
+      SerializeRowBlock(row_block, rowblock_pb_, client_projection_schema,
+                        rows_data_, indirect_data_);
+    }
     SetLastRow(row_block, &last_primary_key_);
   }
 
@@ -386,6 +411,8 @@ class ScanResultCopier : public ScanResultCollector {
   int blocks_processed_;
   int64_t num_rows_returned_;
   faststring last_primary_key_;
+
+  gscoped_ptr<codegen::RowBlockConverter> converter_;
 
   DISALLOW_COPY_AND_ASSIGN(ScanResultCopier);
 };

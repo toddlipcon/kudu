@@ -600,7 +600,10 @@ static void CopyColumn(const RowBlock& block, int col_idx,
   ColumnBlock cblock = block.column_block(col_idx);
   size_t row_stride = ContiguousRowHelper::row_size(*dst_schema);
   uint8_t* dst = dst_base + dst_schema->column_offset(dst_col_idx);
-  size_t offset_to_null_bitmap = dst_schema->byte_size() - dst_schema->column_offset(dst_col_idx);
+
+  // Offset relative to the cell itself.
+  size_t offset_to_null_bitmap = dst_schema->byte_size() -
+      dst_schema->column_offset(dst_col_idx);
 
   size_t cell_size = cblock.stride();
   const uint8_t* src = cblock.cell_ptr(0);

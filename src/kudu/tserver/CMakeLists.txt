@@ -127,9 +127,10 @@ target_link_libraries(tserver
   master_proto
   consensus_proto
   log_proto
-  log
+  codegen
   consensus
   krpc
+  log
   server_common
   server_process
   tablet)

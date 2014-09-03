@@ -89,5 +89,7 @@ ADD_KUDU_TEST(row_changelist-test)
 ADD_KUDU_TEST(row_operations-test)
 ADD_KUDU_TEST(scan_spec-test)
 ADD_KUDU_TEST(schema-test)
-ADD_KUDU_TEST(types-test)
+
+# Wire protocol benchmark relies on codegen
+set(KUDU_TEST_LINK_LIBS codegen ${KUDU_TEST_LINK_LIBS})
 ADD_KUDU_TEST(wire_protocol-test)

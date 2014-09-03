@@ -15,15 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <gflags/gflags.h>
 #include <gtest/gtest.h>
+
+#include "kudu/codegen/compilation_manager.h"
+#include "kudu/codegen/rowblock_converter.h"
 #include "kudu/common/row.h"
 #include "kudu/common/rowblock.h"
 #include "kudu/common/schema.h"
 #include "kudu/common/wire_protocol.h"
+#include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/util/status.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
+
+DEFINE_bool(wire_protocol_bench_use_codegen, true, "Whether wire protocol "
+            "benchmark should use codegen");
 
 namespace kudu {
 
@@ -194,6 +202,7 @@ TEST_F(WireProtocolTest, TestBadSchema_DuplicateColumnName) {
 // Create a block of rows in columnar layout and ensure that it can be
 // converted to and from protobuf.
 TEST_F(WireProtocolTest, TestColumnarRowBlockToPB) {
+  // Set up a row block with a single row in it.
   Arena arena(1024, 1024 * 1024);
   RowBlock block(schema_, 10, &arena);
   FillRowBlockWithTestRows(&block);
@@ -227,13 +236,30 @@ TEST_F(WireProtocolTest, TestColumnarRowBlockToPBBenchmark) {
   RowBlock block(schema_, 10000 * kNumTrials, &arena);
   FillRowBlockWithTestRows(&block);
 
+  gscoped_ptr<codegen::RowBlockConverter> converter;
+  if (FLAGS_wire_protocol_bench_use_codegen) {
+    using codegen::CompilationManager;
+    CompilationManager::GetSingleton()->RequestRowBlockConverter(
+      &schema_, &schema_, &converter);
+    CompilationManager::GetSingleton()->Wait();
+    ASSERT_TRUE(CompilationManager::GetSingleton()->RequestRowBlockConverter(
+            &schema_, &schema_, &converter));
+  }
+
   RowwiseRowBlockPB pb;
+  faststring direct, indirect;
 
   LOG_TIMING(INFO, "Converting to PB") {
     for (int i = 0; i < kNumTrials; i++) {
       pb.Clear();
-      faststring direct, indirect;
-      SerializeRowBlock(block, &pb, NULL, &direct, &indirect);
+      direct.clear();
+      indirect.clear();
+      if (converter) {
+        converter->ConvertRowBlockToPB(block, &pb, &direct, &indirect);
+      } else {
+        SerializeRowBlock(block, &pb, NULL, &direct, &indirect);
+      }
+      if (i % (kNumTrials / 10) == 0) LOG(INFO) << i << "/" << kNumTrials;
     }
   }
 }

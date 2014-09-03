@@ -71,20 +71,18 @@ namespace codegen {
 
 namespace {
 
-vector<fbs::CellInfo> GetCellInfoFBs(const Schema& schema,
-                                     bool for_read) {
+// TODO duplicate
+vector<fbs::CellInfo> GetCellInfoFBs(const Schema& schema) {
   vector<fbs::CellInfo> ret;
   for (int i = 0; i < schema.num_columns(); i++) {
     const auto& col = schema.column(i);
-    auto def_val = reinterpret_cast<uint64_t>(
-        for_read ? col.read_default_value() :
-        col.write_default_value());
     ret.emplace_back(
         col.type_info()->physical_type(),
         schema.column_offset(i),
         col.type_info()->size(),
         col.is_nullable(),
-        def_val);
+        reinterpret_cast<uint64_t>(col.read_default_value()),
+        reinterpret_cast<uint64_t>(col.write_default_value()));
   }
   return ret;
 }
@@ -113,8 +111,8 @@ void EncodeFlatBuf(const kudu::RowProjector& proj,
   auto proj_defaults_fb = fb_builder.CreateVector(proj_defaults);
 
   // Set up cell info
-  vector<fbs::CellInfo> src_cell_info = GetCellInfoFBs(base_schema, for_read);
-  vector<fbs::CellInfo> dst_cell_info = GetCellInfoFBs(projection, for_read);
+  vector<fbs::CellInfo> src_cell_info = GetCellInfoFBs(base_schema);
+  vector<fbs::CellInfo> dst_cell_info = GetCellInfoFBs(projection);
   auto src_cell_info_fb = fb_builder.CreateVectorOfStructs(src_cell_info);
   auto dst_cell_info_fb = fb_builder.CreateVectorOfStructs(dst_cell_info);
 

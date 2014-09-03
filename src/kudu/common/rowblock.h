@@ -177,6 +177,11 @@ class RowBlock {
     return columns_data_[col_idx];
   }
 
+  uint8_t* column_null_bitmap(size_t col_idx) const {
+    DCHECK_LT(col_idx, columns_data_.size());
+    return column_null_bitmaps_[col_idx];
+  }
+
   // Return the number of rows in the row block. Note that this includes
   // rows which were filtered out by the selection vector.
   size_t nrows() const { return nrows_; }

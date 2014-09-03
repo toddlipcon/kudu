@@ -188,10 +188,17 @@ class FullStackInsertScanTest : public KuduTest {
   // and LOG_TIMING message msg.
   void ScanProjection(const vector<string>& cols, const string& msg);
 
+  // Warms up the code cache for a given schema
+  void WarmupCache(const KuduSchema& schema);
+
   vector<string> AllColumnNames() const;
   vector<string> StringColumnNames() const;
   vector<string> Int32ColumnNames() const;
   vector<string> Int64ColumnNames() const;
+
+  KuduSchema StringSchema() const;
+  KuduSchema Int32Schema() const;
+  KuduSchema Int64Schema() const;
 
   static const char* const kTableName;
   static const int kSessionTimeoutMs = 60000;
@@ -310,6 +317,14 @@ void FullStackInsertScanTest::DoConcurrentClientInserts() {
 void FullStackInsertScanTest::DoTestScans() {
   LOG(INFO) << "Doing test scans on table of " << kNumRows << " rows.";
 
+  WarmupCache(KuduSchema(vector<KuduColumnSchema>(), 0));
+  WarmupCache(schema_.CreateKeyProjection());
+  WarmupCache(schema_);
+  WarmupCache(StringSchema());
+  WarmupCache(Int32Schema());
+  WarmupCache(Int64Schema());
+  codegen::CompilationManager::GetSingleton()->Wait();
+
   gscoped_ptr<Subprocess> stat = MakePerfStat();
   gscoped_ptr<Subprocess> record = MakePerfRecord();
   if (stat) stat->Start();
@@ -410,6 +425,17 @@ void FullStackInsertScanTest::ScanProjection(const vector<string>& cols,
     }
   }
   ASSERT_EQ(nrows, kNumRows);
+}
+
+void FullStackInsertScanTest::WarmupCache(const KuduSchema& schema) {
+  KuduScanner scanner(reader_table_.get());
+  CHECK_OK(scanner.SetProjection(&schema));
+  CHECK_OK(scanner.Open());
+  codegen::CompilationManager::GetSingleton()->Wait();
+  vector<KuduRowResult> rows;
+  if (scanner.HasMoreRows()) {
+    CHECK_OK(scanner.NextBatch(&rows));
+  }
 }
 
 // Fills in the fields for a row as defined by the Schema below

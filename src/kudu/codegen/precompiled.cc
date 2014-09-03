@@ -37,8 +37,11 @@
 #include <cstring>
 
 #include "kudu/common/rowblock.h"
+#include "kudu/common/wire_protocol.pb.h"
 #include "kudu/util/bitmap.h"
+#include "kudu/util/faststring.h"
 #include "kudu/util/memory/arena.h"
+#include "kudu/util/slice.h"
 
 #include "kudu/codegen/codegen_params_generated.h"
 
@@ -143,7 +146,8 @@ bool _PrecompiledProjectRow(uint8_t*  __restrict__ src,
     auto dst_info = fb->dst_cell_info()->Get(dst_col_idx);
     auto size = dst_info->size();
     uint8_t* dst_cell = dst_block->column_data_base_ptr(dst_col_idx) + dst->row_index() * size;
-    const uint8_t* default_val = reinterpret_cast<const uint8_t*>(dst_info->default_ptr());
+    const uint8_t* default_val = reinterpret_cast<const uint8_t*>(
+        fb->for_read() ? dst_info->read_default_ptr() : dst_info->write_default_ptr());
 
     if (dst_info->nullable()) {
       bool is_null = default_val == nullptr;
@@ -158,6 +162,79 @@ bool _PrecompiledProjectRow(uint8_t*  __restrict__ src,
   }
 
   return true;
+}
+
+
+IR_ALWAYS_INLINE
+void _PrecompiledSerializeRowBlock(
+    const RowBlock* rb, RowwiseRowBlockPB* pb,
+    faststring* data_buf, faststring* indirect_data,
+    const char* flatbuf, size_t flatbuf_len) {
+  auto fb = flatbuffers::GetRoot<fbs::SerializeRowBlockParam>(flatbuf);
+
+#if 0
+  flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(flatbuf), fb_len);
+  CHECK(fb->Verify(v));
+#endif
+
+  size_t old_size = data_buf->size();
+  int num_rows = rb->selection_vector()->CountSelected();
+  pb->set_num_rows(pb->num_rows() + num_rows);
+
+  data_buf->resize(old_size + fb->dst_row_stride() * num_rows);
+  uint8_t* base = reinterpret_cast<uint8_t*>(&(*data_buf)[old_size]);
+
+  BitmapIterator selected_row_iter(rb->selection_vector()->bitmap(),
+      rb->nrows());
+
+  int run_size;
+  bool selected;
+  int row_idx = 0;
+  uint8_t* dst_row = base;
+
+  while ((run_size = selected_row_iter.Next(&selected))) {
+    if (!selected) {
+      row_idx += run_size;
+      continue;
+    }
+    for (int i = 0; i < run_size; i++) {
+      #pragma unroll
+      for (int dst_col_idx = 0; dst_col_idx < fb->dst_cols()->size(); dst_col_idx++) {
+        const auto& dst_col = fb->dst_cols()->Get(dst_col_idx);
+        const auto& src_col_idx = fb->dst_to_src_idx_mapping()->Get(dst_col_idx);
+
+        const uint8_t* src_cell = rb->column_data_base_ptr(src_col_idx) +
+            dst_col->size() * row_idx;
+        uint8_t* dst_cell = dst_row + dst_col->offset();
+
+        bool is_null = false;
+        if (dst_col->nullable()) {
+          is_null = rb->column_block(src_col_idx).is_null(row_idx);
+        }
+
+        if (is_null) {
+          memset(dst_cell, 0, dst_col->size());
+        } else if (dst_col->physical_type() == DataType::BINARY) {
+          const Slice *slice = reinterpret_cast<const Slice *>(src_cell);
+          size_t offset_in_indirect = indirect_data->size();
+          indirect_data->append(reinterpret_cast<const char*>(slice->data()),
+                                slice->size());
+
+          Slice *dst_slice = reinterpret_cast<Slice *>(dst_cell);
+          *dst_slice = Slice(reinterpret_cast<const uint8_t*>(offset_in_indirect),
+                             slice->size());
+        } else { // non-string non-null
+          memcpy(dst_cell, src_cell, dst_col->size());
+        }
+
+        if (dst_col->nullable()) {
+          BitmapChange(dst_row + fb->offset_to_null_bitmap(), dst_col_idx, is_null);
+        }
+      }
+      dst_row += fb->dst_row_stride();
+      row_idx++;
+    }
+  }
 }
 
 } // extern "C"

@@ -115,6 +115,11 @@ class ColumnBlock {
   }
 
   const TypeInfo *type_;
+
+  // Bitmap of the nullness of columns.
+  // NOTE: a '1' bit here represents non-NULL, whereas '0' represents NULL.
+  // This is the opposite of what's used in ContiguousRow.
+  // TODO: make this consistent
   uint8_t *null_bitmap_;
 
   uint8_t *data_;

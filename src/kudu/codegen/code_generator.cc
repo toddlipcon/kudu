@@ -42,6 +42,7 @@
 #include "kudu/codegen/jit_wrapper.h"
 #include "kudu/codegen/module_builder.h"
 #include "kudu/codegen/row_projector.h"
+#include "kudu/codegen/rowblock_converter.h"
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/once.h"
@@ -190,6 +191,19 @@ int DumpAsm(FuncPtr fptr, const TargetMachine& tm, std::ostream* out, int max_in
   return max_instr;
 }
 
+// Prints instructions if the appropriate flag is on.
+template<class FuncPtr>
+void OptionallyPrintInstructions(const FuncPtr& f, const TargetMachine& tm,
+                                 const string& name) {
+  if (!FLAGS_codegen_dump_mc) return;
+  static const int kInstrMax = 500;
+  std::stringstream sstr;
+  sstr << "Printing " << name << " function:\n";
+  int instrs = DumpAsm(f, tm, &sstr, kInstrMax);
+  sstr << "Printed " << instrs << " instructions.";
+  LOG(INFO) << sstr.str();
+}
+
 } // anonymous namespace
 
 void CodeGenerator::GlobalInit() {
@@ -209,6 +223,19 @@ CodeGenerator::CodeGenerator() {
 
 CodeGenerator::~CodeGenerator() {}
 
+Status CodeGenerator::CompileRowBlockConverter(
+  const Schema& src_schema, const Schema& dst_schema,
+  scoped_refptr<RowBlockConverterFunction>* out) {
+  RETURN_NOT_OK(CheckCodegenEnabled());
+
+  TargetMachine* tm;
+  RETURN_NOT_OK(RowBlockConverterFunction::Create(src_schema, dst_schema, out, &tm));
+
+  OptionallyPrintInstructions((*out)->converter(), *tm,
+                              "row block to PB converter");
+
+  return Status::OK();
+}
 
 Status CodeGenerator::CompileRowProjector(const Schema& base, const Schema& proj,
                                           scoped_refptr<RowProjectorFunctions>* out) {
@@ -217,14 +244,8 @@ Status CodeGenerator::CompileRowProjector(const Schema& base, const Schema& proj
   TargetMachine* tm;
   RETURN_NOT_OK(RowProjectorFunctions::Create(base, proj, out, &tm));
 
-  if (FLAGS_codegen_dump_mc) {
-    static const int kInstrMax = 500;
-    std::stringstream sstr;
-    sstr << "Printing read projection function:\n";
-    int instrs = DumpAsm((*out)->read(), *tm, &sstr, kInstrMax);
-    sstr << "Printed " << instrs << " instructions.";
-    LOG(INFO) << sstr.str();
-  }
+  OptionallyPrintInstructions((*out)->read(), *tm,
+                              "read projection");
 
   return Status::OK();
 }
