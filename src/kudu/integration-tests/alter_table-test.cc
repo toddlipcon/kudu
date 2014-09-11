@@ -73,6 +73,10 @@ class AlterTableTest : public KuduTest {
 
     KuduTest::SetUp();
 
+    ANNOTATE_BENIGN_RACE(&FLAGS_flush_threshold_mb,
+                         "We change this after starting the TS in some tests, "
+                         "but it should be fine since it's a simple int value");
+
     cluster_.reset(new MiniCluster(env_.get(), MiniClusterOptions()));
     ASSERT_STATUS_OK(cluster_->Start());
     ASSERT_STATUS_OK(cluster_->WaitForTabletServerCount(1));
@@ -515,12 +519,11 @@ void AlterTableTest::UpdaterThread() {
     CHECK_OK(update->mutable_row()->SetUInt32(1, i));
     CHECK_OK(session->Apply(update.Pass()));
 
-    if (i++ % 50 == 0) {
-      FlushSessionOrDie(session);
-    }
+    // TODO: we don't do any batching here due to hitting KUDU-498.
+    // If we batched, we might do multiple updates against the same row,
+    // which can currently crash the TS.
+    FlushSessionOrDie(session);
   }
-
-  FlushSessionOrDie(session);
 }
 
 // Thread which loops reading data from the table.
@@ -553,7 +556,7 @@ void AlterTableTest::ScannerThread() {
 // checking for races between the two.
 //
 // Disabled due to KUDU-382 (lots of concurrency bugs around alter schema)
-TEST_F(AlterTableTest, DISABLED_TestAlterUnderWriteLoad) {
+TEST_F(AlterTableTest, TestAlterUnderWriteLoad) {
   // Increase chances of a race between flush and alter.
   FLAGS_flush_threshold_mb = 3;
 

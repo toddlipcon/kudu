@@ -102,7 +102,8 @@ class KuduScanner::Data {
   // The tablet we're scanning.
   scoped_refptr<internal::RemoteTablet> remote_;
 
-  enum { kRpcTimeoutMillis = 5000 };
+  // TODO: KUDU-499: make this configurable by the user.
+  enum { kRpcTimeoutMillis = 20000 };
 
   DISALLOW_COPY_AND_ASSIGN(Data);
 };

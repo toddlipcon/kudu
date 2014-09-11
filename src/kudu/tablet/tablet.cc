@@ -658,7 +658,13 @@ Status Tablet::AlterSchema(AlterSchemaTransactionState *tx_state) {
     //       The flush should be just a message (async)...
     //       with the current code the only way we can do a flush ouside this big lock
     //       is to get the list of DeltaMemStores out from the AlterSchema method...
-    BOOST_FOREACH(const shared_ptr<RowSet>& rs, components_->rowsets->all_rowsets()) {
+    shared_ptr<RowSetTree> rowsets_copy;
+    {
+      boost::shared_lock<rw_spinlock> lock(component_lock_);
+      rowsets_copy = components_->rowsets;
+    }
+
+    BOOST_FOREACH(const shared_ptr<RowSet>& rs, rowsets_copy->all_rowsets()) {
       RETURN_NOT_OK(rs->AlterSchema(*schema_.get()));
     }
   }
@@ -1266,6 +1272,7 @@ Status Tablet::CaptureConsistentIterators(
   const ScanSpec *spec,
   vector<shared_ptr<RowwiseIterator> > *iters) const {
   boost::shared_lock<rw_spinlock> lock(component_lock_);
+  TRACE("Acquired component_lock");
 
   // Construct all the iterators locally first, so that if we fail
   // in the middle, we don't modify the output arguments.
