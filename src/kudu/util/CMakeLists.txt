@@ -28,6 +28,7 @@ add_library(kudu_util
   env.cc env_posix.cc env_util.cc
   errno.cc
   faststring.cc
+  faulty_env.cc
   group_varint.cc
   pstack_watcher.cc
   hdr_histogram.cc
