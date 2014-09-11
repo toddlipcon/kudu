@@ -1136,15 +1136,17 @@ Status Tablet::DoCompactionOrFlush(const Schema& schema,
   // swap as committed in 'non_duplicated_txns_snap'.
   non_duplicated_txns_snap.AddCommittedTimestamps(in_flight_during_swap);
 
-  // Ensure that the latest schema is set to the new RowSets
-  BOOST_FOREACH(const shared_ptr<RowSet>& rs, new_disk_rowsets) {
-    RETURN_NOT_OK_PREPEND(rs->AlterSchema(*schema2.get()),
-                          "Failed to set current schema on latest RS");
-  }
-
   if (common_hooks_) {
     RETURN_NOT_OK_PREPEND(common_hooks_->PostSwapInDuplicatingRowSet(),
                           "PostSwapInDuplicatingRowSet hook failed");
+  }
+
+  // Ensure that the latest schema is set to the new RowSets
+  BOOST_FOREACH(const shared_ptr<RowSet>& rs, new_disk_rowsets) {
+    // TODO: this seems to be causing a bug where we end up with out-of-order
+    // delta files :(
+    RETURN_NOT_OK_PREPEND(rs->AlterSchema(*schema2.get()),
+                          "Failed to set current schema on latest RS");
   }
 
   // Phase 2. Here we re-scan the compaction input, copying those missed updates into the

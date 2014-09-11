@@ -516,7 +516,7 @@ void AlterTableTest::UpdaterThread() {
     // keys to insert.
     uint32_t key = bswap_32(rng.Uniform(max));
     CHECK_OK(update->mutable_row()->SetUInt32(0, key));
-    CHECK_OK(update->mutable_row()->SetUInt32(1, i));
+    CHECK_OK(update->mutable_row()->SetUInt32(1, i++));
     CHECK_OK(session->Apply(update.Pass()));
 
     // TODO: we don't do any batching here due to hitting KUDU-498.

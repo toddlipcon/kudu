@@ -83,6 +83,7 @@ class TestTabletSchema : public KuduTabletTest {
   }
 
  private:
+  friend class MutateAfterSwap;
   Schema CreateBaseSchema() {
     return Schema(boost::assign::list_of
                    (ColumnSchema("key", UINT32))
@@ -283,6 +284,73 @@ TEST_F(TestTabletSchema, TestModifyEmptyMemRowSet) {
   MutateRow(s2, /* key= */ 2, /* col_idx= */ 1, /* new_val= */ 4);
   ASSERT_STATUS_OK(DumpTablet(*tablet(), s2, &rows));
   EXPECT_EQ("(uint32 key=2, uint32 c1=4, uint32 c2=3)", rows[0]);
+}
+
+class MutateAfterSwap : public Tablet::FlushCompactCommonHooks {
+ public:
+  explicit MutateAfterSwap(TestTabletSchema* test)
+    : test_(test) {
+  }
+
+  virtual Status PostWriteSnapshot() {
+    test_->MutateRow(test_->client_schema_,
+                     /* key= */ 0, /* col_idx= */ 1, /* new_val= */ 1);
+    return Status::OK();
+  }
+
+  virtual Status PostSwapInDuplicatingRowSet() {
+    const uint32_t c2_write_default = 5;
+    const uint32_t c2_read_default = 7;
+    SchemaBuilder builder(test_->tablet()->metadata()->schema());
+    CHECK_OK(builder.AddColumn("c2", UINT32, false, &c2_read_default, &c2_write_default));
+    test_->AlterSchema(builder.Build());
+
+    test_->MutateRow(test_->client_schema_,
+                     /* key= */ 0, /* col_idx= */ 1, /* new_val= */ 2);
+
+    return Status::OK();
+  };
+
+ private:
+  TestTabletSchema* test_;
+};
+
+TEST_F(TestTabletSchema, TestAlterDuringCompaction) {
+  InsertRow(client_schema_, 0);
+  ASSERT_STATUS_OK(tablet()->Flush());
+
+  InsertRow(client_schema_, 1);
+  ASSERT_STATUS_OK(tablet()->Flush());
+
+
+  vector<string> rows;
+  ASSERT_STATUS_OK(DumpTablet(*tablet(), client_schema_, &rows));
+  EXPECT_EQ("(uint32 key=0, uint32 c1=0)", rows[0]);
+  EXPECT_EQ("(uint32 key=1, uint32 c1=1)", rows[1]);
+
+
+  shared_ptr<Tablet::FlushCompactCommonHooks> my_hooks(new MutateAfterSwap(this));
+  tablet()->SetFlushCompactCommonHooksForTests(my_hooks);
+
+  LOG(INFO) << "----------------\nCompacting\n------------------";
+  ASSERT_STATUS_OK(tablet()->Compact(Tablet::FORCE_COMPACT_ALL));
+
+  // Reset hooks.
+  tablet()->SetFlushCompactCommonHooksForTests(
+    shared_ptr<Tablet::FlushCompactCommonHooks>());
+
+  // Flush another RS so that the Compact() below isn't a no-op.
+  InsertRow(client_schema_, 3);
+  LOG(INFO) << "----------------\nFlushing a new row\n------------------";
+  ASSERT_STATUS_OK(tablet()->Flush());
+
+  // Compact to make sure that all of the data is sorted right.
+  // This is a regression test -- previously, we ended up with a case
+  // where updates got re-ordered relative to the delta files in which
+  // they were contained, which wouldn't fail immediately, but would fail
+  // on the next compaction.
+  LOG(INFO) << "----------------\nCompacting again\n------------------";
+  ASSERT_STATUS_OK(tablet()->Compact(Tablet::FORCE_COMPACT_ALL));
 }
 
 } // namespace tablet
