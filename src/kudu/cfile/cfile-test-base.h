@@ -13,6 +13,7 @@
 #include "kudu/cfile/cfile.pb.h"
 #include "kudu/common/columnblock.h"
 #include "kudu/fs/fs_manager.h"
+#include "kudu/gutil/mathlimits.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
@@ -142,23 +143,28 @@ template<DataType DATA_TYPE, bool HAS_NULLS>
 const DataType DataGenerator<DATA_TYPE, HAS_NULLS>::kDataType = DATA_TYPE;
 
 
-template<bool HAS_NULLS>
-class UInt32DataGenerator : public DataGenerator<UINT32, HAS_NULLS> {
+// Data generator for any integral type.
+template<DataType DATA_TYPE, bool HAS_NULLS>
+class IntDataGenerator : public DataGenerator<DATA_TYPE, HAS_NULLS> {
  public:
-  UInt32DataGenerator() {}
-  uint32_t BuildTestValue(size_t block_index, size_t value) OVERRIDE {
-    return value * 10;
+  IntDataGenerator() {}
+  typedef typename DataTypeTraits<DATA_TYPE>::cpp_type cpp_type;
+
+  cpp_type BuildTestValue(size_t block_index, size_t value) OVERRIDE {
+    if (MathLimits<cpp_type>::kIsSigned) {
+      return (value * 10) * (value % 2 == 0 ? -1 : 1);
+    } else {
+      return value * 10;
+    }
   }
 };
 
+// Handy aliases
 template<bool HAS_NULLS>
-class Int32DataGenerator : public DataGenerator<INT32, HAS_NULLS> {
- public:
-  Int32DataGenerator() {}
-  int32_t BuildTestValue(size_t block_index, size_t value) OVERRIDE {
-    return (value * 10) *(value % 2 == 0 ? -1 : 1);
-  }
-};
+class UInt32DataGenerator : public IntDataGenerator<UINT32, HAS_NULLS> {};
+
+template<bool HAS_NULLS>
+class Int32DataGenerator : public IntDataGenerator<UINT32, HAS_NULLS> {};
 
 template<bool HAS_NULLS>
 class StringDataGenerator : public DataGenerator<STRING, HAS_NULLS> {
