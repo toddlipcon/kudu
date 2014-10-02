@@ -67,6 +67,7 @@ add_library(kudu_util
   threadlocal.cc
   threadpool.cc
   trace.cc
+  trace_lttng_provider.c
   user.cc
   url-coding.cc
 )
@@ -80,7 +81,10 @@ target_link_libraries(kudu_util
   histogram_proto
   protobuf
   glog
-  rt)
+  rt
+  dl
+  lttng-ust
+  urcu)
 
 #######################################
 # kudu_test_util

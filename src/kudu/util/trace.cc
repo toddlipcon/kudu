@@ -14,6 +14,13 @@
 #include "kudu/gutil/walltime.h"
 #include "kudu/util/memory/arena.h"
 
+#define TRACEPOINT_DEFINE
+#include "kudu/util/trace_lttng_provider.h"
+
+extern "C" {
+void InitTracePoints();
+}
+
 namespace kudu {
 
 using strings::internal::SubstituteArg;
@@ -24,6 +31,7 @@ Trace::Trace()
   : arena_(new ThreadSafeArena(1024, 128*1024)),
     entries_head_(NULL),
     entries_tail_(NULL) {
+  InitTracePoints();
 }
 
 Trace::~Trace() {
@@ -89,6 +97,8 @@ TraceEntry* Trace::NewEntry(int msg_len, const char* file_path, int line_number)
 }
 
 void Trace::AddEntry(TraceEntry* entry) {
+  tracepoint(sample_component, message,
+             entry->message(), entry->message_len);
   lock_guard<simple_spinlock> l(&lock_);
   entry->next = NULL;
 
