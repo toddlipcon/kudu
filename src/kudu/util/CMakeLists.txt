@@ -33,6 +33,7 @@ add_library(kudu_util
   pstack_watcher.cc
   hdr_histogram.cc
   hexdump.cc
+  io_priority.cc
   jsonwriter.cc
   kernel_stack_watchdog.cc
   logging.cc

@@ -19,6 +19,7 @@
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/tablet/mvcc.h"
 #include "kudu/util/countdown_latch.h"
+#include "kudu/util/io_priority.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/thread.h"
@@ -29,6 +30,9 @@ using strings::Substitute;
 
 DEFINE_int32(maintenance_manager_num_threads, 4,
        "Size of the maintenance manager thread pool.");
+DEFINE_string(maintenance_manager_io_priority, "be/7",
+       "IO priority for maintenance operations. Must be 'none', 'idle', or "
+       "be/N with N between 0 (highest) and 7 (lowest)");
 DEFINE_int32(maintenance_manager_polling_interval_ms, 250,
        "Polling interval for the maintenance manager scheduler, "
        "in milliseconds.");
@@ -309,6 +313,8 @@ MaintenanceOp* MaintenanceManager::FindBestOp() {
 }
 
 void MaintenanceManager::LaunchOp(MaintenanceOp* op) {
+  ScopedIOPriority ioprio(IOPriority::FromString(FLAGS_maintenance_manager_io_priority));
+
   MonoTime start_time(MonoTime::Now(MonoTime::FINE));
   op->RunningGauge()->Increment();
   LOG_TIMING(INFO, Substitute("running $0", op->name())) {
