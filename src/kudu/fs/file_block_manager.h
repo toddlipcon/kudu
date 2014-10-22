@@ -11,7 +11,7 @@
 #include "kudu/fs/block_id.h"
 #include "kudu/fs/block_manager.h"
 #include "kudu/util/locks.h"
-#include "kudu/util/oid_generator.h"
+#include "kudu/util/random.h"
 
 namespace kudu {
 
@@ -151,6 +151,9 @@ class FileBlockManager : public BlockManager {
  private:
   friend class FileWritableBlock;
 
+  void RandomizeNextBlockId();
+  void GenerateBlockId(BlockId* id);
+
   // Creates the parent directory hierarchy for the block with the given id.
   Status CreateBlockDir(const BlockId& block_id, std::vector<std::string>* created_dirs);
 
@@ -188,7 +191,10 @@ class FileBlockManager : public BlockManager {
   const std::string root_path_;
 
   // For generating block IDs.
-  ObjectIdGenerator oid_generator_;
+  Random rng_;
+  simple_spinlock id_gen_lock_;
+  uint64_t next_block_id_high_;
+  uint64_t next_block_id_low_;
 
   DISALLOW_COPY_AND_ASSIGN(FileBlockManager);
 };

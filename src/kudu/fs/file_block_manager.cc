@@ -271,7 +271,10 @@ void FileBlockManager::CreateBlock(const BlockId& block_id,
 FileBlockManager::FileBlockManager(Env* env,
                                    const string& root_path) :
   env_(env),
-  root_path_(root_path) {
+  root_path_(root_path),
+  rng_(time(NULL)),
+  next_block_id_high_(0),
+  next_block_id_low_(0) {
 }
 
 FileBlockManager::~FileBlockManager() {
@@ -295,9 +298,16 @@ Status FileBlockManager::CreateAnonymousBlock(const CreateBlockOptions& opts,
   shared_ptr<WritableFile> writer;
 
   // Repeat in case of block id collisions (unlikely).
+  bool first_attempt = true;
   do {
+    if (!first_attempt) {
+      // If we collide, jump to a new area of key space and allocate sequentially from there.
+      RandomizeNextBlockId();
+    }
+    GenerateBlockId(&block_id);
+    first_attempt = false;
+
     created_dirs.clear();
-    block_id.SetId(oid_generator_.Next());
     RETURN_NOT_OK(CreateBlockDir(block_id, &created_dirs));
     path = GetBlockPath(block_id);
     WritableFileOptions wr_opts;
@@ -308,6 +318,20 @@ Status FileBlockManager::CreateAnonymousBlock(const CreateBlockOptions& opts,
     CreateBlock(block_id, path, created_dirs, writer, opts, block);
   }
   return s;
+}
+
+void FileBlockManager::RandomizeNextBlockId() {
+  lock_guard<simple_spinlock> l(&id_gen_lock_);
+  next_block_id_high_ = rng_.Next64();
+  next_block_id_low_ = rng_.Next64();
+}
+
+void FileBlockManager::GenerateBlockId(BlockId* id) {
+  lock_guard<simple_spinlock> l(&id_gen_lock_);
+  id->SetId(StringPrintf("%08"PRIx64"%08"PRIx64, next_block_id_low_, next_block_id_high_));
+  if (++next_block_id_low_ == 0) {
+    ++next_block_id_high_;
+  }
 }
 
 Status FileBlockManager::CreateAnonymousBlock(gscoped_ptr<WritableBlock>* block) {
