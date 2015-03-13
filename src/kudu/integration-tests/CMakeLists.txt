@@ -2,9 +2,10 @@
 # Confidential Cloudera Information: Covered by NDA.
 
 set(INTEGRATION_TESTS_SRCS
-  mini_cluster.cc
   cluster_verifier.cc
   external_mini_cluster.cc
+  mini_cluster.cc
+  partition_simulator.cc
   test_workload.cc
 )
 

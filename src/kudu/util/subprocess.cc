@@ -20,6 +20,7 @@
 #include "kudu/gutil/port.h"
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/numbers.h"
+#include "kudu/gutil/strings/split.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/debug-util.h"
 #include "kudu/util/errno.h"
@@ -116,6 +117,32 @@ void CloseNonStandardFDs(DIR* fd_dir) {
 }
 
 } // anonymous namespace
+
+int Subprocess::Call(const std::string& cmdline) {
+  vector<string> argv = strings::Split(cmdline, " ");
+  Subprocess p(argv[0], argv);
+  Status s = p.Start();
+  if (!s.ok()) {
+    LOG(WARNING) << "Failed to start subprocess '" << cmdline << "': "
+                 << s.ToString();
+    return -1;
+  }
+
+  int ret;
+  s = p.Wait(&ret);
+  if (!s.ok()) {
+    LOG(WARNING) << "Failed to wait for subprocess '" << cmdline << "': "
+                 << s.ToString();
+    return -1;
+  }
+
+  return ret;
+}
+
+void Subprocess::CheckCall(const std::string& cmdline) {
+  CHECK_EQ(0, Call(cmdline)) << "failed command: " << cmdline;
+}
+
 
 Subprocess::Subprocess(const string& program,
                        const vector<string>& argv)

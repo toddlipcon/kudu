@@ -31,6 +31,10 @@ namespace kudu {
 // will be forcibly SIGKILLed to avoid orphaning processes.
 class Subprocess {
  public:
+  // TODO: doc
+  static int Call(const std::string& cmdline) WARN_UNUSED_RESULT;
+  static void CheckCall(const std::string& cmdline);
+
   Subprocess(const std::string& program,
              const std::vector<std::string>& argv);
   ~Subprocess();

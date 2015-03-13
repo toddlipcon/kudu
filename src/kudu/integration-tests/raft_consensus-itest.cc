@@ -17,9 +17,11 @@
 #include "kudu/consensus/consensus_peers.h"
 #include "kudu/consensus/quorum_util.h"
 #include "kudu/integration-tests/cluster_verifier.h"
+#include "kudu/integration-tests/partition_simulator.h"
 #include "kudu/integration-tests/ts_itest-base.h"
 #include "kudu/server/metadata.pb.h"
 #include "kudu/util/stopwatch.h"
+#include "kudu/util/subprocess.h"
 #include "kudu/util/test_util.h"
 
 DEFINE_int32(num_client_threads, 8,
@@ -29,6 +31,9 @@ DEFINE_int64(client_inserts_per_thread, 50,
 DEFINE_int64(client_num_batches_per_thread, 5,
              "In how many batches to group the rows, for each client");
 DECLARE_int32(consensus_rpc_timeout_ms);
+
+DECLARE_int32(leader_heartbeat_interval_ms);
+DECLARE_double(leader_failure_max_missed_heartbeat_periods);
 
 #define ASSERT_ALL_REPLICAS_AGREE(count) \
   ASSERT_NO_FATAL_FAILURE(AssertAllReplicasAgree(count))
@@ -309,7 +314,14 @@ class RaftConsensusITest : public TabletServerIntegrationTestBase {
   // Before stopping the leader this pauses all follower nodes in regular intervals so that
   // we get an increased chance of stuff being pending.
   void StopOrKillLeaderAndElectNewOne() {
-    bool kill = rand() % 2 == 0;
+    enum {
+      kStopLeader,
+      kKillLeader,
+      kPartitionLeader,
+      kNumFaults
+    };
+    int fault = kPartitionLeader;//rand() % kNumFaults;
+
 
     TServerDetails* old_leader;
     CHECK_OK(GetLeaderReplicaWithRetries(tablet_id_, &old_leader));
@@ -324,10 +336,21 @@ class RaftConsensusITest : public TabletServerIntegrationTestBase {
 
     // When all are paused also pause or kill the current leader. Since we've waited a bit
     // the old leader is likely to have operations that must be aborted.
-    if (kill) {
-      old_leader->external_ts->Shutdown();
-    } else {
-      CHECK_OK(old_leader->external_ts->Pause());
+    switch (fault) {
+      case kStopLeader:
+        CHECK_OK(old_leader->external_ts->Pause());
+        break;
+      case kKillLeader:
+        old_leader->external_ts->Shutdown();
+        break;
+      case kPartitionLeader:
+        partition_simulator_.DropPackets(old_leader->external_ts);
+        break;
+      case kPartitionFollower:
+        partition_simulator_.DropPackets(followers[0]->external_ts);
+        break;
+      default:
+        LOG(FATAL);
     }
 
     // Resume the replicas.
@@ -335,20 +358,40 @@ class RaftConsensusITest : public TabletServerIntegrationTestBase {
       CHECK_OK(ts->external_ts->Resume());
     }
 
+        sleep(5);
+
     // Get the new leader.
     TServerDetails* new_leader;
     CHECK_OK(GetLeaderReplicaWithRetries(tablet_id_, &new_leader));
 
+    if (fault != kPartitionFollower) {
+      CHECK_NE(new_leader, old_leader) << "Leader did not change after injecting a leader fault";
+    }
+
     // Bring the old leader back.
-    if (kill) {
-      CHECK_OK(old_leader->external_ts->Restart());
-      // Wait until we have the same number of followers.
-      int initial_followers = followers.size();
-      do {
-        GetOnlyLiveFollowerReplicas(tablet_id_, &followers);
-      } while (followers.size() < initial_followers);
-    } else {
-      CHECK_OK(old_leader->external_ts->Resume());
+    switch (fault) {
+      case kKillLeader:
+      {
+        CHECK_OK(old_leader->external_ts->Restart());
+        // Wait until we have the same number of followers.
+        int initial_followers = followers.size();
+        do {
+          GetOnlyLiveFollowerReplicas(tablet_id_, &followers);
+        } while (followers.size() < initial_followers);
+        break;
+      }
+      case kStopLeader:
+        CHECK_OK(old_leader->external_ts->Resume());
+        break;
+      case kPartitionLeader:
+        partition_simulator_.RestorePackets(old_leader->external_ts);
+        break;
+      case kPartitionFollower:
+        partition_simulator_.RestorePackets(followers[0]->external_ts);
+        break;
+
+      default:
+        LOG(FATAL);
     }
   }
 
@@ -358,6 +401,8 @@ class RaftConsensusITest : public TabletServerIntegrationTestBase {
   std::vector<scoped_refptr<kudu::Thread> > threads_;
   CountDownLatch inserters_;
   string tablet_id_;
+
+  PartitionSimulator partition_simulator_;
 };
 
 // Test that we can retrieve the permanent uuid of a server running
@@ -963,6 +1008,47 @@ TEST_F(RaftConsensusITest, TestReplicaBehaviorViaRPC) {
     ASSERT_STR_CONTAINS(results[4], Substitute("term: $0 index: 6", leader_term));
   }
 }
+
+TEST_F(RaftConsensusITest, TestPartitionFollower) {
+  vector<string> flags;
+  flags.push_back("--enable_leader_failure_detection=true");
+  flags.push_back("--log_inject_latency");
+  flags.push_back("--log_inject_latency_ms_mean=20");
+  flags.push_back("--log_inject_latency_ms_stddev=20");
+  flags.push_back("--leader_heartbeat_interval_ms=50");
+  flags.push_back("--leader_failure_monitor_check_mean_ms=25");
+  flags.push_back("--leader_failure_monitor_check_stddev_ms=10");
+
+  BuildAndStart(flags);
+  TestWorkload workload(cluster_.get());
+  workload.set_allow_timeouts(true);
+  workload.set_num_write_threads(1);
+  workload.set_timeout_ms(10000);
+  workload.Setup();
+  workload.Start();
+
+  /*
+    const int sleep_mean = FLAGS_leader_heartbeat_interval_ms *
+    FLAGS_leader_failure_max_missed_heartbeat_periods;
+    const int sleep_stddev = FLAGS_leader_heartbeat_interval_ms;
+  */
+  const int sleep_mean = 1000;
+  const int sleep_stddev = 250;
+
+  for (int i = 0; i < 10; i++) {
+    SleepFor(MonoDelta::FromMilliseconds(random_.Normal(sleep_mean, sleep_stddev)));
+    int idx = random_.Uniform(cluster_->num_tablet_servers());
+    partition_simulator_.DropPackets(cluster_->tablet_server(idx));
+    SleepFor(MonoDelta::FromMilliseconds(random_.Normal(sleep_mean, sleep_stddev)));
+    partition_simulator_.RestorePackets(cluster_->tablet_server(idx));
+  }
+  workload.StopAndJoin();
+  LOG(INFO) << "Inserted " << workload.rows_inserted() << " rows";
+
+  ClusterVerifier v(cluster_.get());
+  v.CheckCluster();
+}
+
 
 }  // namespace tserver
 }  // namespace kudu
