@@ -325,13 +325,14 @@ endif()
 
 # Code coverage
 if ("${KUDU_GENERATE_COVERAGE}")
-  if("${CMAKE_CXX_COMPILER}" MATCHES ".*clang.*")
+  if("${COMPILER_FAMILY}" STREQUAL "clang" AND
+      "${COMPILER_VERSION}" VERSION_LESS "3.4")
     # There appears to be some bugs in clang 3.3 which cause code coverage
     # to have link errors, not locating the llvm_gcda_* symbols.
     # This should be fixed in llvm 3.4 with http://llvm.org/viewvc/llvm-project?view=revision&revision=184666
     message(SEND_ERROR "Cannot currently generate coverage with clang")
   endif()
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -DCOVERAGE")
 endif()
 
 # set compile output directory
