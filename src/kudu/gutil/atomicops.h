@@ -275,6 +275,14 @@ Atomic64 Release_Load(volatile const Atomic64* ptr);
 
 void MemoryBarrier();
 
+// A StoreStore barrier issued between two stores ensures that all stores made
+// prior to the barrier are visible to other threads before any stores made
+// after the barrier.
+//
+// On total-store-order machines, this is naturally the case. However, a
+// compiler barrier may still be required.
+void StoreStoreBarrier();
+
 void PauseCPU();
 
 #endif  // 0

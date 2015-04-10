@@ -161,6 +161,12 @@ inline void PauseCPU() {
   __asm__ __volatile__("pause" : : : "memory");
 }
 
+// x86 is total-store-order, so a StoreStore barrier is just a compiler
+// barrier.
+inline void StoreStoreBarrier() {
+  ATOMICOPS_COMPILER_BARRIER();
+}
+
 #if defined(__x86_64__)
 
 // 64-bit implementations of memory barrier can be simpler, because it

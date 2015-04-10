@@ -30,8 +30,8 @@
 // have missed the event.
 //
 // The SCOPED_WATCH_STACK macro is designed to have minimal overhead: approximately
-// equivalent to a clock_gettime() and a single 'mfence' instruction. Micro-benchmarks
-// measure the cost at about 50ns per call. Thus, it may safely be used in hot code
+// equivalent to a clock_gettime() and a few multiplications. Micro-benchmarks
+// measure the cost at about 27ns per call. Thus, it may safely be used in hot code
 // paths.
 //
 // Scopes with SCOPED_WATCH_STACK may be nested, but only up to a hard-coded limited depth
@@ -198,14 +198,14 @@ class ScopedWatchKernelStack {
     KernelStackWatchdog::TLS::Data* tls_data = &tls->data_;
 
     // "Acquire" the sequence lock. While the lock value is odd, readers will block.
-    // TODO: technically this barrier is stronger than we need: we are the only writer
-    // to this data, so it's OK to allow loads from within the critical section to
-    // reorder above this next line. All we need is a "StoreStore" barrier (i.e.
-    // prevent any stores in the critical section from getting reordered above the
-    // increment of the counter). However, atomicops.h doesn't provide such a barrier
-    // as of yet, so we'll do the slightly more expensive one for now.
-    base::subtle::Acquire_Store(&tls_data->seq_lock_, tls_data->seq_lock_ + 1);
-
+    //
+    // We only need a StoreStore barrier here instead of Acquire_Store() because
+    // it's OK if the loads inside the critical section are speculated above the
+    // store of the lock. We are the only thread which may modify the data, so
+    // speculation is safe. This avoids a memory fence instruction on x86 and
+    // saves 20ns or so.
+    tls_data->seq_lock_++;
+    base::subtle::StoreStoreBarrier();
     KernelStackWatchdog::TLS::Frame* frame = &tls_data->frames_[tls_data->depth_++];
     DCHECK_LE(tls_data->depth_, KernelStackWatchdog::TLS::kMaxDepth);
     frame->start_time_ = GetMonoTimeMicros();
@@ -214,7 +214,8 @@ class ScopedWatchKernelStack {
 
     // "Release" the sequence lock. This resets the lock value to be even, so readers
     // will proceed.
-    base::subtle::Release_Store(&tls_data->seq_lock_, tls_data->seq_lock_ + 1);
+    base::subtle::StoreStoreBarrier();
+    tls_data->seq_lock_--;
   }
 
   ~ScopedWatchKernelStack() {
