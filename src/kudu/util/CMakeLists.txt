@@ -121,6 +121,7 @@ set(UTIL_SRCS
   bitmap.cc
   bloom_filter.cc
   bitmap.cc
+  buffer_chain.cc
   cache.cc
   cache_metrics.cc
   coding.cc
@@ -317,6 +318,7 @@ ADD_KUDU_TEST(bit-util-test)
 ADD_KUDU_TEST(bitmap-test)
 ADD_KUDU_TEST(blocking_queue-test)
 ADD_KUDU_TEST(bloom_filter-test)
+ADD_KUDU_TEST(buffer_chain-test)
 ADD_KUDU_TEST(cache-test)
 ADD_KUDU_TEST(callback_bind-test)
 ADD_KUDU_TEST(countdown_latch-test)

@@ -27,6 +27,7 @@
 #include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/strings/fastmem.h"
 #include "kudu/gutil/strings/substitute.h"
+#include "kudu/util/buffer_chain.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/memory/arena.h"
 #include "kudu/util/net/net_util.h"
@@ -616,7 +617,7 @@ void AppendRowToString<RowBlockRow>(const RowBlockRow& row, string* buf) {
 template<bool IS_NULLABLE, bool IS_VARLEN>
 static void CopyColumn(const RowBlock& block, int col_idx,
                        int dst_col_idx, uint8_t* dst_base,
-                       faststring* indirect_data, const Schema* dst_schema) {
+                       BufferChain* indirect_data, const Schema* dst_schema) {
   DCHECK(dst_schema);
   ColumnBlock cblock = block.column_block(col_idx);
   size_t row_stride = ContiguousRowHelper::row_size(*dst_schema);
@@ -644,8 +645,7 @@ static void CopyColumn(const RowBlock& block, int col_idx,
       } else if (IS_VARLEN) {
         const Slice *slice = reinterpret_cast<const Slice *>(src);
         size_t offset_in_indirect = indirect_data->size();
-        indirect_data->append(reinterpret_cast<const char*>(slice->data()),
-                              slice->size());
+        indirect_data->append(*slice);
 
         Slice *dst_slice = reinterpret_cast<Slice *>(dst);
         *dst_slice = Slice(reinterpret_cast<const uint8_t*>(offset_in_indirect),
@@ -671,7 +671,7 @@ static void CopyColumn(const RowBlock& block, int col_idx,
 ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS
 void SerializeRowBlock(const RowBlock& block, RowwiseRowBlockPB* rowblock_pb,
                        const Schema* projection_schema,
-                       faststring* data_buf, faststring* indirect_data) {
+                       faststring* data_buf, BufferChain* indirect_data) {
   DCHECK_GT(block.nrows(), 0);
   const Schema& tablet_schema = block.schema();
 

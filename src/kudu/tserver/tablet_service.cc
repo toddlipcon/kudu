@@ -49,6 +49,7 @@
 #include "kudu/tserver/tablet_server.h"
 #include "kudu/tserver/ts_tablet_manager.h"
 #include "kudu/tserver/tserver.pb.h"
+#include "kudu/util/buffer_chain.h"
 #include "kudu/util/crc.h"
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/faststring.h"
@@ -367,7 +368,9 @@ void SetLastRow(const RowBlock& row_block, faststring* last_primary_key) {
 // server-side scan and thus never need to return the actual data.)
 class ScanResultCopier : public ScanResultCollector {
  public:
-  ScanResultCopier(RowwiseRowBlockPB* rowblock_pb, faststring* rows_data, faststring* indirect_data)
+  ScanResultCopier(RowwiseRowBlockPB* rowblock_pb,
+                   faststring* rows_data,
+                   BufferChain* indirect_data)
       : rowblock_pb_(DCHECK_NOTNULL(rowblock_pb)),
         rows_data_(DCHECK_NOTNULL(rows_data)),
         indirect_data_(DCHECK_NOTNULL(indirect_data)),
@@ -402,7 +405,7 @@ class ScanResultCopier : public ScanResultCollector {
  private:
   RowwiseRowBlockPB* const rowblock_pb_;
   faststring* const rows_data_;
-  faststring* const indirect_data_;
+  BufferChain* const indirect_data_;
   int blocks_processed_;
   int64_t num_rows_returned_;
   faststring last_primary_key_;
@@ -1050,7 +1053,7 @@ void TabletServiceImpl::Scan(const ScanRequestPB* req,
 
   size_t batch_size_bytes = GetMaxBatchSizeBytesHint(req);
   gscoped_ptr<faststring> rows_data(new faststring(batch_size_bytes * 11 / 10));
-  gscoped_ptr<faststring> indirect_data(new faststring(batch_size_bytes * 11 / 10));
+  gscoped_ptr<BufferChain> indirect_data(new BufferChain());
   RowwiseRowBlockPB data;
   ScanResultCopier collector(&data, rows_data.get(), indirect_data.get());
 
@@ -1108,7 +1111,7 @@ void TabletServiceImpl::Scan(const ScanRequestPB* req,
     if (indirect_data->size() > 0) {
       int indirect_idx;
       CHECK_OK(context->AddRpcSidecar(
-          rpc::RpcSidecar::FromFaststring(std::move(indirect_data)), &indirect_idx));
+          rpc::RpcSidecar::FromBufferChain(std::move(indirect_data)), &indirect_idx));
       resp->mutable_data()->set_indirect_data_sidecar(indirect_idx);
     }
 

@@ -39,6 +39,7 @@
 #include "kudu/rpc/service_if.h"
 #include "kudu/rpc/service_pool.h"
 #include "kudu/security/security-test-util.h"
+#include "kudu/util/buffer_chain.h"
 #include "kudu/util/env.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/mem_tracker.h"
@@ -139,22 +140,25 @@ class GenericCalculatorService : public ServiceIf {
       LOG(FATAL) << "couldn't parse: " << param.ToDebugString();
     }
 
+    // We'll send back one sidecar using a faststring, and the other
+    // using a BufferChain.
     gscoped_ptr<faststring> first(new faststring);
-    gscoped_ptr<faststring> second(new faststring);
+    gscoped_ptr<BufferChain> second(new BufferChain);
 
     Random r(req.random_seed());
     first->resize(req.size1());
     RandomString(first->data(), req.size1(), &r);
 
-    second->resize(req.size2());
-    RandomString(second->data(), req.size2(), &r);
+    gscoped_ptr<char[]> buf(new char[req.size2()]);
+    RandomString(&buf[0], req.size2(), &r);
+    second->append(Slice(&buf[0], req.size2()));
 
     SendTwoStringsResponsePB resp;
     int idx1, idx2;
     CHECK_OK(incoming->AddRpcSidecar(
         RpcSidecar::FromFaststring(std::move(first)), &idx1));
     CHECK_OK(incoming->AddRpcSidecar(
-        RpcSidecar::FromFaststring(std::move(second)), &idx2));
+        RpcSidecar::FromBufferChain(std::move(second)), &idx2));
     resp.set_sidecar1(idx1);
     resp.set_sidecar2(idx2);
 

@@ -20,10 +20,13 @@
 #include <vector>
 
 #include "kudu/gutil/gscoped_ptr.h"
-#include "kudu/util/faststring.h"
 #include "kudu/util/slice.h"
 
 namespace kudu {
+
+class faststring;
+class BufferChain;
+
 namespace rpc {
 
 enum {
@@ -58,6 +61,7 @@ enum {
 class RpcSidecar {
  public:
   static gscoped_ptr<RpcSidecar> FromFaststring(gscoped_ptr<faststring> data);
+  static gscoped_ptr<RpcSidecar> FromBufferChain(gscoped_ptr<BufferChain> data);
 
   virtual void AddSlices(std::vector<Slice>* slice) const = 0;
   virtual int NumSlices() const = 0;
