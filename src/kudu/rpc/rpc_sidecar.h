@@ -17,6 +17,8 @@
 #ifndef KUDU_RPC_RPC_SIDECAR_H
 #define KUDU_RPC_RPC_SIDECAR_H
 
+#include <vector>
+
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/slice.h"
@@ -55,16 +57,13 @@ enum {
 // through the RpcContext wrapper) on the client side.
 class RpcSidecar {
  public:
-  // Generates a sidecar with the parameter faststring as its data.
-  explicit RpcSidecar(gscoped_ptr<faststring> data) : data_(std::move(data)) {}
+  static gscoped_ptr<RpcSidecar> FromFaststring(gscoped_ptr<faststring> data);
 
-  // Returns a Slice representation of the sidecar's data.
-  Slice AsSlice() const { return *data_; }
+  virtual void AddSlices(std::vector<Slice>* slice) const = 0;
+  virtual int NumSlices() const = 0;
+  virtual int TotalSize() const = 0;
 
- private:
-  const gscoped_ptr<faststring> data_;
-
-  DISALLOW_COPY_AND_ASSIGN(RpcSidecar);
+  virtual ~RpcSidecar();
 };
 
 } // namespace rpc

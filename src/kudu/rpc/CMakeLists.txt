@@ -58,6 +58,7 @@ set(KRPC_SRCS
     rpc.cc
     rpc_context.cc
     rpc_controller.cc
+    rpc_sidecar.cc
     rpcz_store.cc
     sasl_common.cc
     sasl_helper.cc

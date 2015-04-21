@@ -1099,15 +1099,16 @@ void TabletServiceImpl::Scan(const ScanRequestPB* req,
 
     // Add sidecar data to context and record the returned indices.
     int rows_idx;
-    CHECK_OK(context->AddRpcSidecar(make_gscoped_ptr(
-        new rpc::RpcSidecar(std::move(rows_data))), &rows_idx));
+    CHECK_OK(context->AddRpcSidecar(
+        rpc::RpcSidecar::FromFaststring(std::move(rows_data)), &rows_idx));
+
     resp->mutable_data()->set_rows_sidecar(rows_idx);
 
     // Add indirect data as a sidecar, if applicable.
     if (indirect_data->size() > 0) {
       int indirect_idx;
-      CHECK_OK(context->AddRpcSidecar(make_gscoped_ptr(
-          new rpc::RpcSidecar(std::move(indirect_data))), &indirect_idx));
+      CHECK_OK(context->AddRpcSidecar(
+          rpc::RpcSidecar::FromFaststring(std::move(indirect_data)), &indirect_idx));
       resp->mutable_data()->set_indirect_data_sidecar(indirect_idx);
     }
 

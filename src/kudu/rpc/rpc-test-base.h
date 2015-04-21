@@ -24,6 +24,7 @@
 #include <string>
 
 #include "kudu/gutil/walltime.h"
+#include "kudu/gutil/stl_util.h"
 #include "kudu/rpc/acceptor_pool.h"
 #include "kudu/rpc/messenger.h"
 #include "kudu/rpc/proxy.h"
@@ -151,9 +152,9 @@ class GenericCalculatorService : public ServiceIf {
     SendTwoStringsResponsePB resp;
     int idx1, idx2;
     CHECK_OK(incoming->AddRpcSidecar(
-        make_gscoped_ptr(new RpcSidecar(std::move(first))), &idx1));
+        RpcSidecar::FromFaststring(std::move(first)), &idx1));
     CHECK_OK(incoming->AddRpcSidecar(
-        make_gscoped_ptr(new RpcSidecar(std::move(second))), &idx2));
+        RpcSidecar::FromFaststring(std::move(second)), &idx2));
     resp.set_sidecar1(idx1);
     resp.set_sidecar2(idx2);
 

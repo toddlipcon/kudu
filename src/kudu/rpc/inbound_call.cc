@@ -20,6 +20,7 @@
 #include <glog/stl_logging.h>
 #include <memory>
 
+#include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/connection.h"
 #include "kudu/rpc/rpc_introspection.pb.h"
@@ -36,6 +37,7 @@ using google::protobuf::io::CodedOutputStream;
 using google::protobuf::Message;
 using google::protobuf::MessageLite;
 using std::shared_ptr;
+using std::unique_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -44,13 +46,14 @@ namespace rpc {
 
 InboundCall::InboundCall(Connection* conn)
   : conn_(conn),
-    sidecars_deleter_(&sidecars_),
     trace_(new Trace),
     method_info_(nullptr) {
   RecordCallReceived();
 }
 
-InboundCall::~InboundCall() {}
+InboundCall::~InboundCall() {
+  STLDeleteElements(&sidecars_);
+}
 
 Status InboundCall::ParseFrom(gscoped_ptr<InboundTransfer> transfer) {
   TRACE_EVENT_FLOW_BEGIN0("rpc", "InboundCall", this);
@@ -153,7 +156,7 @@ void InboundCall::SerializeResponseBuffer(const MessageLite& response,
   uint32_t absolute_sidecar_offset = protobuf_msg_size;
   for (RpcSidecar* car : sidecars_) {
     resp_hdr.add_sidecar_offsets(absolute_sidecar_offset);
-    absolute_sidecar_offset += car->AsSlice().size();
+    absolute_sidecar_offset += car->TotalSize();
   }
 
   int additional_size = absolute_sidecar_offset - protobuf_msg_size;
@@ -168,11 +171,17 @@ void InboundCall::SerializeResponseTo(vector<Slice>* slices) const {
   TRACE_EVENT0("rpc", "InboundCall::SerializeResponseTo");
   CHECK_GT(response_hdr_buf_.size(), 0);
   CHECK_GT(response_msg_buf_.size(), 0);
-  slices->reserve(slices->size() + 2 + sidecars_.size());
+
+  int num_sidecar_slices = 0;
+  for (RpcSidecar* car : sidecars_) {
+    num_sidecar_slices += car->NumSlices();
+  }
+
+  slices->reserve(slices->size() + 2 + num_sidecar_slices);
   slices->push_back(Slice(response_hdr_buf_));
   slices->push_back(Slice(response_msg_buf_));
   for (RpcSidecar* car : sidecars_) {
-    slices->push_back(car->AsSlice());
+    car->AddSlices(slices);
   }
 }
 

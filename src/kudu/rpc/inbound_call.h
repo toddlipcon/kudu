@@ -22,7 +22,6 @@
 #include <vector>
 
 #include "kudu/gutil/gscoped_ptr.h"
-#include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/rpc/remote_method.h"
@@ -227,8 +226,7 @@ class InboundCall {
 
   // Vector of additional sidecars that are tacked on to the call's response
   // after serialization of the protobuf. See rpc/rpc_sidecar.h for more info.
-  std::vector<RpcSidecar*> sidecars_;
-  ElementDeleter sidecars_deleter_;
+  std::vector<RpcSidecar *> sidecars_;
 
   // The trace buffer.
   scoped_refptr<Trace> trace_;
