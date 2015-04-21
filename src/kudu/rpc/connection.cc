@@ -351,7 +351,7 @@ void Connection::QueueOutboundCall(const shared_ptr<OutboundCall> &call) {
   TransferCallbacks *cb = new CallTransferCallbacks(call);
   awaiting_response_[call_id] = car.release();
   QueueOutbound(gscoped_ptr<OutboundTransfer>(
-      OutboundTransfer::CreateForCallRequest(call_id, slices_tmp_, cb)));
+      OutboundTransfer::CreateForCallRequest(call_id, std::move(slices_tmp_), cb)));
 }
 
 // Callbacks for sending an RPC call response from the server.
@@ -427,9 +427,10 @@ void Connection::QueueResponseForCall(gscoped_ptr<InboundCall> call) {
 
   TransferCallbacks *cb = new ResponseTransferCallbacks(std::move(call), this);
   // After the response is sent, can delete the InboundCall object.
+
   // We set a dummy call ID and required feature set, since these are not needed
   // when sending responses.
-  gscoped_ptr<OutboundTransfer> t(OutboundTransfer::CreateForCallResponse(slices, cb));
+  gscoped_ptr<OutboundTransfer> t(OutboundTransfer::CreateForCallResponse(std::move(slices), cb));
 
   QueueTransferTask *task = new QueueTransferTask(std::move(t), this);
   reactor_thread_->reactor()->ScheduleReactorTask(task);

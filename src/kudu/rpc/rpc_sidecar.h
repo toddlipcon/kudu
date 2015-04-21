@@ -24,6 +24,10 @@
 namespace kudu {
 namespace rpc {
 
+enum {
+  kMaxNumSidecars = 4
+};
+
 // An RpcSidecar is a mechanism which allows replies to RPCs
 // to reference blocks of data without extra copies. In other words,
 // whenever a protobuf would have a large field where additional copies

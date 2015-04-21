@@ -472,37 +472,37 @@ Status CallResponse::ParseFrom(gscoped_ptr<InboundTransfer> transfer) {
                                             &entire_message));
 
   // Use information from header to extract the payload slices.
-  int last = header_.sidecar_offsets_size() - 1;
+  int num_sidecars = header_.sidecar_offsets_size();
 
-  if (last >= OutboundTransfer::kMaxPayloadSlices) {
+  if (num_sidecars > kMaxNumSidecars) {
     return Status::Corruption(strings::Substitute(
-        "Received $0 additional payload slices, expected at most %d",
-        last, OutboundTransfer::kMaxPayloadSlices));
+        "Received $0 sidecars, expected at most $1",
+        num_sidecars, kMaxNumSidecars));
   }
 
-  if (last >= 0) {
+  if (num_sidecars > 0) {
     serialized_response_ = Slice(entire_message.data(),
                                  header_.sidecar_offsets(0));
-    for (int i = 0; i < last; ++i) {
-      uint32_t next_offset = header_.sidecar_offsets(i);
-      int32_t len = header_.sidecar_offsets(i + 1) - next_offset;
-      if (next_offset + len > entire_message.size() || len < 0) {
+
+    for (int i = 0; i < num_sidecars; ++i) {
+      int begin_offset = header_.sidecar_offsets(i);
+      int end_offset;
+      if (i < num_sidecars - 1) {
+        end_offset = header_.sidecar_offsets(i + 1);
+      } else {
+        end_offset = entire_message.size();
+      }
+
+      int len = end_offset - begin_offset;
+
+      if (end_offset > entire_message.size() || len < 0) {
         return Status::Corruption(strings::Substitute(
             "Invalid sidecar offsets; sidecar $0 apparently starts at $1,"
             " has length $2, but the entire message has length $3",
-            i, next_offset, len, entire_message.size()));
+            i, begin_offset, len, entire_message.size()));
       }
-      sidecar_slices_[i] = Slice(entire_message.data() + next_offset, len);
+      sidecar_slices_[i] = Slice(entire_message.data() + begin_offset, len);
     }
-    uint32_t next_offset = header_.sidecar_offsets(last);
-    if (next_offset > entire_message.size()) {
-        return Status::Corruption(strings::Substitute(
-            "Invalid sidecar offsets; the last sidecar ($0) apparently starts "
-            "at $1, but the entire message has length $3",
-            last, next_offset, entire_message.size()));
-    }
-    sidecar_slices_[last] = Slice(entire_message.data() + next_offset,
-                                  entire_message.size() - next_offset);
   } else {
     serialized_response_ = entire_message;
   }

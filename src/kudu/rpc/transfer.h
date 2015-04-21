@@ -94,7 +94,6 @@ class InboundTransfer {
 // Upon completion of the transfer, a callback is triggered.
 class OutboundTransfer : public boost::intrusive::list_base_hook<> {
  public:
-  enum { kMaxPayloadSlices = 10 };
 
   // Factory methods for creating transfers associated with call requests
   // or responses. The 'payload' slices will be concatenated and
@@ -105,18 +104,14 @@ class OutboundTransfer : public boost::intrusive::list_base_hook<> {
   // memory of the slices. The slices must remain valid until the callback
   // is triggered.
   //
-  // NOTE: 'payload' is currently restricted to a maximum of kMaxPayloadSlices
-  // slices.
-  // ------------------------------------------------------------
-
   // Create an outbound transfer for a call request.
   static OutboundTransfer* CreateForCallRequest(int32_t call_id,
-                                                const std::vector<Slice> &payload,
+                                                std::vector<Slice> payload,
                                                 TransferCallbacks *callbacks);
 
   // Create an outbound transfer for a call response.
   // See above for details.
-  static OutboundTransfer* CreateForCallResponse(const std::vector<Slice> &payload,
+  static OutboundTransfer* CreateForCallResponse(std::vector<Slice> payload,
                                                  TransferCallbacks *callbacks);
 
   // Destruct the transfer. A transfer object should never be deallocated
@@ -154,13 +149,10 @@ class OutboundTransfer : public boost::intrusive::list_base_hook<> {
 
  private:
   OutboundTransfer(int32_t call_id,
-                   const std::vector<Slice> &payload,
+                   std::vector<Slice> payload,
                    TransferCallbacks *callbacks);
 
-  // Slices to send. Uses an array here instead of a vector to avoid an expensive
-  // vector construction (improved performance a couple percent).
-  Slice payload_slices_[kMaxPayloadSlices];
-  size_t n_payload_slices_;
+  std::vector<Slice> payload_slices_;
 
   // The current slice that is being sent.
   int32_t cur_slice_idx_;

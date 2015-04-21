@@ -180,7 +180,7 @@ Status InboundCall::AddRpcSidecar(gscoped_ptr<RpcSidecar> car, int* idx) {
   // Check that the number of sidecars does not exceed the number of payload
   // slices that are free (two are used up by the header and main message
   // protobufs).
-  if (sidecars_.size() + 2 > OutboundTransfer::kMaxPayloadSlices) {
+  if (sidecars_.size() > kMaxNumSidecars) {
     return Status::ServiceUnavailable("All available sidecars already used");
   }
   sidecars_.push_back(car.release());
