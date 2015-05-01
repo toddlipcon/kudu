@@ -117,7 +117,6 @@ class CFileSet : public std::tr1::enable_shared_from_this<CFileSet> {
 // together, and iterated in parallel.
 class CFileSet::Iterator : public ColumnwiseIterator {
  public:
-
   virtual Status Init(ScanSpec *spec) OVERRIDE;
 
   virtual Status PrepareBatch(size_t *nrows) OVERRIDE;

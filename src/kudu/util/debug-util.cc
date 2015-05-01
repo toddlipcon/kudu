@@ -207,8 +207,11 @@ string GetLogFormatStackTraceHex() {
   return trace.ToLogFormatHexString();
 }
 
+extern "C"   void __msan_unpoison(const volatile void *a, size_t size);
+
 void StackTrace::Collect(int skip_frames) {
   num_frames_ = google::GetStackTrace(frames_, arraysize(frames_), skip_frames);
+  __msan_unpoison(frames_, sizeof(frames_[0]) * num_frames_);
 }
 
 void StackTrace::StringifyToHex(char* buf, size_t size) const {

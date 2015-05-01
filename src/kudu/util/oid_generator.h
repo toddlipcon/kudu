@@ -9,6 +9,7 @@
 
 #include "kudu/gutil/macros.h"
 #include "kudu/util/locks.h"
+#include "kudu/util/random.h"
 
 namespace kudu {
 
@@ -16,7 +17,7 @@ namespace kudu {
 // This class is thread safe
 class ObjectIdGenerator {
  public:
-  ObjectIdGenerator() {}
+  ObjectIdGenerator();
   ~ObjectIdGenerator() {}
 
   std::string Next();
@@ -27,7 +28,7 @@ class ObjectIdGenerator {
   typedef simple_spinlock LockType;
 
   LockType oid_lock_;
-  boost::uuids::random_generator oid_generator_;
+  Random r_;
 };
 
 } // namespace kudu

@@ -87,8 +87,10 @@ ServerBase::ServerBase(const string& name,
     clock_ = LogicalClock::CreateStartingAt(Timestamp::kInitialTimestamp);
   }
   CHECK_OK(StartThreadInstrumentation(metric_entity_, web_server_.get()));
+#ifndef KUDU_DISABLE_CODEGEN
   CHECK_OK(codegen::CompilationManager::GetSingleton()->StartInstrumentation(
                metric_entity_));
+#endif
 }
 
 ServerBase::~ServerBase() {

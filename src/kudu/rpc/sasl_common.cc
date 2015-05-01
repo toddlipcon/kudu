@@ -14,6 +14,7 @@
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/once.h"
 #include "kudu/gutil/stringprintf.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/net/sockaddr.h"
 
 using std::set;
@@ -111,8 +112,12 @@ static int SaslGetOption(void* context, const char* plugin_name, const char* opt
 // UBUNTU:          /usr/lib/sasl2 or /usr/lib/x86_64-linux-gnu/sasl2
 // CENTOS:          /usr/lib64/sasl2
 static int SaslGetPath(void* context, const char** path) {
-  *path = FLAGS_krpc_sasl_path.c_str();
-  VLOG(3) << "SASL path: " << FLAGS_krpc_sasl_path;
+  *path = getenv("SASL_PATH");
+  // TODO: only look at env if the path isn't specified on CLI?
+  if (! *path) {
+    *path = FLAGS_krpc_sasl_path.c_str();
+  }
+  VLOG(3) << "SASL path: " << *path;
   return SASL_OK;
 }
 

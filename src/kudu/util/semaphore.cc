@@ -65,10 +65,12 @@ bool Semaphore::TimedAcquire(const MonoDelta& timeout) {
 void Semaphore::Release() {
   PCHECK(sem_post(&sem_) == 0);
 }
+extern "C"   void __msan_unpoison(const volatile void *a, size_t size);
 
 int Semaphore::GetValue() {
   int val;
   PCHECK(sem_getvalue(&sem_, &val) == 0);
+  __msan_unpoison(&val, sizeof(val));
   return val;
 }
 

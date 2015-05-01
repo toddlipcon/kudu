@@ -21,8 +21,9 @@
 # we should be OK to depend on the host installation.
 
 
-find_path(CYRUS_SASL_INCLUDE_DIR sasl/sasl.h)
-find_library(CYRUS_SASL_SHARED_LIB NAMES "libsasl2${CMAKE_SHARED_LIBRARY_SUFFIX}")
+find_path(CYRUS_SASL_INCLUDE_DIR sasl/sasl.h PATHS ${CMAKE_SOURCE_DIR}/thirdparty/installed/include)
+find_library(CYRUS_SASL_SHARED_LIB NAMES "libsasl2${CMAKE_SHARED_LIBRARY_SUFFIX}"
+  PATHS ${CMAKE_SOURCE_DIR}/thirdparty/installed/lib)
 
 if (CYRUS_SASL_INCLUDE_DIR AND CYRUS_SASL_SHARED_LIB)
   set(CYRUS_SASL_FOUND TRUE)

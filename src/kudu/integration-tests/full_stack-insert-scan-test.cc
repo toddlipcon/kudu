@@ -372,7 +372,9 @@ void FullStackInsertScanTest::ScanProjection(const KuduSchema& schema,
     KuduScanner scanner(reader_table_.get());
     CHECK_OK(scanner.SetProjection(&schema));
     CHECK_OK(scanner.Open());
+#ifndef KUDU_DISABLE_CODEGEN
     codegen::CompilationManager::GetSingleton()->Wait();
+#endif
   }
   KuduScanner scanner(reader_table_.get());
   CHECK_OK(scanner.SetProjection(&schema));

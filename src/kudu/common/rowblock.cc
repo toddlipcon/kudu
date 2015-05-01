@@ -57,6 +57,8 @@ bool SelectionVector::AnySelected() const {
   return false;
 }
 
+extern "C" void __msan_unpoison(const volatile void *a, size_t size);
+
 //////////////////////////////
 // RowBlock
 //////////////////////////////
@@ -80,6 +82,7 @@ RowBlock::RowBlock(const Schema &schema,
 
     if (col_schema.is_nullable()) {
       column_null_bitmaps_[i] = new uint8_t[bitmap_size];
+      __msan_unpoison(column_null_bitmaps_[i], bitmap_size);
     }
   }
 }

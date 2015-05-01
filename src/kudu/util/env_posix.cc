@@ -531,6 +531,9 @@ class PosixMmapFile : public WritableFile {
   virtual const string& filename() const OVERRIDE { return filename_; }
 };
 
+/* Make memory region fully initialized (without changing its contents). */
+extern "C" void __msan_unpoison(const volatile void *a, size_t size);
+
 // Use non-memory mapped POSIX files to write data to a file.
 //
 // TODO (perf) investigate zeroing a pre-allocated allocated area in
@@ -1233,6 +1236,7 @@ class PosixEnv : public Env {
     FTSENT *ent = NULL;
     bool had_errors = false;
     while ((ent = fts_read(tree.get())) != NULL) {
+      __msan_unpoison(ent, sizeof(*ent));
       bool doCb = false;
       FileType type = DIRECTORY_TYPE;
       switch (ent->fts_info) {
@@ -1266,6 +1270,10 @@ class PosixEnv : public Env {
           break;
       }
       if (doCb) {
+        // Workaround for https://llvm.org/bugs/show_bug.cgi?id=17267
+        // TODO: ifdef this out!
+        __msan_unpoison(ent->fts_path, ent->fts_pathlen + 1);
+        __msan_unpoison(ent->fts_name, ent->fts_namelen + 1);
         if (!cb.Run(type, DirName(ent->fts_path), ent->fts_name).ok()) {
           had_errors = true;
         }

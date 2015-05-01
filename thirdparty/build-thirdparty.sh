@@ -16,6 +16,8 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
   EXTRA_CXXFLAGS="$EXTRA_CXXFLAGS -stdlib=libstdc++"
 fi
 
+EXTRA_LDFLAGS="$LDFLAGS"
+
 source $TP_DIR/vars.sh
 
 ################################################################################
@@ -134,7 +136,9 @@ fi
 # build protobuf
 if [ -n "$F_ALL" -o -n "$F_PROTOBUF" ]; then
   cd $PROTOBUF_DIR
-  CXXFLAGS=$EXTRA_CXXFLAGS ./configure --with-pic --enable-shared --enable-static --prefix=$PREFIX
+  CXXFLAGS="$EXTRA_CXXFLAGS" \
+      LDFLAGS="$EXTRA_LDFLAGS" \
+      ./configure --with-pic --enable-shared --enable-static --prefix=$PREFIX
   make -j$PARALLEL install
 fi
 
@@ -156,7 +160,7 @@ fi
 # build lz4
 if [ -n "$F_ALL" -o -n "$F_LZ4" ]; then
   cd $LZ4_DIR
-  CFLAGS=-fPIC $PREFIX/bin/cmake -DCMAKE_INSTALL_PREFIX:PATH=$PREFIX .
+  CFLAGS="$EXTRA_CXXFLAGS -fPIC" $PREFIX/bin/cmake -DCMAKE_INSTALL_PREFIX:PATH=$PREFIX .
   make -j$PARALLEL install
 fi
 
@@ -180,7 +184,7 @@ if [ -n "$F_ALL" -o -n "$F_SQUEASEL" ]; then
   # Mongoose's Makefile builds a standalone web server, whereas we just want
   # a static lib
   cd $SQUEASEL_DIR
-  ${CC:-gcc} -fno-omit-frame-pointer -std=c99 -O3 -DNDEBUG -DNO_SSL_DL -fPIC -c squeasel.c
+  ${CC:-gcc} $CFLAGS -fno-omit-frame-pointer -std=c99 -O3 -DNDEBUG -DNO_SSL_DL -fPIC -c squeasel.c
   ar rs libsqueasel.a squeasel.o
   cp libsqueasel.a $PREFIX/lib/
   cp squeasel.h $PREFIX/include/

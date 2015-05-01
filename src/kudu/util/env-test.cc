@@ -197,6 +197,7 @@ class TestEnv : public KuduTest {
 
     // write 1 MB
     uint8_t scratch[kOneMb];
+    memset(scratch, 0, arraysize(scratch)); // quiet MSAN
     Slice slice(scratch, kOneMb);
     ASSERT_OK(file->Append(slice));
     ASSERT_OK(file->Sync());
@@ -231,6 +232,7 @@ class TestEnv : public KuduTest {
 
     // write 1 MB
     uint8_t scratch[kOneMb];
+    memset(scratch, 0, arraysize(scratch)); // quiet MSAN
     Slice slice(scratch, kOneMb);
     ASSERT_OK(file->Append(slice));
     ASSERT_OK(file->Sync());
@@ -366,6 +368,7 @@ TEST_F(TestEnv, TestHolePunch) {
 
   // Write 1 MB. The size and size-on-disk both agree.
   uint8_t scratch[kOneMb];
+  memset(scratch, 0, arraysize(scratch)); // quiet MSAN
   Slice slice(scratch, kOneMb);
   ASSERT_OK(file->Write(0, slice));
   ASSERT_OK(file->Sync());

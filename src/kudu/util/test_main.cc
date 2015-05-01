@@ -21,6 +21,8 @@ static void CreateAndStartTimer(timer_t* timerid, struct sigevent* sevp, struct 
 // Gracefully kill the process.
 static void KillTestOnTimeout(sigval_t sigval);
 
+extern "C" void __msan_set_keep_going(bool b);
+
 int main(int argc, char **argv) {
   google::InstallFailureSignalHandler();
   // InitGoogleTest() must precede ParseCommandLineFlags(), as the former

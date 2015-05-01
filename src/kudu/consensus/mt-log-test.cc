@@ -104,11 +104,11 @@ class MultiThreadedLogTest : public LogTestBase {
         CreateBatchFromAllocatedOperations(batch_replicates,
                                            &entry_batch_pb);
 
-        ASSERT_OK(log_->Reserve(REPLICATE, entry_batch_pb.Pass(), &entry_batch));
+        CHECK_OK(log_->Reserve(REPLICATE, entry_batch_pb.Pass(), &entry_batch));
       } // lock_guard scope
       CustomLatchCallback* cb = new CustomLatchCallback(&latch, &errors);
       entry_batch->SetReplicates(batch_replicates);
-      ASSERT_OK(log_->AsyncAppend(entry_batch, cb->AsStatusCallback()));
+      CHECK_OK(log_->AsyncAppend(entry_batch, cb->AsStatusCallback()));
     }
     LOG_TIMING(INFO, strings::Substitute("thread $0 waiting to append and sync $1 batches",
                                         thread_id, FLAGS_num_batches_per_thread)) {
@@ -117,7 +117,7 @@ class MultiThreadedLogTest : public LogTestBase {
     BOOST_FOREACH(const Status& status, errors) {
       WARN_NOT_OK(status, "Unexpected failure during AsyncAppend");
     }
-    ASSERT_EQ(0, errors.size());
+    CHECK_EQ(0, errors.size());
   }
 
   void Run() {

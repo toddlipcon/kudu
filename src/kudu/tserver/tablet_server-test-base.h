@@ -195,7 +195,7 @@ class TabletServerTestBase : public KuduTest {
 
     RowOperationsPB* data = req.mutable_row_operations();
 
-    ASSERT_OK(SchemaToPB(schema_, req.mutable_schema()));
+    CHECK_OK(SchemaToPB(schema_, req.mutable_schema()));
 
     uint64_t inserted_since_last_report = 0;
     for (int i = 0; i < num_batches; ++i) {

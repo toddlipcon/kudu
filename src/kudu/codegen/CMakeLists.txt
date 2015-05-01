@@ -55,15 +55,6 @@ target_link_libraries(codegen
   kudu_util
   gutil)
 
-## Disabling codegen in the KUDU_EXPORTED_CLIENT build.
-# In the exported build, symbol visibility is hidden. Codegen relies on
-# visible symbols for runtime relocation. This #define allows us to compile
-# outward-facing interfaces for code generation which return error statuses
-# instead of crashing.
-if(KUDU_EXPORTED_CLIENT)
-  add_definitions(-DKUDU_DISABLE_CODEGEN)
-endif()
-
 #######################################
 # Precompiling to LLVM bytecode
 #######################################
@@ -111,6 +102,8 @@ separate_arguments(IR_FLAGS)
 # declarations which will link fine against the ASAN in our executable, even
 # if the JIT code is not instrumented.
 list(REMOVE_ITEM IR_FLAGS "-fsanitize=address")
+list(REMOVE_ITEM IR_FLAGS "-fsanitize=memory")
+list(REMOVE_ITEM IR_FLAGS "-fsanitize-memory-track-origins=2")
 
 # Remove any optimization flags from the generated IR.
 # Optimizing during the precompilation limits the ability to optimize

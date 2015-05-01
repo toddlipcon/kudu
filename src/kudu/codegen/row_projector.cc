@@ -19,7 +19,6 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
-
 #include "kudu/codegen/jit_wrapper.h"
 #include "kudu/codegen/module_builder.h"
 #include "kudu/common/row.h"

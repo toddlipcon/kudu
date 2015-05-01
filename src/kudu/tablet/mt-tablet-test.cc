@@ -64,8 +64,9 @@ class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
     ColumnSchema valcol = schema->column(schema->find_column("val"));
     valcol_projection_ = Schema(boost::assign::list_of(valcol), 0);
     CHECK_OK(tablet()->NewRowIterator(valcol_projection_, &iter));
+#ifndef KUDU_DISABLE_CODEGEN
     codegen::CompilationManager::GetSingleton()->Wait();
-
+#endif
     ts_collector_.StartDumperThread();
   }
 
@@ -221,8 +222,17 @@ class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
       arena.Reset();
       CHECK_OK(iter->NextBlock(&block));
 
-      for (size_t j = 0; j < block.nrows(); j++) {
-        sum += *reinterpret_cast<const int32_t *>(column.cell_ptr(j));
+      if (column.is_nullable()) {
+        for (size_t j = 0; j < block.nrows(); j++) {
+          const int32_t* val = reinterpret_cast<const int32_t *>(column.nullable_cell_ptr(j));
+          if (val) {
+            sum += *val;
+          }
+        }
+      } else {
+        for (size_t j = 0; j < block.nrows(); j++) {
+          sum += *reinterpret_cast<const int32_t *>(column.cell_ptr(j));
+        }
       }
       count_since_report += block.nrows();
 
@@ -410,7 +420,7 @@ TYPED_TEST(MultiThreadedTabletTest, DoTestAllAtOnce) {
   this->JoinThreads();
   LOG_TIMING(INFO, "Summing int32 column") {
     uint64_t sum = this->CountSum(shared_ptr<TimeSeries>());
-    LOG(INFO) << "Sum = " << sum;
+    LOG(INFO) << strings::Substitute("Sum = $0", sum);
   }
 
   uint64_t max_rows = this->ClampRowCount(FLAGS_inserts_per_thread * FLAGS_num_insert_threads)

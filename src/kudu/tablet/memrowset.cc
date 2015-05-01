@@ -7,8 +7,10 @@
 #include <string>
 #include <vector>
 
+#ifndef KUDU_DISABLE_CODEGEN
 #include "kudu/codegen/compilation_manager.h"
 #include "kudu/codegen/row_projector.h"
+#endif
 #include "kudu/common/common.pb.h"
 #include "kudu/common/generic_iterators.h"
 #include "kudu/common/row.h"
@@ -367,6 +369,7 @@ class MRSRowProjectorImpl : public MRSRowProjector {
 // otherwise makes a regular one.
 gscoped_ptr<MRSRowProjector> GenerateAppropriateProjector(
   const Schema* base, const Schema* projection) {
+#ifndef KUDU_DISABLE_CODEGEN
   // Attempt code-generated implementation
   if (FLAGS_mrs_use_codegen) {
     gscoped_ptr<codegen::RowProjector> actual;
@@ -376,7 +379,7 @@ gscoped_ptr<MRSRowProjector> GenerateAppropriateProjector(
         new MRSRowProjectorImpl<codegen::RowProjector>(actual.Pass()));
     }
   }
-
+#endif
   // Proceed with default implementation
   gscoped_ptr<RowProjector> actual(new RowProjector(base, projection));
   return gscoped_ptr<MRSRowProjector>(

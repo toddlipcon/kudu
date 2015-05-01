@@ -207,6 +207,10 @@ if (${KUDU_USE_ASAN})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -DADDRESS_SANITIZER")
 endif()
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=memory -fsanitize-memory-track-origins=2  -fPIE -pie")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,/home/todd/git/gcc-4_8/build/src/.libs/")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize-blacklist=${CMAKE_CURRENT_SOURCE_DIR}/build-support/sanitize-blacklist.txt")
+
 # For any C code, use the same flags.
 set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS}")
 
@@ -273,6 +277,16 @@ if ("${KUDU_USE_UBSAN}" OR "${KUDU_USE_ASAN}" OR "${KUDU_USE_TSAN}")
     message(WARNING "GCC does not support specifying a sanitizer blacklist. Known sanitizer check failures will not be suppressed.")
   endif()
 endif()
+
+## Disabling codegen in the KUDU_EXPORTED_CLIENT build.
+# In the exported build, symbol visibility is hidden. Codegen relies on
+# visible symbols for runtime relocation. This #define allows us to compile
+# outward-facing interfaces for code generation which return error statuses
+# instead of crashing.
+if(KUDU_EXPORTED_CLIENT OR 1)
+  add_definitions(-DKUDU_DISABLE_CODEGEN)
+endif()
+
 
 # Code coverage
 if ("${KUDU_GENERATE_COVERAGE}")
@@ -371,7 +385,6 @@ set(LIBRARY_OUTPUT_DIRECTORY "${BUILD_OUTPUT_ROOT_DIRECTORY}")
 
 # where to put generated binaries
 set(EXECUTABLE_OUTPUT_PATH "${BUILD_OUTPUT_ROOT_DIRECTORY}")
-
 
 include_directories(src)
 

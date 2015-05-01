@@ -1755,6 +1755,11 @@ TEST_F(ClientTest, TestDeleteTable) {
   Status s = client_->OpenTable(kTableName, &client_table_);
   ASSERT_TRUE(s.IsNotFound());
   ASSERT_STR_CONTAINS(s.ToString(), "The table does not exist");
+
+  // Try to delete the table again.
+  s = client_->DeleteTable(kTableName);
+  ASSERT_TRUE(s.IsNotFound());
+  ASSERT_STR_CONTAINS(s.ToString(), "The table does not exist");
 }
 
 TEST_F(ClientTest, TestGetTableSchema) {

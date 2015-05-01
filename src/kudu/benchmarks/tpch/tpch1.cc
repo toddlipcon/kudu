@@ -134,7 +134,9 @@ void LoadLineItems(const string &path, RpcLineItemDAO *dao) {
 void WarmupScanCache(RpcLineItemDAO* dao) {
   // Warms up cache for the tpch1 query.
   dao->OpenTpch1Scanner();
+#ifndef KUDU_DISABLE_CODEGEN
   codegen::CompilationManager::GetSingleton()->Wait();
+#endif
 }
 
 void Tpch1(RpcLineItemDAO *dao) {

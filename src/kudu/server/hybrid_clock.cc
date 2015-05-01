@@ -41,6 +41,8 @@ namespace server {
 
 namespace {
 
+extern "C"   void __msan_unpoison(const volatile void *a, size_t size);
+
 // Returns the clock modes and checks if the clock is synchronized.
 Status GetClockModes(timex* timex) {
   // this makes ntp_adjtime a read-only call
@@ -54,6 +56,7 @@ Status GetClockModes(timex* timex) {
   if (PREDICT_FALSE(rc != TIME_OK)) {
     LOG(ERROR) << Substitute("TODO Server undergoing leap second. Return code: $0", rc);
   }
+  __msan_unpoison(timex, sizeof(*timex));
   return Status::OK();
 }
 
@@ -69,6 +72,8 @@ kudu::Status GetClockTime(ntptimeval* timeval) {
   if (PREDICT_FALSE(rc != TIME_OK)) {
     LOG(ERROR) << Substitute("TODO Server undergoing leap second. Return code: $0", rc);
   }
+
+  __msan_unpoison(timeval, sizeof(*timeval));
   return kudu::Status::OK();
 }
 

@@ -61,7 +61,7 @@ TEST_F(CrcTest, BenchmarkCRC32C) {
   Stopwatch sw;
   sw.start();
   for (int i = 0; i < kNumRuns; i++) {
-    uint64_t cksum;
+    uint64_t cksum = 0;
     crc32c->Compute(buf, buflen, &cksum);
   }
   sw.stop();

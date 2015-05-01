@@ -17,6 +17,7 @@
 #include "kudu/util/path_util.h"
 #include "kudu/util/pb_util.h"
 #include "kudu/util/random.h"
+#include "kudu/util/random_util.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
 #include "kudu/util/thread.h"
@@ -216,9 +217,7 @@ void BlockManagerTest<LogBlockManager>::RunLogMetricsTest() {
         saved_id = b->id();
       }
       uint8_t data[1024];
-      for (int i = 0; i < sizeof(data); i += sizeof(uint32_t)) {
-        data[i] = rand.Next();
-      }
+      RandomString(data, arraysize(data), &rand);
       b->Append(Slice(data, sizeof(data)));
       closer.AddBlock(b.Pass());
     }
