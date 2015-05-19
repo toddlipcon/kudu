@@ -10,6 +10,7 @@
 #include "kudu/cfile/string_prefix_block.h"
 #include "kudu/cfile/plain_bitmap_block.h"
 #include "kudu/cfile/gvint_block.h"
+#include "kudu/cfile/fastpfor_block.h"
 
 namespace kudu { namespace cfile {
 
@@ -151,6 +152,21 @@ struct DataTypeEncodingTraits<UINT32, GROUP_VARINT> {
 
   static Status CreateBlockDecoder(BlockDecoder **bd, const Slice &slice) {
     *bd = new GVIntBlockDecoder(slice);
+    return Status::OK();
+  }
+};
+
+// Optimized fastpfor encoding for 32bit unsigned integers
+template<>
+struct DataTypeEncodingTraits<UINT32, FASTPFOR_ENCODING> {
+
+  static Status CreateBlockBuilder(BlockBuilder **bb, const WriterOptions *options) {
+    *bb = new FastPForBlockBuilder(options);
+    return Status::OK();
+  }
+
+  static Status CreateBlockDecoder(BlockDecoder **bd, const Slice &slice) {
+    *bd = new FastPForBlockDecoder(slice);
     return Status::OK();
   }
 };

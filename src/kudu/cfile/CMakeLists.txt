@@ -20,6 +20,7 @@ add_library(cfile
   cfile_writer.cc
   compression_codec.cc
   gvint_block.cc
+  fastpfor_block.cc
   index_block.cc
   index_btree.cc
   string_plain_block.cc

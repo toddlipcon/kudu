@@ -95,6 +95,7 @@ class TypeEncodingResolver {
     AddMapping<STRING, PREFIX_ENCODING>();
     AddMapping<BOOL, RLE>();
     AddMapping<BOOL, PLAIN_ENCODING>();
+    AddMapping<UINT32, FASTPFOR_ENCODING>();
   }
 
   template<DataType type, EncodingType encoding> void AddMapping() {
