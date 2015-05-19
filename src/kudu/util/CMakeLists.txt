@@ -94,6 +94,9 @@ add_library(kudu_util
   trace.cc
   user.cc
   url-coding.cc
+  simdbitpacking.cpp
+  bitpacking.cpp
+  simdunalignedbitpacking.cpp
 )
 
 # TODO: we don't really need to link agaist libcurl, since it's only used by # tests.
