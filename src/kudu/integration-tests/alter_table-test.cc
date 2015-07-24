@@ -39,6 +39,7 @@ DECLARE_bool(enable_maintenance_manager);
 DECLARE_int32(heartbeat_interval_ms);
 DECLARE_int32(flush_threshold_mb);
 DECLARE_bool(use_hybrid_clock);
+DECLARE_int32(inject_bootstrap_delay_ms);
 
 namespace kudu {
 
@@ -132,7 +133,12 @@ class AlterTableTest : public KuduTest {
     }
   }
 
-  void RestartTabletServer(int idx) {
+  enum WaitMode {
+    WAIT_FOR_BOOTSTRAP,
+    NO_WAIT_FOR_BOOTSTRAP
+  };
+
+  void RestartTabletServer(int idx = 0, WaitMode mode = WAIT_FOR_BOOTSTRAP) {
     tablet_peer_.reset();
     if (cluster_->mini_tablet_server(idx)->server()) {
       ASSERT_OK(cluster_->mini_tablet_server(idx)->Restart());
@@ -140,7 +146,9 @@ class AlterTableTest : public KuduTest {
       ASSERT_OK(cluster_->mini_tablet_server(idx)->Start());
     }
 
-    ASSERT_OK(cluster_->mini_tablet_server(idx)->WaitStarted());
+    if (mode == WAIT_FOR_BOOTSTRAP) {
+      ASSERT_OK(cluster_->mini_tablet_server(idx)->WaitStarted());
+    }
     tablet_peer_ = LookupTabletPeer();
   }
 
@@ -336,6 +344,24 @@ TEST_F(AlterTableTest, TestAlterOnTSRestart) {
   ASSERT_OK(WaitAlterTableCompletion(kTableName, 50));
   ASSERT_EQ(1, tablet_peer_->tablet()->metadata()->schema_version());
 }
+
+// Verify that, if a tablet is in the process of bootstrapping while an
+// Alter is issued, it will eventually receive and apply it.
+TEST_F(AlterTableTest, TestAlterWhileBootstrapping) {
+  ASSERT_EQ(0, tablet_peer_->tablet()->metadata()->schema_version());
+
+  ShutdownTS();
+  FLAGS_inject_bootstrap_delay_ms = 1000;
+
+  RestartTabletServer(0, NO_WAIT_FOR_BOOTSTRAP);
+  SleepFor(MonoDelta::FromMilliseconds(100));
+  // Send the Alter request
+  Status s = AddNewI32Column(kTableName, "new-32", 10,
+                             MonoDelta::FromSeconds(10));
+  ASSERT_OK(s);
+  ASSERT_EQ(1, tablet_peer_->tablet()->metadata()->schema_version());
+}
+
 
 // Verify that nothing is left behind on cluster shutdown with pending async tasks
 TEST_F(AlterTableTest, TestShutdownWithPendingTasks) {

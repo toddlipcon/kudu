@@ -36,6 +36,7 @@
 #include "kudu/tablet/transactions/alter_schema_transaction.h"
 #include "kudu/tablet/transactions/write_transaction.h"
 #include "kudu/util/debug/trace_event.h"
+#include "kudu/util/flag_tags.h"
 #include "kudu/util/path_util.h"
 #include "kudu/util/locks.h"
 #include "kudu/util/logging.h"
@@ -44,6 +45,10 @@
 DEFINE_bool(skip_remove_old_recovery_dir, false,
             "Skip removing WAL recovery dir after startup. (useful for debugging)");
 DECLARE_int32(max_clock_sync_error_usec);
+
+DEFINE_int32(inject_bootstrap_delay_ms, 0,
+             "Inject a delay while bootstrapping tablets");
+TAG_FLAG(inject_bootstrap_delay_ms, unsafe);
 
 namespace kudu {
 namespace tablet {
@@ -389,6 +394,10 @@ TabletBootstrap::TabletBootstrap(const scoped_refptr<TabletMetadata>& meta,
 Status TabletBootstrap::Bootstrap(shared_ptr<Tablet>* rebuilt_tablet,
                                   scoped_refptr<Log>* rebuilt_log,
                                   ConsensusBootstrapInfo* consensus_info) {
+  if (FLAGS_inject_bootstrap_delay_ms) {
+    SleepFor(MonoDelta::FromMilliseconds(FLAGS_inject_bootstrap_delay_ms));
+  }
+
   string tablet_id = meta_->tablet_id();
 
   // Replay requires a valid Consensus metadata file to exist in order to
