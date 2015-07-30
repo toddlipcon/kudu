@@ -48,6 +48,7 @@ class AlterTableRandomized : public KuduTest {
     KuduTest::SetUp();
 
     ExternalMiniClusterOptions opts;
+    opts.num_tablet_servers = 3;
     // Because this test performs a lot of alter tables, we end up flushing
     // and rewriting metadata files quite a bit. Globally disabling fsync
     // speeds the test runtime up dramatically.
@@ -79,10 +80,11 @@ class AlterTableRandomized : public KuduTest {
     KuduTest::TearDown();
   }
 
-  void RestartTabletServer() {
-    cluster_->tablet_server(0)->Shutdown();
-    CHECK_OK(cluster_->tablet_server(0)->Restart());
-    CHECK_OK(cluster_->WaitForTabletsRunning(cluster_->tablet_server(0),
+  void RestartTabletServer(int idx) {
+    LOG(INFO) << "Restarting TS " << idx;
+    cluster_->tablet_server(idx)->Shutdown();
+    CHECK_OK(cluster_->tablet_server(idx)->Restart());
+    CHECK_OK(cluster_->WaitForTabletsRunning(cluster_->tablet_server(idx),
         MonoDelta::FromSeconds(30)));
   }
 
@@ -231,7 +233,7 @@ struct MirrorTable {
     gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
     RETURN_NOT_OK(table_creator->table_name(kTableName)
              .schema(&schema)
-             .num_replicas(1)
+             .num_replicas(3)
              .Create());
     return Status::OK();
   }
@@ -426,7 +428,7 @@ TEST_F(AlterTableRandomized, TestRandomSequence) {
     } else if (r < 995) {
       t.DropRandomColumn(rng.Next());
     } else {
-      RestartTabletServer();
+      RestartTabletServer(rng.Uniform(cluster_->num_tablet_servers()));
     }
 
     if (i % 1000 == 0) {
