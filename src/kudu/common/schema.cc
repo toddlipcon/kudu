@@ -441,6 +441,48 @@ Status SchemaBuilder::RenameColumn(const string& old_name, const string& new_nam
   return Status::IllegalState("Unable to rename existing column");
 }
 
+Status SchemaBuilder::ReplaceColumn(const std::string& name,
+                                    const ColumnSchema& new_col) {
+  // If renaming, verify that the new name does not already exist.
+  if (new_col.name() != name &&
+      ContainsKey(col_names_, new_col.name())) {
+    return Status::AlreadyPresent("column already exists", new_col.name());
+  }
+
+  BOOST_FOREACH(ColumnSchema& cur, cols_) {
+    if (name != cur.name()) continue;
+
+    // Sanity check the replacement is valid.
+
+    // TODO: should we allow ALTER which switches between logical types with
+    // the same physical type? may be useful
+    if (cur.type_info()->type() != new_col.type_info()->type()) {
+      return Status::NotSupported("cannot modify type");
+    }
+    if (cur.is_nullable() != new_col.is_nullable()) {
+      return Status::NotSupported("cannot modify nullability");
+    }
+
+    cur = new_col;
+    col_names_.erase(name);
+    InsertOrDie(&col_names_, new_col.name());
+    return Status::OK();
+  }
+  return Status::NotFound("no such column");
+}
+
+Status SchemaBuilder::GetColumn(const std::string& name,
+                                ColumnSchema* column) const {
+  BOOST_FOREACH(const ColumnSchema& col_schema, cols_) {
+    if (name == col_schema.name()) {
+      *column = col_schema;
+      return Status::OK();
+    }
+  }
+  return Status::NotFound("no such column");
+}
+
+
 Status SchemaBuilder::AddColumn(const ColumnSchema& column, bool is_key) {
   if (ContainsKey(col_names_, column.name())) {
     return Status::AlreadyPresent("The column already exists", column.name());

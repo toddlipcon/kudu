@@ -804,6 +804,12 @@ class SchemaBuilder {
   Status RemoveColumn(const string& name);
   Status RenameColumn(const string& old_name, const string& new_name);
 
+  Status ReplaceColumn(const string& name,
+                       const ColumnSchema& new_col_schema);
+
+  Status GetColumn(const string& name,
+                   ColumnSchema* col) const;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(SchemaBuilder);
 
