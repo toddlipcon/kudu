@@ -113,6 +113,7 @@ class KUDU_EXPORT KuduColumnSchema {
  private:
   friend class KuduColumnSpec;
   friend class KuduSchema;
+  friend class KuduTableAlterer_Data;
   friend class std::vector<KuduColumnSchema>;
 
   KuduColumnSchema();
@@ -185,6 +186,8 @@ class KUDU_EXPORT KuduColumnSpec {
  private:
   class KUDU_NO_EXPORT Data;
   friend class KuduSchemaBuilder;
+  friend class KuduTableAlterer;
+  friend class KuduTableAlterer_Data;
 
   // This class should always be owned and deleted by one of its friends,
   // not the user.
