@@ -242,6 +242,18 @@ cdef class StringVal(RawValue):
 
 #----------------------------------------------------------------------
 
+class ColumnSpec(object):
+    def __init__(self, name, col_type, **kwargs):
+        self.name = name
+        self.type = col_type
+        self.default = kwargs.pop('default', None)
+        self.compression = kwargs.pop('compression', None)
+        self.encoding = kwargs.pop('encoding', None)
+        self.primary_key = kwargs.pop('primary_key', False)
+        self.nullable = kwargs.pop('nullable', True)
+        if len(kwargs):
+            raise ValueError("unknown arguments: " + repr(kwargs))
+
 
 cdef class ColumnSchema:
     """
@@ -256,18 +268,6 @@ cdef class ColumnSchema:
     def __dealloc__(self):
         if self.schema != NULL:
             del self.schema
-
-    @classmethod
-    def create(cls, name, typenum, is_nullable=False):
-        cdef string c_name = name
-
-        cdef ColumnSchema result = ColumnSchema()
-
-        # TODO: This can fail in numerous ways due to bad user input. The input
-        # values should be validated / sanitized in some way.
-        result.schema = new KuduColumnSchema(c_name, typenum, is_nullable)
-
-        return result
 
     cdef inline cast_pyvalue(self, object o):
         cdef DataType t = self.schema.type()
