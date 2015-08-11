@@ -59,10 +59,16 @@ class BootstrapTest : public LogTestBase {
   // Struct containing fields that we'll plug into the tablet metadata
   // before triggering a bootstrap.
   struct TestMetadataSetup {
-    TestMetadataSetup() : durable_mrs_id(-1) {
+    TestMetadataSetup()
+      : durable_mrs_id(-1),
+        durable_drs_id(-1) {
     }
     // The last MRS ID that the bootstrap should consider flushed.
     int durable_mrs_id;
+
+    // The last DRS ID that was successfully written to disk.
+    int durable_drs_id;
+
     // For each DRS ID (key) the DMS ID (value) that should be considered flushed.
     unordered_map<int, int> durable_dms_by_drs;
   };
@@ -80,6 +86,7 @@ class BootstrapTest : public LogTestBase {
                                                TABLET_DATA_READY,
                                                meta));
     (*meta)->SetLastDurableMrsIdForTests(setup.durable_mrs_id);
+    (*meta)->SetLastDurableDrsIdForTests(setup.durable_drs_id);
     typedef std::pair<int, int> entry;
     BOOST_FOREACH(const entry& e, setup.durable_dms_by_drs) {
       (*meta)->GetRowSetForTests(e.first)->SetLastDurableRedoDmsIdForTests(e.second);
@@ -260,6 +267,7 @@ TEST_F(BootstrapTest, TestOrphanCommit) {
     // orphan commit: op_type: WRITE_OP...' line.
     TestMetadataSetup setup;
     setup.durable_mrs_id = 2;
+    setup.durable_drs_id = 0;
     setup.durable_dms_by_drs[0] = 1;
     ASSERT_OK(BootstrapTestTablet(setup, &tablet, &boot_info));
 

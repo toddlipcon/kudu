@@ -34,7 +34,7 @@ using kudu::consensus::RaftConfigPB;
 namespace kudu {
 namespace tablet {
 
-const int64 kNoDurableMemStore = -1;
+const int64 kNoDurableId = -1;
 
 // ============================================================================
 //  Tablet Metadata
@@ -185,8 +185,9 @@ TabletMetadata::TabletMetadata(FsManager *fs_manager,
     tablet_id_(tablet_id),
     start_key_(start_key), end_key_(end_key),
     fs_manager_(fs_manager),
-    next_rowset_idx_(0),
-    last_durable_mrs_id_(kNoDurableMemStore),
+    next_drs_id_(0),
+    last_durable_drs_id_(kNoDurableId),
+    last_durable_mrs_id_(kNoDurableId),
     schema_(new Schema(schema)),
     schema_version_(0),
     table_name_(table_name),
@@ -208,7 +209,7 @@ TabletMetadata::TabletMetadata(FsManager *fs_manager, const string& tablet_id)
   : state_(kNotLoadedYet),
     tablet_id_(tablet_id),
     fs_manager_(fs_manager),
-    next_rowset_idx_(0),
+    next_drs_id_(0),
     schema_(NULL),
     tombstone_last_logged_opid_(MinimumOpId()),
     num_flush_pins_(0),
@@ -266,8 +267,25 @@ Status TabletMetadata::LoadFromSuperBlock(const TabletSuperBlockPB& superblock) 
     BOOST_FOREACH(const RowSetDataPB& rowset_pb, superblock.rowsets()) {
       gscoped_ptr<RowSetMetadata> rowset_meta;
       RETURN_NOT_OK(RowSetMetadata::Load(this, rowset_pb, &rowset_meta));
-      next_rowset_idx_ = std::max(next_rowset_idx_, rowset_meta->id() + 1);
+      next_drs_id_ = std::max(next_drs_id_, rowset_meta->id() + 1);
       rowsets_.push_back(shared_ptr<RowSetMetadata>(rowset_meta.release()));
+    }
+
+    if (superblock.has_last_durable_drs_id()) {
+      last_durable_drs_id_ = superblock.last_durable_drs_id();
+
+      // Check invariant: the durable DRS ID should be at least as high as the
+      // highest numbered DRS.
+      BOOST_FOREACH(const RowSetDataPB& rowset_pb, superblock.rowsets()) {
+        if (rowset_pb.id() > last_durable_drs_id()) {
+          return Status::Corruption(Substitute("last_durable_drs_id=$0 but has rowset $1",
+                                               last_durable_drs_id_, rowset_pb.ShortDebugString()));
+        }
+      }
+    } else {
+      last_durable_drs_id_ = next_drs_id_ - 1;
+      LOG(INFO) << "T " << tablet_id_ << ": Loading tablet metadata from older version, inferred "
+                << " last_durable_drs_id_ = " << last_durable_drs_id_;
     }
 
     BOOST_FOREACH(const BlockIdPB& block_pb, superblock.orphaned_blocks()) {
@@ -416,10 +434,18 @@ Status TabletMetadata::UpdateUnlocked(
     }
   }
 
+  int64_t highest_new_drs_id = -1;
   BOOST_FOREACH(const shared_ptr<RowSetMetadata>& meta, to_add) {
     new_rowsets.push_back(meta);
+    CHECK_GT(meta->id(), last_durable_drs_id_);
+    highest_new_drs_id = std::max(highest_new_drs_id, meta->id());
   }
   rowsets_ = new_rowsets;
+
+  if (!to_add.empty()) {
+    last_durable_drs_id_ = highest_new_drs_id;
+    LOG(INFO) << "last_durable: " << last_durable_drs_id_;
+  }
 
   TRACE("TabletMetadata updated");
   return Status::OK();
@@ -473,6 +499,7 @@ Status TabletMetadata::ToSuperBlockUnlocked(TabletSuperBlockPB* super_block,
   pb.set_start_key(start_key_);
   pb.set_end_key(end_key_);
   pb.set_last_durable_mrs_id(last_durable_mrs_id_);
+  pb.set_last_durable_drs_id(last_durable_drs_id_);
   pb.set_schema_version(schema_version_);
   pb.set_table_name(table_name_);
 
@@ -499,7 +526,7 @@ Status TabletMetadata::ToSuperBlockUnlocked(TabletSuperBlockPB* super_block,
 
 Status TabletMetadata::CreateRowSet(shared_ptr<RowSetMetadata> *rowset,
                                     const Schema& schema) {
-  AtomicWord rowset_idx = Barrier_AtomicIncrement(&next_rowset_idx_, 1) - 1;
+  AtomicWord rowset_idx = Barrier_AtomicIncrement(&next_drs_id_, 1) - 1;
   gscoped_ptr<RowSetMetadata> scoped_rsm;
   RETURN_NOT_OK(RowSetMetadata::CreateNew(this, rowset_idx, &scoped_rsm));
   rowset->reset(DCHECK_NOTNULL(scoped_rsm.release()));

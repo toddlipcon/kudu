@@ -45,6 +45,7 @@
 #include "kudu/util/bloom_filter.h"
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/env.h"
+#include "kudu/util/fault_injection.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/locks.h"
 #include "kudu/util/mem_tracker.h"
@@ -71,6 +72,10 @@ DEFINE_double(tablet_bloom_target_fp_rate, 0.01f,
               "A lower false positive rate may reduce the number of disk seeks required "
               "in heavy insert workloads, at the expense of more space and RAM "
               "required for bloom filters. (Advanced option)");
+
+DEFINE_double(fault_crash_before_flush_tablet_meta_after_compaction, 0.0,
+              "Fraction of the time, during compaction, to crash before flushing metadata");
+// TODO: tag
 
 METRIC_DEFINE_entity(tablet);
 METRIC_DEFINE_gauge_uint64(tablet, memrowset_size, "MemRowSet Memory Usage",
@@ -1278,6 +1283,10 @@ Status Tablet::DoCompactionOrFlush(const RowSetsInCompaction &input, int64_t mrs
 
   // ------------------------------
   // Flush was successful.
+
+  if (input.rowsets().size() > 1) {
+    MAYBE_FAULT(FLAGS_fault_crash_before_flush_tablet_meta_after_compaction);
+  }
 
   // Write out the new Tablet Metadata and remove old rowsets.
   RETURN_NOT_OK_PREPEND(FlushMetadata(input.rowsets(), new_drs_metas, mrs_being_flushed),

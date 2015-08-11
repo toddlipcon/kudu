@@ -31,7 +31,7 @@ class RowSetMetadataUpdate;
 typedef std::vector<std::tr1::shared_ptr<RowSetMetadata> > RowSetMetadataVector;
 typedef std::tr1::unordered_set<int64_t> RowSetMetadataIds;
 
-extern const int64 kNoDurableMemStore;
+extern const int64 kNoDurableId;
 
 // Manages the "blocks tracking" for the specified tablet.
 //
@@ -183,8 +183,15 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   FsManager *fs_manager() const { return fs_manager_; }
 
   int64_t last_durable_mrs_id() const { return last_durable_mrs_id_; }
+  int64_t last_durable_drs_id() const { return last_durable_drs_id_; }
 
   void SetLastDurableMrsIdForTests(int64_t mrs_id) { last_durable_mrs_id_ = mrs_id; }
+  void SetLastDurableDrsIdForTests(int64_t drs_id) {
+    last_durable_drs_id_ = drs_id;
+    if (last_durable_drs_id_ >= next_drs_id_) {
+      next_drs_id_ = last_durable_drs_id_ + 1;
+    }
+  }
 
   void SetPreFlushCallback(StatusClosure callback) { pre_flush_callback_ = callback; }
 
@@ -288,7 +295,8 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   FsManager *fs_manager_;
   RowSetMetadataVector rowsets_;
 
-  base::subtle::Atomic64 next_rowset_idx_;
+  base::subtle::Atomic64 next_drs_id_;
+  int64_t last_durable_drs_id_;
 
   int64_t last_durable_mrs_id_;
 

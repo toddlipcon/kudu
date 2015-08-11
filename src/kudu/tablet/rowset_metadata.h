@@ -169,7 +169,7 @@ class RowSetMetadata {
   explicit RowSetMetadata(TabletMetadata *tablet_metadata)
     : tablet_metadata_(tablet_metadata),
       initted_(false),
-      last_durable_redo_dms_id_(kNoDurableMemStore) {
+      last_durable_redo_dms_id_(kNoDurableId) {
   }
 
   RowSetMetadata(TabletMetadata *tablet_metadata,
@@ -177,7 +177,7 @@ class RowSetMetadata {
     : tablet_metadata_(DCHECK_NOTNULL(tablet_metadata)),
       initted_(true),
       id_(id),
-      last_durable_redo_dms_id_(kNoDurableMemStore) {
+      last_durable_redo_dms_id_(kNoDurableId) {
   }
 
   Status InitFromPB(const RowSetDataPB& pb);

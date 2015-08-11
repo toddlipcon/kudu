@@ -72,6 +72,13 @@ message TabletSuperBlockPB {
   // The latest durable MemRowSet id
   required int64 last_durable_mrs_id = 3;
 
+  // The latest durable DRS ID.
+  // Any rowset with an ID less than or equal to this ID can be considered
+  // to have been flushed, regardless of whether it shows up in 'rowsets'.
+  //
+  // INVARIANT: no rowset in 'rowsets' will have an ID greater than this ID.
+  optional int64 last_durable_drs_id = 13;
+
   // Tablet start-key (inclusive)
   required bytes start_key = 4;
 

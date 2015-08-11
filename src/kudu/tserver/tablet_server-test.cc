@@ -744,6 +744,7 @@ TEST_F(TabletServerTest, TestRecoveryWithMutationsWhileFlushing) {
                                             // the last hook only fires on compaction
                                             // so this isn't mutated
                                             (KeyValue(7, 7)));
+  NO_FATALS();
 
   // Shutdown and rebuild again to test that the log generated during
   // the previous recovery allows to perform recovery again.
@@ -755,6 +756,7 @@ TEST_F(TabletServerTest, TestRecoveryWithMutationsWhileFlushing) {
                                             (KeyValue(5, 50))
                                             (KeyValue(6, 60))
                                             (KeyValue(7, 7)));
+  NO_FATALS();
 }
 
 // Tests performing mutations that are going to a DMS or to the following

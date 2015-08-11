@@ -87,6 +87,7 @@ using tserver::AlterSchemaRequestPB;
 using tserver::WriteRequestPB;
 using std::tr1::shared_ptr;
 using strings::Substitute;
+using strings::SubstituteAndAppend;
 
 struct ReplayState;
 
@@ -102,9 +103,11 @@ class FlushedStoresSnapshot {
   Status InitFrom(const TabletMetadata& meta);
 
   bool WasStoreAlreadyFlushed(const MemStoreTargetPB& target) const;
+  string DumpToString() const;
 
  private:
   int64_t last_durable_mrs_id_;
+  int64_t last_durable_drs_id_;
   std::tr1::unordered_map<int64_t, int64_t> flushed_dms_by_drs_id_;
 
   DISALLOW_COPY_AND_ASSIGN(FlushedStoresSnapshot);
@@ -1350,6 +1353,8 @@ Status TabletBootstrap::FilterInsert(WriteTransactionState* tx_state,
 
     op->SetAlreadyFlushed();
     stats_.inserts_ignored++;
+  } else {
+    VLOG(3) << "Playing insert " << op->ToString(*tx_state->schema_at_decode_time());
   }
   return Status::OK();
 }
@@ -1369,36 +1374,25 @@ Status TabletBootstrap::FilterMutate(WriteTransactionState* tx_state,
 
   // The mutation may have been duplicated, so we'll check whether any of the
   // output targets was "unflushed".
-  int num_unflushed_stores = 0;
+  // TODO: explain this logic a bit more carefully
+  bool fully_flushed = true;
   BOOST_FOREACH(const MemStoreTargetPB& mutated_store, op_result.mutated_stores()) {
     if (!flushed_stores_.WasStoreAlreadyFlushed(mutated_store)) {
-      num_unflushed_stores++;
-    } else {
-      if (VLOG_IS_ON(1)) {
-        string mutation = op->decoded_op.changelist.ToString(*tablet_->schema());
-        VLOG_WITH_PREFIX(1) << "Skipping mutation to " << mutated_store.ShortDebugString()
-                            << " that was already flushed. "
-                            << "OpId: " << tx_state->op_id().DebugString();
-      }
+      fully_flushed = false;
+      break;
     }
   }
 
-  if (num_unflushed_stores == 0) {
-    // The mutation was fully flushed.
+  if (fully_flushed) {
+    // The mutation was already flushed.
+    string mutation = op->decoded_op.changelist.ToString(*tablet_->schema());
+    VLOG(1) << "Skipping already-flushed mutation " << OpIdToString(tx_state->op_id())
+            << " (" << mutation << ")"
+            << " with results " << op_result.ShortDebugString();
     op->SetFailed(Status::AlreadyPresent("Update was already flushed."));
     stats_.mutations_ignored++;
-    return Status::OK();
-  }
-
-  if (num_unflushed_stores == 2) {
-    // 18:47 < dralves> off the top of my head, if we crashed before writing the meta
-    //                  at the end of a flush/compation then both mutations could
-    //                  potentually be considered unflushed
-    // This case is not currently covered by any tests -- we need to add test coverage
-    // for this. See KUDU-218. It's likely the correct behavior is just to apply the edit,
-    // ie not fatal below.
-    LOG_WITH_PREFIX(DFATAL) << "TODO: add test coverage for case where op is unflushed "
-                            << "in both duplicated targets";
+  } else {
+    VLOG(3) << "Playing mutation " << op->ToString(*tx_state->schema_at_decode_time());
   }
 
   return Status::OK();
@@ -1418,6 +1412,7 @@ string TabletBootstrap::LogPrefix() const {
 Status FlushedStoresSnapshot::InitFrom(const TabletMetadata& meta) {
   CHECK(flushed_dms_by_drs_id_.empty()) << "already initted";
   last_durable_mrs_id_ = meta.last_durable_mrs_id();
+  last_durable_drs_id_ = meta.last_durable_drs_id();
   BOOST_FOREACH(const shared_ptr<RowSetMetadata>& rsmd, meta.rowsets()) {
     if (!InsertIfNotPresent(&flushed_dms_by_drs_id_, rsmd->id(),
                             rsmd->last_durable_redo_dms_id())) {
@@ -1443,12 +1438,19 @@ bool FlushedStoresSnapshot::WasStoreAlreadyFlushed(const MemStoreTargetPB& targe
     return target.mrs_id() <= last_durable_mrs_id_;
   } else {
     // The original mutation went to a DRS's delta store.
+
+    // It's possible that the operation was written to a DRS while it was in the
+    // process of being flushed, but before its metadata was flushed. In that case,
+    // the metadata's last_durable_drs_id would be lower than the target's ID.
+    if (target.rs_id() > last_durable_drs_id_) {
+      return false;
+    }
+
+    // Otherwise, we know that the DRS was successfully flushed at some point.
+    // If we no longer see it in the metadata, it must have been flushed and
+    // then compacted away.
     int64_t last_durable_dms_id;
     if (!FindCopy(flushed_dms_by_drs_id_, target.rs_id(), &last_durable_dms_id)) {
-      // if we have no data about this RowSet, then it must have been flushed and
-      // then deleted.
-      // TODO: how do we avoid a race where we get an update on a rowset before
-      // it is persisted? add docs about the ordering of flush.
       return true;
     }
 
@@ -1460,6 +1462,17 @@ bool FlushedStoresSnapshot::WasStoreAlreadyFlushed(const MemStoreTargetPB& targe
 
     return false;
   }
+}
+
+string FlushedStoresSnapshot::DumpToString() const {
+  string ret;
+  SubstituteAndAppend(&ret, "last_durable_mrs_id: $0\n", last_durable_mrs_id_);
+  SubstituteAndAppend(&ret, "last_durable_drs_id: $0\n", last_durable_drs_id_);
+  typedef pair<int64_t, int64_t> entry;
+  BOOST_FOREACH(const entry& e, flushed_dms_by_drs_id_) {
+    SubstituteAndAppend(&ret, "  DRS $0: DMS $1\n", e.first, e.second);
+  }
+  return ret;
 }
 
 } // namespace tablet
