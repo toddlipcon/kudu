@@ -925,16 +925,12 @@ Status CatalogManager::DeleteTable(const DeleteTableRequestPB* req,
 
 static Status ApplyAlterSteps(const SysTablesEntryPB& current_pb,
                               const AlterTableRequestPB* req,
-                              Schema* new_schema,
+                              SchemaPB* new_schema,
                               int32_t* next_col_id) {
   const SchemaPB& current_schema_pb = current_pb.schema();
-  Schema cur_schema;
-  RETURN_NOT_OK(SchemaFromPB(current_schema_pb, &cur_schema));
-
-  SchemaBuilder builder(cur_schema);
-  if (current_pb.has_next_column_id()) {
-    builder.set_next_column_id(current_pb.next_column_id());
-  }
+  new_schema->CopyFrom(current_schema_pb);
+  CHECK(current_pb.has_next_column_id());
+  *next_col_id = current_pb.next_column_id();
 
   BOOST_FOREACH(const AlterTableRequestPB::Step& step, req->alter_schema_steps()) {
     switch (step.type()) {
@@ -947,7 +943,7 @@ static Status ApplyAlterSteps(const SysTablesEntryPB& current_pb,
         // type
         ColumnSchemaPB new_col_pb = step.add_column().schema();
         if (new_col_pb.has_id()) {
-          return Status::InvalidArgument("column $0: client should not specify column ID",
+          return Status::InvalidArgument("column `$0`: client should not specify column ID",
                                          new_col_pb.ShortDebugString());
         }
         ColumnSchema new_col = ColumnSchemaFromPB(new_col_pb);
@@ -962,7 +958,7 @@ static Status ApplyAlterSteps(const SysTablesEntryPB& current_pb,
               Substitute("column `$0`: NOT NULL columns must have a default", new_col.name()));
         }
 
-        RETURN_NOT_OK(builder.AddColumn(new_col, false));
+        new_schema->add_columns()->CopyFrom(new_col_pb);
         break;
       }
 
@@ -971,31 +967,52 @@ static Status ApplyAlterSteps(const SysTablesEntryPB& current_pb,
           return Status::InvalidArgument("DROP_COLUMN missing column info");
         }
 
-        if (cur_schema.is_key_column(step.drop_column().name())) {
-          return Status::InvalidArgument("cannot remove a key column");
-        }
+        bool found = false;
+        for (int i = 0; i < new_schema->columns_size(); i++) {
+          if (new_schema->column(i)->name() == step.drop_column().name()) {
+            if (new_schema->column(i).is_key()) {
+              return Status::InvalidArgument("cannot remove a key column");
+            }
 
-        RETURN_NOT_OK(builder.RemoveColumn(step.drop_column().name()));
+            new_schema->DeleteSubrange(i, 1);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          return Status::NotFound("column not found", step.drop_column().name());
+        }
         break;
       }
 
+      // DEPRECATED
       case AlterTableRequestPB::RENAME_COLUMN: {
         if (!step.has_rename_column()) {
           return Status::InvalidArgument("RENAME_COLUMN missing column info");
         }
 
-        // TODO: In theory we can rename a key
-        if (cur_schema.is_key_column(step.rename_column().old_name())) {
-          return Status::InvalidArgument("cannot rename a key column");
+        // Validate new name.
+        for (int i = 0; i < new_schema->columns_size(); i++) {
+          if (new_schema->column(i)->name() == step.rename_column().new_name()) {
+            return Status::IllegalArgument("column already exists", step.rename_column().new_name());
+          }
         }
 
-        RETURN_NOT_OK(builder.RenameColumn(
-                        step.rename_column().old_name(),
-                        step.rename_column().new_name()));
+        // Perform rename
+        bool found = false;
+        for (int i = 0; i < new_schema->columns_size(); i++) {
+          if (new_schema->column(i)->name() == step.rename_column().old_name()) {
+            new_schema->column(i)->set_name(step.rename_column().new_name());
+            found = true;
+            break;
+          }
+        }
+
+        if (!found) {
+          return Status::NotFound("column not found", step.drop_column().name());
+        }
         break;
       }
-
-      // TODO: EDIT_COLUMN
 
       default: {
         return Status::InvalidArgument(
@@ -1039,7 +1056,7 @@ Status CatalogManager::AlterTable(const AlterTableRequestPB* req,
   string table_name = l.data().name();
 
   // 2. Calculate new schema for the on-disk state, not persisted yet
-  Schema new_schema;
+  SchemaPB new_schema;
   int32_t next_col_id = 0;
   if (req->alter_schema_steps_size()) {
     TRACE("Apply alter schema");
@@ -1049,8 +1066,6 @@ Status CatalogManager::AlterTable(const AlterTableRequestPB* req,
       return s;
     }
     DCHECK_NE(next_col_id, 0);
-    DCHECK_EQ(new_schema.find_column_by_id(next_col_id),
-              static_cast<int>(Schema::kColumnNotFound));
     has_changes = true;
   }
 
@@ -1081,12 +1096,10 @@ Status CatalogManager::AlterTable(const AlterTableRequestPB* req,
   }
 
   // 4. Serialize the schema Increment the version number
-  if (new_schema.initialized()) {
-    if (!l.data().pb.has_fully_applied_schema()) {
-      l.mutable_data()->pb.mutable_fully_applied_schema()->CopyFrom(l.data().pb.schema());
-    }
-    CHECK_OK(SchemaToPB(new_schema, l.mutable_data()->pb.mutable_schema()));
+  if (!l.data().pb.has_fully_applied_schema()) {
+    l.mutable_data()->pb.mutable_fully_applied_schema()->CopyFrom(l.data().pb.schema());
   }
+  l.mutable_data()->pb.mutable_schema()->CopyFrom(new_schema);
   l.mutable_data()->pb.set_version(l.mutable_data()->pb.version() + 1);
   l.mutable_data()->pb.set_next_column_id(next_col_id);
   l.mutable_data()->set_state(SysTablesEntryPB::ALTERING,

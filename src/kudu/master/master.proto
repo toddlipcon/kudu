@@ -378,10 +378,7 @@ message AlterTableRequestPB {
     UNKNOWN = 0;
     ADD_COLUMN = 1;
     DROP_COLUMN = 2;
-    RENAME_COLUMN = 3;
-
-    // TODO: this will subsume RENAME_COLUMN, but not yet implemented
-    // on the master side.
+    RENAME_COLUMN = 3; // TODO: consolidate with alter?
     ALTER_COLUMN = 4;
   }
   message AddColumn {
@@ -394,10 +391,36 @@ message AlterTableRequestPB {
     // Name of the column to drop.
     required string name = 1;
   }
+
+  // TODO: deprecated! this is superceded by AlterColumn below.
   message RenameColumn {
     // Name of the column to rename;
     required string old_name = 1;
     required string new_name = 2;
+  }
+
+  message AlterColumn {
+    // The name of the column to be altered
+    required string name = 1;
+
+    // The new name of the column, if being renamed.
+    optional string rename_to = 2;
+
+    // The new encoding, if set.
+    optional EncodingType new_encoding = 3;
+
+    // The new compression, if set.
+    optional CompressionType new_compression = 4;
+
+    // The new default.
+    // TODO(KUDU-982): support DEFAULT NULL
+    optional bytes new_default = 5;
+
+    // If set, then the default should be removed (i.e
+    // writers must specify this column). This is not the
+    // same as a NULL default.
+    // If this is set, then 'new_default' must not be set.
+    optional bool remove_default = 6 [ default=false ];
   }
 
   message Step {
@@ -406,7 +429,11 @@ message AlterTableRequestPB {
     // Exactly one of the following must be set, based on 'type'
     optional AddColumn add_column = 2;
     optional DropColumn drop_column = 3;
+
+    // DEPRECATED
     optional RenameColumn rename_column = 4;
+
+    optional AlterColumn alter_column = 5;
   }
 
   required TableIdentifierPB table = 1;

@@ -5,7 +5,6 @@
 #include "kudu/client/schema-internal.h"
 
 #include "kudu/common/wire_protocol.h"
-#include "kudu/master/master.pb.h"
 
 #include <boost/foreach.hpp>
 #include <string>
@@ -30,6 +29,44 @@ KuduTableAlterer_Data::~KuduTableAlterer_Data() {
     delete s.spec;
   }
 }
+
+Status KuduTableAlterer_Data::SpecToAlterPB(
+    const KuduColumnSpec& spec,
+    AlterTableRequestPB_AlterColumn* pb) {
+  const KuduColumnSpec::Data& d = *spec.data_;
+
+  pb->set_name(d.name);
+  if (d.has_type) {
+    return Status::NotSupported("altering column types is unsupported");
+  }
+  if (d.has_encoding) {
+    pb->set_new_encoding(ToInternalEncodingType(d.encoding));
+  }
+  if (d.has_compression) {
+    pb->set_new_compression(ToInternalCompressionType(d.compression));
+  }
+  if (d.has_nullable) {
+    return Status::NotSupported("altering column nullability is unsupported");
+  }
+  if (d.primary_key) {
+    return Status::NotSupported("cannot alter primary key");
+  }
+  if (d.has_default) {
+    LOG(FATAL);
+    //pb->set_new_default(...);
+  }
+  if (d.remove_default) {
+    pb->set_remove_default(true);
+  }
+
+  if (d.has_rename_to) {
+    pb->set_rename_to(d.rename_to);
+  }
+
+
+  return Status::OK();
+}
+
 
 Status KuduTableAlterer_Data::ToRequest(AlterTableRequestPB* req) {
   if (!status_.ok()) {
@@ -66,30 +103,13 @@ Status KuduTableAlterer_Data::ToRequest(AlterTableRequestPB* req) {
         break;
       }
       case AlterTableRequestPB::ALTER_COLUMN:
-        if (s.spec->data_->has_type ||
-            s.spec->data_->has_encoding ||
-            s.spec->data_->has_compression ||
-            s.spec->data_->has_nullable ||
-            s.spec->data_->primary_key ||
-            s.spec->data_->has_default ||
-            s.spec->data_->default_val ||
-            s.spec->data_->remove_default) {
-          return Status::NotSupported("cannot support AlterColumn of this type",
-                                      s.spec->data_->name);
-        }
-        // We only support rename column
-        if (!s.spec->data_->has_rename_to) {
-          return Status::InvalidArgument("no alter operation specified",
-                                         s.spec->data_->name);
-        }
-        pb_step->mutable_rename_column()->set_old_name(s.spec->data_->name);
-        pb_step->mutable_rename_column()->set_new_name(s.spec->data_->rename_to);
-        pb_step->set_type(AlterTableRequestPB::RENAME_COLUMN);
+        RETURN_NOT_OK(SpecToAlterPB(*s.spec, pb_step->mutable_alter_column()));
         break;
       default:
         LOG(FATAL) << "unknown step type " << s.step_type;
     }
   }
+  // TODO: construct steps
 
   return Status::OK();
 }

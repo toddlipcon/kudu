@@ -46,6 +46,10 @@ class KuduTableAlterer_Data {
   boost::optional<std::string> rename_to_;
 
  private:
+  static Status SpecToAlterPB(
+      const KuduColumnSpec& spec,
+      master::AlterTableRequestPB_AlterColumn* pb);
+
   DISALLOW_COPY_AND_ASSIGN(KuduTableAlterer_Data);
 };
 
