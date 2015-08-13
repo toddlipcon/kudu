@@ -745,11 +745,13 @@ TEST_F(LogTest, TestLogReader) {
 // have been properly closed, we can still read the entries as the reader
 // returns the current segment.
 TEST_F(LogTest, TestLogReaderReturnsLatestSegmentIfIndexEmpty) {
+  const int kFakeMrsId = 0;
+  const int kKey = 0;
   BuildLog();
 
   OpId opid = MakeOpId(1, 1);
-  AppendCommit(opid, APPEND_ASYNC);
-  AppendReplicateBatch(opid, APPEND_SYNC);
+  AppendCommitInsert(opid, kFakeMrsId, APPEND_ASYNC);
+  AppendReplicateInsert(opid, kKey, "foo", APPEND_SYNC);
 
   SegmentSequence segments;
   ASSERT_OK(log_->GetLogReader()->GetSegmentsSnapshot(&segments));

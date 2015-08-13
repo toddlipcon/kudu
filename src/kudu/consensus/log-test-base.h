@@ -176,26 +176,42 @@ class LogTestBase : public KuduTest {
     CHECK_OK(s);
   }
 
-  // Appends a batch with size 2 (1 insert, 1 mutate) to the log.
-  void AppendReplicateBatch(const OpId& opid, bool sync = APPEND_SYNC) {
+  consensus::ReplicateRefPtr NewReplicate(const OpId& opid) {
     consensus::ReplicateRefPtr replicate = make_scoped_refptr_replicate(new ReplicateMsg());
     replicate->get()->set_op_type(WRITE_OP);
     replicate->get()->mutable_id()->CopyFrom(opid);
     replicate->get()->set_timestamp(clock_->Now().ToUint64());
     WriteRequestPB* batch_request = replicate->get()->mutable_write_request();
-    ASSERT_OK(SchemaToPB(schema_, batch_request->mutable_schema()));
-    AddTestRowToPB(RowOperationsPB::INSERT, schema_,
-                   opid.index(),
-                   0,
-                   "this is a test insert",
-                   batch_request->mutable_row_operations());
-    AddTestRowToPB(RowOperationsPB::UPDATE, schema_,
-                   opid.index() + 1,
-                   0,
-                   "this is a test mutate",
-                   batch_request->mutable_row_operations());
+    CHECK_OK(SchemaToPB(schema_, batch_request->mutable_schema()));
     batch_request->set_tablet_id(kTestTablet);
+    return replicate;
+  }
+
+  void AppendReplicateInsert(const OpId& opid, int key, const string& val,
+                             bool sync = APPEND_SYNC) {
+    consensus::ReplicateRefPtr replicate = NewReplicate(opid);
+    WriteRequestPB* batch_request = replicate->get()->mutable_write_request();
+    AddTestRowToPB(RowOperationsPB::INSERT, schema_,
+                   key, 0, val,
+                   batch_request->mutable_row_operations());
     AppendReplicateBatch(replicate, sync);
+  }
+
+  void AppendReplicateUpdate(const OpId& opid, int key, const string& val) {
+    consensus::ReplicateRefPtr replicate = NewReplicate(opid);
+    WriteRequestPB* batch_request = replicate->get()->mutable_write_request();
+    AddTestRowToPB(RowOperationsPB::UPDATE, schema_,
+                   key, 0, val,
+                   batch_request->mutable_row_operations());
+    AppendReplicateBatch(replicate);
+  }
+
+  void AppendCommitInsert(const OpId& opid, int mrs_id, bool sync = APPEND_SYNC) {
+    gscoped_ptr<CommitMsg> commit(new CommitMsg);
+    commit->set_op_type(WRITE_OP);
+    commit->mutable_commited_op_id()->CopyFrom(opid);
+    commit->mutable_result()->add_ops()->add_mutated_stores()->set_mrs_id(mrs_id);
+    AppendCommit(commit.Pass(), sync);
   }
 
   // Appends the provided batch to the log.
@@ -219,40 +235,6 @@ class LogTestBase : public KuduTest {
     CHECK_OK(s);
   }
 
-  // Append a commit log entry containing one entry for the insert and one
-  // for the mutate.
-  void AppendCommit(const OpId& original_opid,
-                    bool sync = APPEND_SYNC) {
-    // The mrs id for the insert.
-    const int kTargetMrsId = 1;
-
-    // The rs and delta ids for the mutate.
-    const int kTargetRsId = 0;
-    const int kTargetDeltaId = 0;
-
-    AppendCommit(original_opid, kTargetMrsId, kTargetRsId, kTargetDeltaId, sync);
-  }
-
-  void AppendCommit(const OpId& original_opid,
-                    int mrs_id, int rs_id, int dms_id,
-                    bool sync = APPEND_SYNC) {
-    gscoped_ptr<CommitMsg> commit(new CommitMsg);
-    commit->set_op_type(WRITE_OP);
-
-    commit->mutable_commited_op_id()->CopyFrom(original_opid);
-
-    TxResultPB* result = commit->mutable_result();
-
-    OperationResultPB* insert = result->add_ops();
-    insert->add_mutated_stores()->set_mrs_id(mrs_id);
-
-    OperationResultPB* mutate = result->add_ops();
-    MemStoreTargetPB* target = mutate->add_mutated_stores();
-    target->set_dms_id(dms_id);
-    target->set_rs_id(rs_id);
-    AppendCommit(commit.Pass(), sync);
-  }
-
   void AppendCommit(gscoped_ptr<CommitMsg> commit, bool sync = APPEND_SYNC) {
     if (sync) {
       Synchronizer s;
@@ -264,12 +246,12 @@ class LogTestBase : public KuduTest {
     }
   }
 
-    // Appends 'count' ReplicateMsgs and the corresponding CommitMsgs to the log
+  // Appends 'count' ReplicateMsgs and the corresponding CommitMsgs to the log
   void AppendReplicateBatchAndCommitEntryPairsToLog(int count, bool sync = true) {
     for (int i = 0; i < count; i++) {
       OpId opid = consensus::MakeOpId(1, current_index_);
-      AppendReplicateBatch(opid);
-      AppendCommit(opid, sync);
+      AppendReplicateInsert(opid, current_index_, "x");
+      AppendCommitInsert(opid, sync);
       current_index_ += 1;
     }
   }
