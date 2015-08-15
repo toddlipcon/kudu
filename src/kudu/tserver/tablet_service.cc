@@ -247,24 +247,18 @@ class ScanResultCopier : public ScanResultCollector {
 
   virtual void HandleRowBlock(const Schema* client_projection_schema,
                               const RowBlock& row_block) OVERRIDE {
-    // cache me
-    gscoped_ptr<codegen::RowBlockConverter> converter;
-
-    // Get a RowBlockConverter if available.
-    const Schema* client_schema = scanner->client_projection_schema();
-    if (client_schema == NULL) {
-      client_schema = &block.schema();
-    }
-    if (FLAGS_tablet_service_use_codegen) {
+    if (FLAGS_tablet_service_use_codegen && !converter_) {
+      // cache me
+      // Get a RowBlockConverter if available.
       codegen::CompilationManager::GetSingleton()->RequestRowBlockConverter(
-          &block.schema(), client_schema, &converter_);
+          &row_block.schema(), client_projection_schema, &converter_);
     }
 
     blocks_processed_++;
 
-    if (PREDICT_TRUE(converter)) {
-      converter->ConvertRowBlockToPB(row_block, resp->mutable_data(),
-                                     rows_data.get(), indirect_data.get());
+    if (PREDICT_TRUE(converter_)) {
+      converter_->ConvertRowBlockToPB(row_block, rowblock_pb_,
+                                      rows_data_, indirect_data_);
     } else {
       SerializeRowBlock(row_block, rowblock_pb_, client_projection_schema,
                         rows_data_, indirect_data_);
@@ -289,6 +283,8 @@ class ScanResultCopier : public ScanResultCollector {
   faststring* const indirect_data_;
   int blocks_processed_;
   faststring encoded_last_row_;
+
+  gscoped_ptr<codegen::RowBlockConverter> converter_;
 
   DISALLOW_COPY_AND_ASSIGN(ScanResultCopier);
 };
@@ -804,7 +800,7 @@ void TabletServiceImpl::Scan(const ScanRequestPB* req,
 
   size_t batch_size_bytes = GetMaxBatchSizeBytesHint(req);
   gscoped_ptr<faststring> rows_data(new faststring(batch_size_bytes * 11 / 10));
-  gscoped_ptr<faststring> indirect_data(new faststring());
+  gscoped_ptr<faststring> indirect_data(new faststring(8 * 1024 * 1024));
   RowwiseRowBlockPB data;
   ScanResultCopier collector(&data, rows_data.get(), indirect_data.get());
 
@@ -1331,10 +1327,7 @@ Status TabletServiceImpl::HandleContinueScanRequest(const ScanRequestPB* req,
     }
 
     if (PREDICT_TRUE(block.nrows() > 0)) {
-<<<<<<< HEAD
       result_collector->HandleRowBlock(scanner->client_projection_schema(), block);
-=======
->>>>>>> fe32aef... RB to PB Code generation.
     }
 
     int64_t response_size = result_collector->ResponseSize();

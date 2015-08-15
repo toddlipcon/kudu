@@ -12,8 +12,10 @@
 #include <llvm/LinkAllPasses.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/Passes.h>
+#include <llvm/Analysis/Verifier.h>
 #include <llvm/ExecutionEngine/MCJIT.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
+#include <llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
@@ -205,7 +207,7 @@ void DoOptimizations(ExecutionEngine* engine,
                      Module* module,
                      const vector<const char*>& external_functions) {
   PassManagerBuilder pass_builder;
-  pass_builder.OptLevel = 2;
+  pass_builder.OptLevel = 3;
   // Don't optimize for code size (this corresponds to -O2/-O3)
   pass_builder.SizeLevel = 0;
   pass_builder.Inliner = llvm::createFunctionInliningPass();
@@ -263,12 +265,16 @@ Status ModuleBuilder::Compile(gscoped_ptr<ExecutionEngine>* out) {
                                       str);
   }
 
+  llvm::verifyModule(*module_);
+
 #if CODEGEN_MODULE_BUILDER_DO_OPTIMIZATIONS
   DoOptimizations(local_engine.get(), module_.get(), GetFunctionNames());
 #endif
 
   // Compile the module
   local_engine->finalizeObject();
+
+  //module_->dump();
 
   // Satisfy the promises
   BOOST_FOREACH(JITFuture& fut, futures_) {

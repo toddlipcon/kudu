@@ -32,10 +32,16 @@ class TargetMachine;
 
 using boost::assign::list_of;
 using llvm::Argument;
+using llvm::ArrayType;
 using llvm::BasicBlock;
+using llvm::Constant;
+using llvm::ConstantArray;
+using llvm::ConstantExpr;
 using llvm::ExecutionEngine;
 using llvm::Function;
 using llvm::FunctionType;
+using llvm::Instruction;
+using llvm::IntegerType;
 using llvm::LLVMContext;
 using llvm::PointerType;
 using llvm::Type;
@@ -146,46 +152,75 @@ Function* MakeConversionFunction(ModuleBuilder* mbuilder, const SchemaSubset& su
   f->setDoesNotAlias(2);
   f->setDoesNotAlias(3);
 
-  // Conversion function in IR (note: values in angle brackets are known
-  // at JIT compile time).
-  // define void @name(RowBlock* noalias %rb, RowwiseRowBlockPB* %pb)
-  // entry:
-  //   <foreach column in the column subset>
-  //     call void @CopyColumn(RowBlock* rb, i8* dst_base, faststring* indirect,
-  //                           i64 <col_idx>, i64 <dst_col_idx>,
-  //                           i64 <row_stride>, i64 <offset_to_dst_col>,
-  //                           i64 <offset_to_null_bitmap>
-  //                           i64 <cell_size>, i1 <is_nullable>,
-  //                           i1 <is_string>)
-  //   <end implicit foreach>
+  // define void @SerializeRowBlock2(
+  //           %"class.kudu::RowBlock"* %block,
+  //           i8* %dst_base,
+  //           %"class.kudu::faststring"* %indirect,
+  //           i32* %src_col_indexes,
+  //           i32* %proj_col_sizes,
+  //           i8* %proj_col_nullable,
+  //           i8* %proj_cols_string,
+  //           i32 %num_proj_cols,
+  //           i32 %row_stride,
+  //           i32 %offset_to_null_bitmap) #1 {
   //   ret void
   builder->SetInsertPoint(BasicBlock::Create(context, "entry", f));
 
-  // CopyColumn is a large method, and its inlining needs to be forced.
-  Function* copy_column =
-    mbuilder->GetFunction("_PrecompiledCopyColumn");
-  copy_column->addFnAttr(llvm::Attribute::AlwaysInline);
+  // This is a large method, and its inlining needs to be forced.
+  Function* precomp_function =
+    mbuilder->GetFunction("_SerializeRowBlock2");
+  precomp_function->addFnAttr(llvm::Attribute::AlwaysInline);
 
-  CHECK_EQ(subset.offsets_.size(), subset.dst_indices_.size());
-  CHECK_EQ(subset.src_indices_.size(), subset.dst_indices_.size());
-
-  for (int i = 0; i < subset.offsets_.size(); ++i) {
-    size_t src_idx = subset.src_indices_[i];
+  // Make the constant arrays describing the columns.
+  vector<Constant*> src_col_indexes;
+  vector<Constant*> proj_col_sizes;
+  vector<Constant*> proj_col_nullable;
+  vector<Constant*> proj_cols_string;
+  int num_cols = subset.src_indices_.size();
+  for (int i = 0; i < num_cols; i++) {
+    int src_idx = subset.src_indices_[i];
     const ColumnSchema& col = subset.src_schema_.column(src_idx);
-    Value* col_idx = builder->getInt64(src_idx);
-    Value* dst_col_idx = builder->getInt64(subset.dst_indices_[i]);
-    Value* row_stride = builder->getInt64(subset.row_stride_);
-    Value* offset_to_dst_col = builder->getInt64(subset.offsets_[i]);
-    Value* offset_to_null_bitmap = builder->getInt64(subset.offset_to_null_bitmap_);
-    Value* cell_size = builder->getInt64(col.type_info()->size());
-    Value* is_nullable = builder->getInt1(col.is_nullable());
-    Value* is_string = builder->getInt1(col.type_info()->type() == STRING);
-    vector<Value*> args = list_of<Value*>(rb)(dst_base)(indirect)
-      (col_idx)(dst_col_idx)(row_stride)(offset_to_dst_col)
-      (offset_to_null_bitmap)(cell_size)(is_nullable)(is_string);
-    builder->CreateCall(copy_column, args);
+
+    src_col_indexes.push_back(builder->getInt32(src_idx));
+    proj_col_sizes.push_back(builder->getInt32(col.type_info()->size()));
+    proj_col_nullable.push_back(builder->getInt8(col.is_nullable()));
+    proj_cols_string.push_back(builder->getInt8(col.type_info()->physical_type() == BINARY));
   }
 
+  ArrayType* int32_array = ArrayType::get(IntegerType::get(context, 32), num_cols);
+  ArrayType* int8_array = ArrayType::get(IntegerType::get(context, 8), num_cols);
+
+  // src_col_indexes
+  Value* src_col_indexes_ptr = builder->CreateAlloca(IntegerType::get(context, 32),
+                                                     builder->getInt32(num_cols));
+  Value* proj_col_sizes_ptr = builder->CreateAlloca(IntegerType::get(context, 32),
+                                                    builder->getInt32(num_cols));
+  Value* proj_col_nullable_ptr = builder->CreateAlloca(IntegerType::get(context, 8),
+                                                    builder->getInt32(num_cols));
+  Value* proj_cols_string_ptr = builder->CreateAlloca(IntegerType::get(context, 8),
+                                                    builder->getInt32(num_cols));
+
+  for (int i = 0; i < num_cols; i++) {
+    builder->CreateStore(src_col_indexes[i], builder->CreateConstGEP1_32(src_col_indexes_ptr, i));
+    builder->CreateStore(proj_col_sizes[i], builder->CreateConstGEP1_32(proj_col_sizes_ptr, i));
+    builder->CreateStore(proj_col_nullable[i], builder->CreateConstGEP1_32(proj_col_nullable_ptr, i));
+    builder->CreateStore(proj_cols_string[i], builder->CreateConstGEP1_32(proj_cols_string_ptr, i));
+  }
+
+
+  vector<Value*> args;
+  args.push_back(rb);
+  args.push_back(dst_base);
+  args.push_back(indirect);
+  args.push_back(src_col_indexes_ptr);
+  args.push_back(proj_col_sizes_ptr);
+  args.push_back(proj_col_nullable_ptr);
+  args.push_back(proj_cols_string_ptr);
+
+  args.push_back(builder->getInt32(num_cols));
+  args.push_back(builder->getInt32(subset.row_stride_));
+  args.push_back(builder->getInt32(subset.offset_to_null_bitmap_));
+  builder->CreateCall(precomp_function, args);
   builder->CreateRetVoid();
 
   if (FLAGS_codegen_dump_functions) {

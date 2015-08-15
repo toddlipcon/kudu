@@ -194,5 +194,113 @@ void _PrecompiledCopyColumn(
   }
 }
 
+ATTRIBUTE_ALWAYS_INLINE
+static void LoopIter(const uint8_t** src_cells,
+                     const uint8_t** src_nulls,
+
+                     const int32_t* src_col_indexes,
+                     const int32_t* proj_col_sizes,
+                     const bool* proj_col_nullable,
+                     const bool* proj_cols_string,
+                     const int num_proj_cols,
+                     const int row_idx,
+                     const int i,
+                     uint8_t*& __restrict__  dst_cell,
+                     uint8_t* __restrict__ const dst_null_bitmap,
+                     faststring* const indirect) {
+
+
+  const uint8_t* src_cell = src_cells[i] + row_idx * proj_col_sizes[i];
+  bool is_null = proj_col_nullable[i] && !BitmapTest(src_nulls[i], row_idx);
+
+  BitmapChange(dst_null_bitmap, i, is_null);
+
+  if (is_null) {
+    memset(dst_cell, 0, proj_col_sizes[i]);
+  } else {
+    if (proj_cols_string[i]) {
+      const Slice *slice = reinterpret_cast<const Slice*>(src_cell);
+      size_t offset_in_indirect = indirect->size();
+      indirect->append(slice->data(), slice->size());
+      Slice *dst_slice = reinterpret_cast<Slice*>(dst_cell);
+      *dst_slice = Slice(reinterpret_cast<const uint8_t*>(offset_in_indirect),
+                         slice->size());
+    } else {
+      memcpy(dst_cell, src_cell, proj_col_sizes[i]);
+    }
+  }
+  dst_cell += proj_col_sizes[i];
+}
+
+void _SerializeRowBlock2(RowBlock* block,
+                         uint8_t* dst_base,
+                         faststring* indirect,
+
+                         const int32_t* src_col_indexes,
+                         const int32_t* proj_col_sizes,
+                         const bool* proj_col_nullable,
+                         const bool* proj_cols_string,
+                         int num_proj_cols,
+
+                         int row_stride,
+                         int offset_to_null_bitmap) {
+
+  BitmapIterator selected_row_iter(block->selection_vector()->bitmap(),
+                                   block->nrows());
+
+  const uint8_t* src_cells[num_proj_cols];
+  const uint8_t* src_nulls[num_proj_cols];
+  for (int i = 0; i < num_proj_cols; i++) {
+    int src_idx = src_col_indexes[i];
+    src_cells[i] = block->column_data_base_ptr(src_idx);
+    src_nulls[i] = block->column_null_bitmap_ptr(src_idx);
+  }
+
+  bool selected;
+  int row_idx = 0;
+  int run_size;
+  while ((run_size = selected_row_iter.Next(&selected))) {
+    if (!selected) {
+      row_idx += run_size;
+      continue;
+    }
+
+    for (int idx_in_run = 0; idx_in_run < run_size; idx_in_run++) {
+      uint8_t* dst_cell = dst_base + row_idx * row_stride;
+      uint8_t* dst_null_bitmap = dst_cell + offset_to_null_bitmap;
+
+      int rem = num_proj_cols;
+      int i = 0;
+
+      while (rem >= 4) {
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        rem -= 4;
+      }
+      while (rem >= 2) {
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        rem -= 2;
+      }
+
+      while (rem >= 1) {
+        LoopIter(src_cells, src_nulls, src_col_indexes, proj_col_sizes, proj_col_nullable, proj_cols_string, num_proj_cols, row_idx,
+                 i++, dst_cell, dst_null_bitmap, indirect);
+        rem--;
+      }
+
+      row_idx++;
+    }
+  }
+}
+
 } // extern "C"
 } // namespace kudu
