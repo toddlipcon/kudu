@@ -50,7 +50,6 @@ bool BitmapFindFirst(const uint8_t *bitmap, size_t offset, size_t bitmap_size,
                      bool value, size_t *idx) {
   const uint64_t pattern64[2] = { 0xffffffffffffffff, 0x0000000000000000 };
   const uint8_t pattern8[2] = { 0xff, 0x00 };
-  size_t bit;
 
   DCHECK_LE(offset, bitmap_size);
 
@@ -58,8 +57,9 @@ bool BitmapFindFirst(const uint8_t *bitmap, size_t offset, size_t bitmap_size,
   const uint8_t *p = bitmap + (offset >> 3);
   size_t num_bits = bitmap_size - offset;
 
+  size_t bit = offset & 0x7;
   // Find a 'value' bit at the end of the first byte
-  if ((bit = offset & 0x7)) {
+  if (bit != 0) {
     for (; bit < 8 && num_bits > 0; ++bit) {
       if (BitmapTest(p, bit) == value) {
         *idx = ((p - bitmap) << 3) + bit;

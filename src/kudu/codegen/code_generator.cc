@@ -151,6 +151,7 @@ int DumpAsm(FuncPtr fptr, const TargetMachine& tm,
            << ", skipping instruction>\n" << std::dec;
     } else {
       string annotations;
+      os << (void*)(base_addr + addr) << "  ";
       printer->printInst(&inst, os, annotations);
       os << " " << annotations << "\n";
       // We need to check the opcode name for "RET" instead of comparing

@@ -183,7 +183,7 @@ void _PrecompiledCopyColumn(
       if (is_string) {
         const Slice *slice = reinterpret_cast<const Slice*>(src_cell);
         size_t offset_in_indirect = indirect->size();
-        indirect->append(slice->data(), slice->size());
+        indirect->append_simple(slice->data(), slice->size());
         Slice *dst_slice = reinterpret_cast<Slice*>(dst_cell);
         *dst_slice = Slice(reinterpret_cast<const uint8_t*>(offset_in_indirect),
                            slice->size());
@@ -191,6 +191,16 @@ void _PrecompiledCopyColumn(
         memcpy(dst_cell, src_cell, cell_size);
       }
     }
+  }
+}
+
+
+inline void sloppy_memcpy(uint8_t* dst, const uint8_t* src, int size) {
+  while (size > 0) {
+    memcpy(dst, src, 8);
+    src += 8;
+    dst += 8;
+    size -= 8;
   }
 }
 
@@ -209,27 +219,28 @@ static void LoopIter(const uint8_t** src_cells,
                      uint8_t* __restrict__ const dst_null_bitmap,
                      faststring* const indirect) {
 
-
   const uint8_t* src_cell = src_cells[i] + row_idx * proj_col_sizes[i];
   bool is_null = proj_col_nullable[i] && !BitmapTest(src_nulls[i], row_idx);
 
-  BitmapChange(dst_null_bitmap, i, is_null);
-
   if (is_null) {
+    BitmapChange(dst_null_bitmap, i, is_null);
     memset(dst_cell, 0, proj_col_sizes[i]);
   } else {
     if (proj_cols_string[i]) {
-      const Slice *slice = reinterpret_cast<const Slice*>(src_cell);
+      Slice src_slice;
+      memcpy(&src_slice, src_cell, sizeof(Slice));
       size_t offset_in_indirect = indirect->size();
-      indirect->append(slice->data(), slice->size());
-      Slice *dst_slice = reinterpret_cast<Slice*>(dst_cell);
-      *dst_slice = Slice(reinterpret_cast<const uint8_t*>(offset_in_indirect),
-                         slice->size());
+      indirect->resize(indirect->size() + src_slice.size());
+      sloppy_memcpy(indirect->data() + offset_in_indirect, src_slice.data(), src_slice.size());
+      Slice new_slice((char*)offset_in_indirect, src_slice.size());
+      memcpy(dst_cell, &new_slice, sizeof(Slice));
     } else {
       memcpy(dst_cell, src_cell, proj_col_sizes[i]);
     }
   }
   dst_cell += proj_col_sizes[i];
+
+//   __asm__ __volatile__("pause" : : :"memory");
 }
 
 void _SerializeRowBlock2(RowBlock* block,
@@ -244,7 +255,7 @@ void _SerializeRowBlock2(RowBlock* block,
 
                          int row_stride,
                          int offset_to_null_bitmap) {
-
+  indirect->reserve(100*1024*1024);
   BitmapIterator selected_row_iter(block->selection_vector()->bitmap(),
                                    block->nrows());
 

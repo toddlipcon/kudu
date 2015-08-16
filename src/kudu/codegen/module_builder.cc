@@ -232,6 +232,7 @@ void DoOptimizations(ExecutionEngine* engine,
   module_passes.add(new llvm::DataLayout(module->getDataLayout()));
   // Internalize all functions that aren't explicitly specified with external linkage.
   module_passes.add(llvm::createInternalizePass(external_functions));
+  
   pass_builder.populateModulePassManager(module_passes);
 
   // Same as above, the result here just indicates whether optimization made any changes.
@@ -257,6 +258,9 @@ Status ModuleBuilder::Compile(gscoped_ptr<ExecutionEngine>* out) {
   ebuilder.setErrorStr(&str);
   ebuilder.setUseMCJIT(true);
   ebuilder.setOptLevel(opt_level);
+  llvm::TargetOptions opts;
+  opts.NoFramePointerElim = true;
+  ebuilder.setTargetOptions(opts);
   target_ = ebuilder.selectTarget();
   gscoped_ptr<ExecutionEngine> local_engine(ebuilder.create(target_));
   if (!local_engine) {

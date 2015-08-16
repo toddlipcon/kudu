@@ -111,6 +111,17 @@ class faststring {
     len_ += count;
   }
 
+
+  // Append the given data to the string, resizing capacity as necessary.
+  void append_simple(const void *src_v, size_t count) {
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(src_v);
+    //EnsureRoomForAppend(count);
+    ASAN_UNPOISON_MEMORY_REGION(data_ + len_, count);
+    uint8_t *p = &data_[len_];
+    strings::memcpy_inlined(p, src, count);
+    len_ += count;
+  }
+
   // Append the given string to this string.
   void append(const std::string &str) {
     append(str.data(), str.size());
