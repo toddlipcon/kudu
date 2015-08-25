@@ -433,6 +433,7 @@ class MemRowSet::Iterator : public RowwiseIterator {
     // used as it will also fill the 'stats' with new instances of
     // IteratorStats.
     stats->resize(schema().num_columns());
+
   }
 
  private:

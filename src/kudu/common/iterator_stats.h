@@ -13,8 +13,11 @@ struct IteratorStats {
 
   std::string ToString() const;
 
-  // The number of data blocks read from disk by the iterator.
+  // The number of data blocks read from disk (or cache) by the iterator.
   uint32_t data_blocks_read_from_disk;
+
+  // The number of bytes read from disk (or cache) by the iterator.
+  int64_t bytes_read_from_disk;
 
   // The number of rows which were read from disk --  regardless of whether
   // they were decoded/materialized.
@@ -25,8 +28,8 @@ struct IteratorStats {
   // in 'other').
   void AddStats(const IteratorStats& other);
 
-  // TODO: flesh this out with index blocks, number of bytes read,
-  // rows
+  // Same, except subtract.
+  void SubtractStats(const IteratorStats& other);
 };
 
 } // namespace kudu
