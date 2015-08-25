@@ -1295,6 +1295,20 @@ static Status ApplyDeleteToSession(KuduSession* session,
   return session->Apply(del.release());
 }
 
+// Regression test for KUDU-948: a crash if we try to insert with no timeout.
+// WIP: this doesn't actually repro the bug! It seems we need to somehow
+// cause a retry, or something of that nature?
+TEST_F(ClientTest, TestInsertWithoutTimeout) {
+  shared_ptr<KuduSession> session = client_->NewSession();
+  ASSERT_OK(session->SetFlushMode(KuduSession::MANUAL_FLUSH));
+  for (int i = 0; i < 10; i++) {
+    ASSERT_OK(ApplyInsertToSession(session.get(), client_table_, i, 0, "foo"));
+    if (i % 5 == 0) {
+      FlushSessionOrDie(session);
+    }
+  }
+}
+
 // Test which does an async flush and then drops the reference
 // to the Session. This should still call the callback.
 TEST_F(ClientTest, TestAsyncFlushResponseAfterSessionDropped) {
