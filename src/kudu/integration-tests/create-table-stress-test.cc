@@ -33,14 +33,16 @@ using kudu::master::MasterServiceProxy;
 
 DECLARE_int32(heartbeat_interval_ms);
 DECLARE_bool(log_preallocate_segments);
-DEFINE_int32(num_test_tablets, 100, "Number of tablets for stress test");
+DEFINE_int32(num_test_tablets, 60, "Number of tablets for stress test");
 
 namespace kudu {
 
 const char* kTableName = "test_table";
 
-// Temporarily disabled while working on KUDU-234.
-class CreateTableStressTest : public KuduTest {
+// Tests for creating large tables.
+// The test is parameterized on the number of replicas.
+class CreateTableStressTest : public KuduTest,
+                              public ::testing::WithParamInterface<int> {
  public:
   CreateTableStressTest() {
     KuduSchemaBuilder b;
@@ -63,7 +65,9 @@ class CreateTableStressTest : public KuduTest {
     FLAGS_log_preallocate_segments = false;
 
     KuduTest::SetUp();
-    cluster_.reset(new MiniCluster(env_.get(), MiniClusterOptions()));
+    MiniClusterOptions opts;
+    opts.num_tablet_servers = GetParam();
+    cluster_.reset(new MiniCluster(env_.get(), opts));
     ASSERT_OK(cluster_->Start());
 
     ASSERT_OK(KuduClientBuilder()
@@ -97,6 +101,7 @@ void CreateTableStressTest::CreateBigTable(const string& table_name, int num_tab
   ASSERT_OK(table_creator->table_name(table_name)
             .schema(&schema_)
             .split_rows(split_rows)
+            .num_replicas(GetParam())
             .wait(false)
             .Create());
 }
