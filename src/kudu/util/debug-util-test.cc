@@ -51,6 +51,8 @@ void SleeperThread(CountDownLatch* l) {
   }
 }
 
+void fake_signal_handler(int signum) {}
+
 TEST_F(DebugUtilTest, TestSignalStackTrace) {
   CountDownLatch l(1);
   scoped_refptr<Thread> t;
@@ -65,9 +67,57 @@ TEST_F(DebugUtilTest, TestSignalStackTrace) {
     SleepFor(MonoDelta::FromMicroseconds(100));
   }
   ASSERT_STR_CONTAINS(stack, "SleeperThread");
+
+  // Test that we can change the signal and that the stack traces still work,
+  // on the new signal.
+  struct sigaction cur_action;
+
+  // Should start with nothing registered on SIGQUIT.
+  ASSERT_EQ(0, sigaction(SIGQUIT, NULL, &cur_action));
+  ASSERT_EQ(SIG_IGN, cur_action.sa_handler);
+
+  ASSERT_OK(SetStackTraceSignal(SIGQUIT));
+
+  // Should now be registered.
+  ASSERT_EQ(0, sigaction(SIGQUIT, NULL, &cur_action));
+  ASSERT_NE(SIG_IGN, cur_action.sa_handler);
+
+  // SIGUSR2 should be relinquished.
+  ASSERT_EQ(0, sigaction(SIGUSR2, NULL, &cur_action));
+  ASSERT_EQ(SIG_IGN, cur_action.sa_handler);
+
+  // Stack traces should work using the new handler.
+  ASSERT_STR_CONTAINS(DumpThreadStack(t->tid()), "SleeperThread");
+
+  // Switch back to SIGUSR2 and ensure it changes back.
+  ASSERT_OK(SetStackTraceSignal(SIGUSR2));
+
+  ASSERT_EQ(0, sigaction(SIGUSR2, NULL, &cur_action));
+  ASSERT_NE(SIG_IGN, cur_action.sa_handler);
+  ASSERT_EQ(0, sigaction(SIGQUIT, NULL, &cur_action));
+  ASSERT_EQ(SIG_IGN, cur_action.sa_handler);
+
+  // Stack traces should work using the new handler.
+  ASSERT_STR_CONTAINS(DumpThreadStack(t->tid()), "SleeperThread");
+
+  // Register our own signal handler on SIGQUIT, and ensure that
+  // we get a bad Status if we try to use it.
+  signal(SIGQUIT, &fake_signal_handler);
+  ASSERT_STR_CONTAINS(SetStackTraceSignal(SIGQUIT).ToString(),
+                      "unable to install signal handler");
+  signal(SIGQUIT, SIG_IGN);
+
+  // Stack traces should be disabled
+  ASSERT_STR_CONTAINS(DumpThreadStack(t->tid()), "unable to take thread stack");
+
+  // Re-enable so that other tests pass.
+  ASSERT_OK(SetStackTraceSignal(SIGUSR2));
+
+  // Allow the thread to finish.
   l.CountDown();
   t->Join();
 }
+
 
 // Test which dumps all known threads within this process.
 // We don't validate the results in any way -- but this verifies that we can
