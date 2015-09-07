@@ -19,20 +19,23 @@
 #include "kudu/gutil/strings/human_readable.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/debug-util.h"
+#include "kudu/util/flag_tags.h"
 #include "kudu/util/mem_tracker.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/locks.h"
 #include "kudu/util/logging.h"
 
-DEFINE_int32(log_cache_size_limit_mb, 128,
+DEFINE_int32(log_cache_size_limit_mb, 16,
              "The total per-tablet size of consensus entries which may be kept in memory. "
              "The log cache attempts to keep all entries which have not yet been replicated "
              "to all followers in memory, but if the total size of those entries exceeds "
              "this limit within an individual tablet, the oldest will be evicted.");
+TAG_FLAG(log_cache_size_limit_mb, advanced);
 
-DEFINE_int32(global_log_cache_size_limit_mb, 1024,
+DEFINE_int32(global_log_cache_size_limit_mb, 128,
              "Server-wide version of 'log_cache_size_limit_mb'. The total memory used for "
              "caching log entries across all tablets is kept under this threshold.");
+TAG_FLAG(global_log_cache_size_limit_mb, advanced);
 
 using strings::Substitute;
 

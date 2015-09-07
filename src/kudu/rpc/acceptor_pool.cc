@@ -17,6 +17,7 @@
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/messenger.h"
+#include "kudu/util/flag_tags.h"
 #include "kudu/util/thread.h"
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/net/socket.h"
@@ -33,6 +34,7 @@ METRIC_DEFINE_counter(server, rpc_connections_accepted,
                       "Number of incoming TCP connections made to the RPC server");
 
 DEFINE_int32(accept_backlog, 128, "backlog parameter to use for accept");
+TAG_FLAG(accept_backlog, advanced);
 
 namespace kudu {
 namespace rpc {

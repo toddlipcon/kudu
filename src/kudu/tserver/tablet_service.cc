@@ -34,6 +34,7 @@
 #include "kudu/util/crc.h"
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/faststring.h"
+#include "kudu/util/flag_tags.h"
 #include "kudu/util/logging.h"
 #include "kudu/util/mem_tracker.h"
 #include "kudu/util/monotime.h"
@@ -43,11 +44,20 @@
 
 DEFINE_int32(scanner_default_batch_size_bytes, 1024 * 1024,
              "The default size for batches of scan results");
+TAG_FLAG(scanner_default_batch_size_bytes, advanced);
+TAG_FLAG(scanner_default_batch_size_bytes, runtime);
+
 DEFINE_int32(scanner_max_batch_size_bytes, 8 * 1024 * 1024,
              "The maximum batch size that a client may request for "
              "scan results.");
+TAG_FLAG(scanner_max_batch_size_bytes, advanced);
+TAG_FLAG(scanner_max_batch_size_bytes, runtime);
+
 DEFINE_int32(scanner_batch_size_rows, 100,
              "The number of rows to batch for servicing scan requests.");
+TAG_FLAG(scanner_batch_size_rows, advanced);
+TAG_FLAG(scanner_batch_size_rows, runtime);
+
 
 namespace kudu {
 namespace tserver {

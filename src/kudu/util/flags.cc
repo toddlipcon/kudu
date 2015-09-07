@@ -37,9 +37,13 @@ DEFINE_bool(enable_process_lifetime_heap_profiling, false, "(Advanced) Enables h
     "profiling for the lifetime of the process. Profile output will be stored in the "
     "directory specified by -heap_profile_path. Enabling this option will disable the "
     "on-demand/remote server profile handlers.");
+TAG_FLAG(enable_process_lifetime_heap_profiling, stable);
+TAG_FLAG(enable_process_lifetime_heap_profiling, advanced);
 
 DEFINE_string(heap_profile_path, "", "Output path to store heap profiles. If not set " \
     "profiles are stored in /tmp/<process-name>.<pid>.<n>.heap.");
+TAG_FLAG(heap_profile_path, stable);
+TAG_FLAG(heap_profile_path, advanced);
 
 // Tag a bunch of the flags that we inherit from glog/gflags.
 
