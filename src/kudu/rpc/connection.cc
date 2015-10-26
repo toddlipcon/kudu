@@ -446,11 +446,12 @@ void Connection::ReadHandler(ev::io &watcher, int revents) {
   }
   last_activity_time_ = reactor_thread_->cur_time();
 
+  if (!inbound_) {
+    inbound_.reset(new InboundTransfer());
+  }
   while (true) {
-    if (!inbound_) {
-      inbound_.reset(new InboundTransfer());
-    }
-    Status status = inbound_->ReceiveBuffer(socket_);
+    gscoped_ptr<InboundTransfer> next_transfer;
+    Status status = inbound_->ReceiveBuffer(socket_, next_transfer);
     if (PREDICT_FALSE(!status.ok())) {
       if (status.posix_code() == ESHUTDOWN) {
         VLOG(1) << ToString() << " shut down by remote end.";
@@ -474,14 +475,11 @@ void Connection::ReadHandler(ev::io &watcher, int revents) {
       LOG(FATAL) << "Invalid direction: " << direction_;
     }
 
-    // TODO: it would seem that it would be good to loop around and see if
-    // there is more data on the socket by trying another recv(), but it turns
-    // out that it really hurts throughput to do so. A better approach
-    // might be for each InboundTransfer to actually try to read an extra byte,
-    // and if it succeeds, then we'd copy that byte into a new InboundTransfer
-    // and loop around, since it's likely the next call also arrived at the
-    // same time.
-    break;
+    if (next_transfer) {
+      inbound_.swap(next_transfer);
+    } else {
+      break;
+    }
   }
 }
 

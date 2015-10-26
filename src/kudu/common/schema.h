@@ -316,6 +316,7 @@ class Schema {
   }
 
   Schema(const Schema& other);
+  Schema(Schema&& other);
   Schema& operator=(const Schema& other);
 
   void swap(Schema& other); // NOLINT(build/include_what_you_use)
@@ -329,6 +330,24 @@ class Schema {
   // caught. If an invalid schema is passed to this constructor, an
   // assertion will be fired!
   Schema(const vector<ColumnSchema>& cols,
+         int key_columns)
+    : name_to_index_bytes_(0),
+      // TODO: C++11 provides a single-arg constructor
+      name_to_index_(10,
+                     NameToIndexMap::hasher(),
+                     NameToIndexMap::key_equal(),
+                     NameToIndexMapAllocator(&name_to_index_bytes_)) {
+    CHECK_OK(Reset(cols, key_columns));
+  }
+
+  // Construct a schema with the given information.
+  // No-copy version.
+  //
+  // NOTE: if the schema is user-provided, it's better to construct an
+  // empty schema and then use Reset(...)  so that errors can be
+  // caught. If an invalid schema is passed to this constructor, an
+  // assertion will be fired!
+  Schema(const vector<ColumnSchema>&& cols,
          int key_columns)
     : name_to_index_bytes_(0),
       // TODO: C++11 provides a single-arg constructor
@@ -357,6 +376,24 @@ class Schema {
     CHECK_OK(Reset(cols, ids, key_columns));
   }
 
+  // Construct a schema with the given information.
+  // No-copy version.
+  // NOTE: if the schema is user-provided, it's better to construct an
+  // empty schema and then use Reset(...)  so that errors can be
+  // caught. If an invalid schema is passed to this constructor, an
+  // assertion will be fired!
+  Schema(vector<ColumnSchema>&& cols,
+         vector<ColumnId>&& ids,
+         int key_columns)
+    : name_to_index_bytes_(0),
+      // TODO: C++11 provides a single-arg constructor
+      name_to_index_(10,
+                     NameToIndexMap::hasher(),
+                     NameToIndexMap::key_equal(),
+                     NameToIndexMapAllocator(&name_to_index_bytes_)) {
+    CHECK_OK(Reset(cols, ids, key_columns));
+  }
+
   // Reset this Schema object to the given schema.
   // If this fails, the Schema object is left in an inconsistent
   // state and may not be used.
@@ -366,10 +403,27 @@ class Schema {
   }
 
   // Reset this Schema object to the given schema.
+  // No-copy version, will take over contents in cols.
+  // If this fails, the Schema object is left in an inconsistent
+  // state and may not be used.
+  Status Reset(const vector<ColumnSchema>&& cols, int key_columns) {
+    std::vector<ColumnId> ids;
+    return Reset(cols, std::move(ids), key_columns);
+  }
+
+  // Reset this Schema object to the given schema.
   // If this fails, the Schema object is left in an inconsistent
   // state and may not be used.
   Status Reset(const vector<ColumnSchema>& cols,
                const vector<ColumnId>& ids,
+               int key_columns);
+
+  // Reset this Schema object to the given schema.
+  // No-copy version, will take over contents in cols and ids.
+  // If this fails, the Schema object is left in an inconsistent
+  // state and may not be used.
+  Status Reset(vector<ColumnSchema>&& cols,
+               vector<ColumnId>&& ids,
                int key_columns);
 
   // Return the number of bytes needed to represent a single row of this schema.
@@ -561,7 +615,7 @@ class Schema {
       col_ids.assign(col_ids_.begin(), col_ids_.begin() + num_key_columns_);
     }
 
-    return Schema(key_cols, col_ids, num_key_columns_);
+    return Schema(std::move(key_cols), std::move(col_ids), num_key_columns_);
   }
 
   // Return a new Schema which is the same as this one, but with IDs assigned.
@@ -577,8 +631,14 @@ class Schema {
   // Create a new schema containing only the selected columns.
   // The resulting schema will have no key columns defined.
   // If this schema has IDs, the resulting schema will as well.
-  Status CreateProjectionByNames(const std::vector<StringPiece>& col_names,
+  Status CreateProjectionByNames(const std::vector<std::string>& col_names,
                                  Schema* out) const;
+
+  // Create a new schema containing only the selected columns.
+  // The resulting schema will have no key columns defined.
+  // If this schema has IDs, the resulting schema will as well.
+  Status CreateProjectionByIndexes(const std::vector<int>& col_indexes,
+                                   Schema* out) const;
 
   // Create a new schema containing only the selected column IDs.
   //
@@ -736,6 +796,9 @@ class Schema {
 
  private:
 
+  // Check and rebuild internal states after reset.
+  Status Rebuild();
+
   // Return a stringified version of the first 'num_columns' columns of the
   // row.
   template<class RowType>
@@ -820,6 +883,8 @@ class SchemaBuilder {
     return next_id_;
   }
 
+  // TODO: Change to use no-copy version if builder is designed to be used only once.
+  // Currently some test is not, so pending this.
   Schema Build() const { return Schema(cols_, col_ids_, num_key_columns_); }
   Schema BuildWithoutIds() const { return Schema(cols_, num_key_columns_); }
 

@@ -49,7 +49,8 @@ class ServicePool : public RpcService {
  public:
   ServicePool(gscoped_ptr<ServiceIf> service,
               const scoped_refptr<MetricEntity>& metric_entity,
-              size_t service_queue_length);
+              size_t service_queue_length,
+              int max_service_threads);
   virtual ~ServicePool();
 
   // Start up the thread pool.
@@ -77,7 +78,7 @@ class ServicePool : public RpcService {
   const std::string service_name() const;
 
  private:
-  typedef FCServiceQueue ServiceQueueType;
+  typedef LifoServiceQueue ServiceQueueType;
 
   void RunThread();
   void RejectTooBusy(InboundCall* c);

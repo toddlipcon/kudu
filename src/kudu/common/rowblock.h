@@ -36,8 +36,10 @@ class RowBlockRow;
 // the given row is live and has passed all predicates.
 class SelectionVector {
  public:
-  // Construct a new vector. The bits are initially in an indeterminate state.
+  // Construct a new vector. The bits are initially in an indeterminate state,
+  // including last trailer bits.
   // Call SetAllTrue() if you require all rows to be initially selected.
+  // Call SetAllFalse() if you require all rows to be initially unselected.
   explicit SelectionVector(size_t row_capacity);
 
   // Construct a vector which shares the underlying memory of another vector,

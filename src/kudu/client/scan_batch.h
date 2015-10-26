@@ -86,6 +86,7 @@ class KUDU_EXPORT KuduScanBatch {
  private:
   class KUDU_NO_EXPORT Data;
   friend class KuduScanner;
+  friend class KuduGetter;
   friend class kudu::tools::TsAdminClient;
 
   Data* data_;
@@ -147,6 +148,7 @@ class KUDU_EXPORT KuduScanBatch::RowPtr {
 
  private:
   friend class KuduScanBatch;
+  friend class KuduGetter;
   template<typename KeyTypeWrapper> friend struct SliceKeysTestSetup;
   template<typename KeyTypeWrapper> friend struct IntKeysTestSetup;
 

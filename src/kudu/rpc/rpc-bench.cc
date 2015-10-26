@@ -15,9 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <boost/bind.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
 #include <boost/thread/thread.hpp>
+#include <gflags/gflags.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 
 #include "kudu/gutil/atomicops.h"
@@ -28,6 +31,23 @@
 
 using std::string;
 using std::shared_ptr;
+using std::unique_ptr;
+using std::vector;
+
+DEFINE_int32(client_thread, 16,
+             "Number of client thread");
+
+DEFINE_int32(client_concurrency, 60,
+             "Number of concurrent requests");
+
+DEFINE_int32(worker_thread, 1,
+             "Number of server worker thread");
+
+DEFINE_int32(server_reactor, 4,
+             "Number of server reactor");
+
+DEFINE_int32(run_seconds, 1,
+             "Seconds to run the test");
 
 namespace kudu {
 namespace rpc {
@@ -35,15 +55,17 @@ namespace rpc {
 class RpcBench : public RpcTestBase {
  public:
   RpcBench()
-    : should_run_(true)
+    : should_run_(true),
+      stop_(0)
   {}
 
  protected:
   friend class ClientThread;
+  friend class ClientAsyncWorkload;
 
   Sockaddr server_addr_;
-  shared_ptr<Messenger> client_messenger_;
   Atomic32 should_run_;
+  CountDownLatch stop_;
 };
 
 class ClientThread {
@@ -87,26 +109,23 @@ class ClientThread {
 
 // Test making successful RPC calls.
 TEST_F(RpcBench, BenchmarkCalls) {
-  n_worker_threads_ = 1;
+  n_worker_threads_ = FLAGS_worker_thread;
+  n_server_reactor_threads_ = FLAGS_server_reactor;
 
   // Set up server.
   StartTestServerWithGeneratedCode(&server_addr_);
-
-  // Set up client.
-  LOG(INFO) << "Connecting to " << server_addr_.ToString();
-  client_messenger_ = CreateMessenger("Client", 2);
 
   Stopwatch sw(Stopwatch::ALL_THREADS);
   sw.start();
 
   boost::ptr_vector<ClientThread> threads;
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < FLAGS_client_thread; i++) {
     auto thr = new ClientThread(this);
     thr->Start();
     threads.push_back(thr);
   }
 
-  SleepFor(MonoDelta::FromSeconds(AllowSlowTests() ? 10 : 1));
+  SleepFor(MonoDelta::FromSeconds(AllowSlowTests() ? 10 : FLAGS_run_seconds));
   Release_Store(&should_run_, false);
 
   int total_reqs = 0;
@@ -116,6 +135,98 @@ TEST_F(RpcBench, BenchmarkCalls) {
     total_reqs += thr.request_count_;
   }
   sw.stop();
+
+  float reqs_per_second = static_cast<float>(total_reqs / sw.elapsed().wall_seconds());
+  float user_cpu_micros_per_req = static_cast<float>(sw.elapsed().user / 1000.0 / total_reqs);
+  float sys_cpu_micros_per_req = static_cast<float>(sw.elapsed().system / 1000.0 / total_reqs);
+
+  LOG(INFO) << "Reqs/sec:         " << reqs_per_second;
+  LOG(INFO) << "User CPU per req: " << user_cpu_micros_per_req << "us";
+  LOG(INFO) << "Sys CPU per req:  " << sys_cpu_micros_per_req << "us";
+}
+
+class ClientAsyncWorkload {
+ public:
+  ClientAsyncWorkload(RpcBench *bench, shared_ptr<Messenger> messenger)
+    : bench_(bench),
+      messenger_(messenger),
+      request_count_(0) {
+    controller_.set_timeout(MonoDelta::FromSeconds(10));
+    proxy_.reset(new CalculatorServiceProxy(messenger_, bench_->server_addr_));
+  }
+
+  void CallOneRpc() {
+    if (request_count_ > 0) {
+      CHECK_OK(controller_.status());
+      CHECK_EQ(req_.x() + req_.y(), resp_.result());
+    }
+    if (!Acquire_Load(&bench_->should_run_)) {
+      bench_->stop_.CountDown();
+      return;
+    }
+    controller_.Reset();
+    req_.set_x(request_count_);
+    req_.set_y(request_count_);
+    request_count_++;
+    proxy_->AddAsync(req_,
+                     &resp_,
+                     &controller_,
+                     boost::bind(&ClientAsyncWorkload::CallOneRpc, this));
+  }
+
+  void Start() {
+    CallOneRpc();
+  }
+
+  RpcBench *bench_;
+  shared_ptr<Messenger> messenger_;
+  unique_ptr<CalculatorServiceProxy> proxy_;
+  uint32_t request_count_;
+  RpcController controller_;
+  AddRequestPB req_;
+  AddResponsePB resp_;
+};
+
+TEST_F(RpcBench, BenchmarkCallAsync) {
+  n_worker_threads_ = FLAGS_worker_thread;
+  n_server_reactor_threads_ = FLAGS_server_reactor;
+
+  // Set up server.
+  StartTestServerWithGeneratedCode(&server_addr_);
+
+  int threads = FLAGS_client_thread;
+  int concurrency = FLAGS_client_concurrency;
+
+  vector<shared_ptr<Messenger>> messengers;
+  for (int i = 0; i < threads; i++) {
+    messengers.push_back(CreateMessenger("Client"));
+  }
+
+  vector<shared_ptr<ClientAsyncWorkload>> workloads;
+  for (int i = 0; i < concurrency; i++) {
+    workloads.push_back(shared_ptr<ClientAsyncWorkload>(
+        new ClientAsyncWorkload(this, messengers[i%threads])));
+  }
+
+  stop_.Reset(concurrency);
+
+  Stopwatch sw(Stopwatch::ALL_THREADS);
+  sw.start();
+
+  for (int i = 0; i < concurrency; i++) {
+    workloads[i]->Start();
+  }
+
+  SleepFor(MonoDelta::FromSeconds(AllowSlowTests() ? 10 : FLAGS_run_seconds));
+  Release_Store(&should_run_, false);
+
+  sw.stop();
+
+  stop_.Wait();
+  int total_reqs = 0;
+  for (int i = 0; i < concurrency; i++) {
+    total_reqs += workloads[i]->request_count_;
+  }
 
   float reqs_per_second = static_cast<float>(total_reqs / sw.elapsed().wall_seconds());
   float user_cpu_micros_per_req = static_cast<float>(sw.elapsed().user / 1000.0 / total_reqs);

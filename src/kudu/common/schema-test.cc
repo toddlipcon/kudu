@@ -89,15 +89,26 @@ TEST(TestSchema, TestSwap) {
   Schema schema1({ ColumnSchema("col1", STRING),
                    ColumnSchema("col2", STRING),
                    ColumnSchema("col3", UINT32) },
+                 { ColumnId(0),
+                   ColumnId(1),
+                   ColumnId(2) },
                  2);
+  size_t size1 = schema1.memory_footprint_excluding_this();
   Schema schema2({ ColumnSchema("col3", UINT32),
                    ColumnSchema("col2", STRING) },
+                 { ColumnId(0),
+                   ColumnId(1) },
                  1);
+  size_t size2 = schema2.memory_footprint_excluding_this();
   schema1.swap(schema2);
   ASSERT_EQ(2, schema1.num_columns());
   ASSERT_EQ(1, schema1.num_key_columns());
+  ASSERT_EQ(1, schema1.max_col_id());
+  ASSERT_EQ(size2, schema1.memory_footprint_excluding_this());
   ASSERT_EQ(3, schema2.num_columns());
   ASSERT_EQ(2, schema2.num_key_columns());
+  ASSERT_EQ(2, schema2.max_col_id());
+  ASSERT_EQ(size1, schema2.memory_footprint_excluding_this());
 }
 
 TEST(TestSchema, TestReset) {

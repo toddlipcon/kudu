@@ -173,6 +173,7 @@ class MemRowSet : public RowSet,
                   public std::enable_shared_from_this<MemRowSet> {
  public:
   class Iterator;
+  class MRSRowProjector;
 
   MemRowSet(int64_t id,
             const Schema &schema,
@@ -252,6 +253,12 @@ class MemRowSet : public RowSet,
   size_t memory_footprint() const {
     return arena_->memory_footprint();
   }
+
+  virtual Status GetRow(const EncodedKey* key,
+                        const Schema& projection,
+                        const MvccSnapshot& snap,
+                        RowBlock* dst,
+                        ProbeStats* stats) const OVERRIDE;
 
   // Return an iterator over the items in this memrowset.
   //
@@ -340,6 +347,12 @@ class MemRowSet : public RowSet,
                   const ConstContiguousRow& row_data,
                   MRSRow *row);
 
+  Status MSBTEntryToProjectedRow(const Slice& v,
+                                 const MvccSnapshot& snap,
+                                 MRSRowProjector* projector,
+                                 RowBlockRow& dst_row,
+                                 Arena* dst_arena) const;
+
   typedef btree::CBTree<MSBTreeTraits> MSBTree;
 
   int64_t id_;
@@ -381,8 +394,6 @@ class MemRowSet : public RowSet,
 // the time of construction, and potentially more current.
 class MemRowSet::Iterator : public RowwiseIterator {
  public:
-  class MRSRowProjector;
-
   virtual ~Iterator();
 
   virtual Status Init(ScanSpec *spec) OVERRIDE;
@@ -468,9 +479,6 @@ class MemRowSet::Iterator : public RowwiseIterator {
 
   // Various helper functions called while getting the next RowBlock
   Status FetchRows(RowBlock* dst, size_t* fetched);
-  Status ApplyMutationsToProjectedRow(const Mutation *mutation_head,
-                                      RowBlockRow *dst_row,
-                                      Arena *dst_arena);
 
   const std::shared_ptr<const MemRowSet> memrowset_;
   gscoped_ptr<MemRowSet::MSBTIter> iter_;

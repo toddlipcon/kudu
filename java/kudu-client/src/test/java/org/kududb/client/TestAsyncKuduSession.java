@@ -19,6 +19,8 @@ package org.kududb.client;
 import org.kududb.Schema;
 import org.kududb.WireProtocol.AppStatusPB;
 import org.kududb.tserver.Tserver.TabletServerErrorPB;
+
+import com.google.common.collect.Lists;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
 import com.stumbleupon.async.TimeoutException;
@@ -131,6 +133,11 @@ public class TestAsyncKuduSession extends BaseKuduTest {
       session.apply(createInsert(i)).join(DEFAULT_SLEEP);
     }
 
+    for (int i = 1; i < 10; i++) {
+      assertEquals("a string", getStringColumn(i, "column3_s"));
+      assertEquals(i, getIntColumn(i, "key").intValue());
+    }
+    assertNull(getIntColumn(11, "key"));
     assertEquals(10, countInRange(0, 10));
 
     session.setFlushMode(AsyncKuduSession.FlushMode.MANUAL_FLUSH);
@@ -444,5 +451,31 @@ public class TestAsyncKuduSession extends BaseKuduTest {
         .setProjectedColumnNames(columnNames)
         .build();
     return scanner;
+  }
+
+  private static String getStringColumn(int key, String column) throws Exception {
+    PartialRow row = table.getSchema().newPartialRow();
+    row.addInt(0, key);
+    RowResult result = getGetter(Lists.newArrayList(column)).get(row).join().getRow();
+    if (result == null) {
+      return null;
+    } else {
+      return result.isNull(0) ? null : result.getString(0);
+    }
+  }
+
+  private static Integer getIntColumn(int key, String column) throws Exception {
+    PartialRow row = table.getSchema().newPartialRow();
+    row.addInt(0, key);
+    RowResult result = getGetter(Lists.newArrayList(column)).get(row).join().getRow();
+    if (result == null) {
+      return null;
+    } else {
+      return result.isNull(0) ? null : result.getInt(0);
+    }
+  }
+
+  private static AsyncKuduGetter getGetter(List<String> columnNames) {
+    return client.newGetterBuilder(table).setProjectedColumnNames(columnNames).build();
   }
 }

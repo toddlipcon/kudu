@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/rpc/rpc_header.pb.h"
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/status.h"
@@ -59,8 +60,14 @@ class InboundTransfer {
 
   InboundTransfer();
 
-  // read from the socket into our buffer
-  Status ReceiveBuffer(Socket &socket);
+  // Create a transfer with known body_length, so buffer can be pre-allocated,
+  // also an extra space of kMsgLengthPrefixLength is allocated to hold
+  // next prefix.
+  explicit InboundTransfer(int32_t body_length);
+
+  // Read from the socket into our buffer.
+  // If there is extra data, create another transfer and put into it.
+  Status ReceiveBuffer(Socket &socket, gscoped_ptr<InboundTransfer>& next);
 
   // Return true if any bytes have yet been sent.
   bool TransferStarted() const;

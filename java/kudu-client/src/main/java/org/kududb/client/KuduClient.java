@@ -217,6 +217,16 @@ public class KuduClient implements AutoCloseable {
   }
 
   /**
+   * Creates a new {@link KuduGetter.KuduGetterBuilder} for a particular table.
+   * @param table the name of the table you intend to get row from.
+   * The string is assumed to use the platform's default charset.
+   * @return a new getter builder for this table
+   */
+  public KuduGetter.KuduGetterBuilder newGetterBuilder(KuduTable table) {
+    return new KuduGetter.KuduGetterBuilder(asyncClient, table);
+  }
+
+  /**
    * Analogous to {@link #shutdown()}.
    * @throws Exception if an error happens while closing the connections
    */

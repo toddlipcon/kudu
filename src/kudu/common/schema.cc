@@ -85,6 +85,18 @@ Schema::Schema(const Schema& other)
   CopyFrom(other);
 }
 
+Schema::Schema(Schema&& other)
+  : num_key_columns_(0),
+    name_to_index_bytes_(0),
+    // TODO: C++11 provides a single-arg constructor
+    name_to_index_(10,
+                   NameToIndexMap::hasher(),
+                   NameToIndexMap::key_equal(),
+                   NameToIndexMapAllocator(&name_to_index_bytes_)),
+    has_nullables_(false) {
+  swap(other);
+}
+
 Schema& Schema::operator=(const Schema& other) {
   if (&other != this) {
     CopyFrom(other);
@@ -96,6 +108,7 @@ void Schema::CopyFrom(const Schema& other) {
   num_key_columns_ = other.num_key_columns_;
   cols_ = other.cols_;
   col_ids_ = other.col_ids_;
+  max_col_id_ = other.max_col_id_;
   col_offsets_ = other.col_offsets_;
   id_to_index_ = other.id_to_index_;
 
@@ -115,35 +128,45 @@ void Schema::swap(Schema& other) {
   std::swap(num_key_columns_, other.num_key_columns_);
   cols_.swap(other.cols_);
   col_ids_.swap(other.col_ids_);
+  std::swap(max_col_id_, other.max_col_id_);
   col_offsets_.swap(other.col_offsets_);
-  name_to_index_.swap(other.name_to_index_);
+
+  // We can't simply swap name_to_index_, cause it has special allocator.
+  name_to_index_.clear();
+  int i = 0;
+  for (const ColumnSchema &col : cols_) {
+    // The map uses the 'name' string from within the ColumnSchema object.
+    name_to_index_[col.name()] = i++;
+  }
+  other.name_to_index_.clear();
+  i = 0;
+  for (const ColumnSchema &col : other.cols_) {
+    // The map uses the 'name' string from within the ColumnSchema object.
+    other.name_to_index_[col.name()] = i++;
+  }
+
   id_to_index_.swap(other.id_to_index_);
   std::swap(has_nullables_, other.has_nullables_);
 }
 
-Status Schema::Reset(const vector<ColumnSchema>& cols,
-                     const vector<ColumnId>& ids,
-                     int key_columns) {
-  cols_ = cols;
-  num_key_columns_ = key_columns;
-
-  if (PREDICT_FALSE(key_columns > cols_.size())) {
+Status Schema::Rebuild() {
+  if (PREDICT_FALSE(num_key_columns_ > cols_.size())) {
     return Status::InvalidArgument(
       "Bad schema", "More key columns than columns");
   }
 
-  if (PREDICT_FALSE(key_columns < 0)) {
+  if (PREDICT_FALSE(num_key_columns_ < 0)) {
     return Status::InvalidArgument(
       "Bad schema", "Cannot specify a negative number of key columns");
   }
 
-  if (PREDICT_FALSE(!ids.empty() && ids.size() != cols_.size())) {
+  if (PREDICT_FALSE(!col_ids_.empty() && col_ids_.size() != cols_.size())) {
     return Status::InvalidArgument("Bad schema",
       "The number of ids does not match with the number of columns");
   }
 
   // Verify that the key columns are not nullable
-  for (int i = 0; i < key_columns; ++i) {
+  for (int i = 0; i < num_key_columns_; ++i) {
     if (PREDICT_FALSE(cols_[i].is_nullable())) {
       return Status::InvalidArgument(
         "Bad schema", strings::Substitute("Nullable key columns are not "
@@ -171,14 +194,13 @@ Status Schema::Reset(const vector<ColumnSchema>& cols,
   col_offsets_.push_back(off);
 
   // Initialize IDs mapping
-  col_ids_ = ids;
   id_to_index_.clear();
   max_col_id_ = 0;
-  for (int i = 0; i < ids.size(); ++i) {
-    if (ids[i] > max_col_id_) {
-      max_col_id_ = ids[i];
+  for (int i = 0; i < col_ids_.size(); ++i) {
+    if (col_ids_[i] > max_col_id_) {
+      max_col_id_ = col_ids_[i];
     }
-    id_to_index_.set(ids[i], i);
+    id_to_index_.set(col_ids_[i], i);
   }
 
   // Determine whether any column is nullable
@@ -193,11 +215,29 @@ Status Schema::Reset(const vector<ColumnSchema>& cols,
   return Status::OK();
 }
 
-Status Schema::CreateProjectionByNames(const std::vector<StringPiece>& col_names,
+Status Schema::Reset(const vector<ColumnSchema>& cols,
+                     const vector<ColumnId>& ids,
+                     int key_columns) {
+  cols_ = cols;
+  col_ids_ = ids;
+  num_key_columns_ = key_columns;
+  return Rebuild();
+}
+
+Status Schema::Reset(vector<ColumnSchema>&& cols,
+                     vector<ColumnId>&& ids,
+                     int key_columns) {
+  cols_.swap(cols);
+  col_ids_.swap(ids);
+  num_key_columns_ = key_columns;
+  return Rebuild();
+}
+
+Status Schema::CreateProjectionByNames(const std::vector<std::string>& col_names,
                                        Schema* out) const {
   vector<ColumnId> ids;
   vector<ColumnSchema> cols;
-  for (const StringPiece& name : col_names) {
+  for (const std::string& name : col_names) {
     int idx = find_column(name);
     if (idx == -1) {
       return Status::NotFound("column not found", name);
@@ -207,7 +247,24 @@ Status Schema::CreateProjectionByNames(const std::vector<StringPiece>& col_names
     }
     cols.push_back(column(idx));
   }
-  return out->Reset(cols, ids, 0);
+  return out->Reset(std::move(cols), std::move(ids), 0);
+}
+
+Status Schema::CreateProjectionByIndexes(const std::vector<int>& col_indexes,
+                                         Schema* out) const {
+  vector<ColumnId> ids;
+  vector<ColumnSchema> cols;
+  for (const int col_index: col_indexes) {
+    if (col_index >= cols_.size()) {
+      return Status::NotFound(strings::Substitute("Column: \"$0\" was not found in the "
+          "table schema.", col_index));
+    }
+    if (has_column_ids()) {
+      ids.push_back(column_id(col_index));
+    }
+    cols.push_back(column(col_index));
+  }
+  return out->Reset(std::move(cols), std::move(ids), 0);
 }
 
 Status Schema::CreateProjectionByIdsIgnoreMissing(const std::vector<ColumnId>& col_ids,
@@ -222,7 +279,7 @@ Status Schema::CreateProjectionByIdsIgnoreMissing(const std::vector<ColumnId>& c
     cols.push_back(column(idx));
     filtered_col_ids.push_back(id);
   }
-  return out->Reset(cols, filtered_col_ids, 0);
+  return out->Reset(std::move(cols), std::move(filtered_col_ids), 0);
 }
 
 Schema Schema::CopyWithColumnIds() const {
@@ -290,7 +347,8 @@ Status Schema::GetMappedReadProjection(const Schema& projection,
     mapped_ids.push_back(col_ids_[index]);
   }
 
-  CHECK_OK(mapped_projection->Reset(mapped_cols, mapped_ids, projection.num_key_columns()));
+  CHECK_OK(mapped_projection->Reset(
+      std::move(mapped_cols), std::move(mapped_ids), projection.num_key_columns()));
   return Status::OK();
 }
 

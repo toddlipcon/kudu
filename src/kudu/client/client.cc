@@ -30,6 +30,7 @@
 #include "kudu/client/client_builder-internal.h"
 #include "kudu/client/error-internal.h"
 #include "kudu/client/error_collector.h"
+#include "kudu/client/getter-internal.h"
 #include "kudu/client/meta_cache.h"
 #include "kudu/client/row_result.h"
 #include "kudu/client/scan_predicate-internal.h"
@@ -1273,6 +1274,40 @@ Status KuduScanTokenBuilder::SetCacheBlocks(bool cache_blocks) {
 
 Status KuduScanTokenBuilder::Build(vector<KuduScanToken*>* tokens) {
   return data_->Build(tokens);
+}
+
+////////////////////////////////////////////////////////////
+// KuduGetter
+////////////////////////////////////////////////////////////
+
+KuduGetter::KuduGetter(KuduTable* table)
+  : data_(new KuduGetter::Data(table)) {
+}
+
+KuduGetter::~KuduGetter() {
+  delete data_;
+}
+
+Status KuduGetter::SetProjectedColumnNames(const vector<string>& col_names) {
+  return data_->SetProjectedColumnNames(col_names);
+}
+
+Status KuduGetter::SetProjectedColumnIndexes(const vector<int>& col_indexes) {
+  return data_->SetProjectedColumnIndexes(col_indexes);
+}
+
+Status KuduGetter::SetSelection(KuduClient::ReplicaSelection selection) {
+  data_->selection_ = selection;
+  return Status::OK();
+}
+
+Status KuduGetter::Get(const KuduPartialRow& key, KuduRowResult * row) {
+  return data_->Get(key, row);
+}
+
+Status KuduGetter::SetTimeoutMillis(int millis) {
+  data_->timeout_ = MonoDelta::FromMilliseconds(millis);
+  return Status::OK();
 }
 
 ////////////////////////////////////////////////////////////

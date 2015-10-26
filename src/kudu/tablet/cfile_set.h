@@ -74,7 +74,10 @@ class CFileSet : public std::enable_shared_from_this<CFileSet> {
   uint64_t EstimateOnDiskSize() const;
 
   // Determine the index of the given row key.
-  Status FindRow(const RowSetKeyProbe &probe, rowid_t *idx, ProbeStats* stats) const;
+  Status FindRow(const BloomKeyProbe& probe,
+                 const EncodedKey& encoded_key,
+                 rowid_t *idx,
+                 ProbeStats* stats) const;
 
   string ToString() const {
     return string("CFile base data in ") + rowset_metadata_->ToString();
@@ -139,6 +142,8 @@ class CFileSet::Iterator : public ColumnwiseIterator {
  public:
 
   virtual Status Init(ScanSpec *spec) OVERRIDE;
+
+  Status InitForGet(rowid_t row_idx);
 
   virtual Status PrepareBatch(size_t *nrows) OVERRIDE;
 

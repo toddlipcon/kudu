@@ -23,6 +23,7 @@
 
 #include <cds/algo/flat_combining.h>
 
+#include "kudu/rpc/service_queue.h"
 #include "kudu/rpc/inbound_call.h"
 #include "kudu/gutil/spinlock_internal.h"
 
@@ -31,13 +32,6 @@ namespace rpc {
 
 class FCServiceQueue {
  public:
-  // Return values for FCServiceQueue::Put()
-  enum QueueStatus {
-    QUEUE_SUCCESS = 0,
-    QUEUE_SHUTDOWN = 1,
-    QUEUE_FULL = 2
-  };
-
   explicit FCServiceQueue(int max_size)
       : shutdown_(false),
         max_queue_size_(max_size) {
@@ -46,6 +40,7 @@ class FCServiceQueue {
   ~FCServiceQueue() {
     LOG(INFO) << "get immed count: " << get_immediate_count_;
     LOG(INFO) << "get blocked count: " << get_blocked_count_;
+    LOG(INFO) << "put skipped queue: " << put_skipped_queue_;
     DCHECK(queue_.empty())
         << "FCServiceQueue holds bare pointers at destruction time";
   }
@@ -117,6 +112,12 @@ class FCServiceQueue {
     bool empty_result_;
 
     void Wait() {
+      int c = 1;
+      while (base::subtle::NoBarrier_Load(&block_state_) != HAS_RESULT && --c > 0) {
+        sched_yield();
+        //base::subtle::PauseCPU();
+      }
+
       Atomic32 old = base::subtle::Acquire_CompareAndSwap(&block_state_, NOT_BLOCKED, SLEEPING);
       if (old == HAS_RESULT) {
         return;
@@ -128,15 +129,18 @@ class FCServiceQueue {
       }
     }
 
-    void Wake() {
+    bool Wake() {
       if (base::subtle::Release_AtomicExchange(&block_state_, HAS_RESULT) == SLEEPING) {
-        base::internal::SpinLockWake(&block_state_, false);
+        base::internal::SpinLockWake(&block_state_, false); 
+        return true;
       }
+      return false;
     }
   };
 
   struct FCTraits : public cds::algo::flat_combining::traits {
     typedef cds::backoff::yield back_off;
+    //typedef cds::backoff::exponential<cds::backoff::pause, cds::backoff::yield> back_off;
   };
 
   friend class cds::algo::flat_combining::kernel<FCRecord, FCTraits>;
@@ -163,9 +167,6 @@ class FCServiceQueue {
   }
 
   void fc_process(typename fc_kernel::iterator it_begin, typename fc_kernel::iterator it_end) {
-    // TODO
-    //for (auto it = it_begin; it != it_end; ++it) {
-    //}
   }
 
   QueueStatus PutInternal(FCRecord* p_rec) {
@@ -178,11 +179,11 @@ class FCServiceQueue {
     if (queue_.empty()) {
       // If nothing is in the queue, possible there are blocked getters
       if (!blocked_getters_.empty()) {
+        put_skipped_queue_++;
         FCRecord* getter = blocked_getters_.back();
         blocked_getters_.pop_back();
         getter->val_ = p_rec->val_;
         getter->get_result_ = GOT_VALUE;
-
         getter->Wake();
         return QUEUE_SUCCESS;
       }
@@ -262,6 +263,7 @@ class FCServiceQueue {
 
   int get_blocked_count_ = 0;
   int get_immediate_count_ = 0;
+  int put_skipped_queue_ = 0;
 };
 
 inline bool FCServiceQueue::BlockingGet(std::unique_ptr<InboundCall> *out) {
@@ -283,11 +285,12 @@ inline bool FCServiceQueue::BlockingGet(std::unique_ptr<InboundCall> *out) {
   }
 }
 
-inline FCServiceQueue::QueueStatus FCServiceQueue::Put(
+inline QueueStatus FCServiceQueue::Put(
     InboundCall* call, boost::optional<InboundCall*>* evicted) {
   FCRecord* p_rec = fc_.acquire_record();
   p_rec->val_ = call;
   CombineAndRelease(OP_PUT, p_rec);
+
   if (p_rec->evicted_) {
     *evicted = p_rec->evicted_;
   }

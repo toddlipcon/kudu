@@ -203,6 +203,17 @@ class Tablet {
                         const OrderMode order,
                         gscoped_ptr<RowwiseIterator> *iter) const;
 
+  // Get row by key, copy projected columns to dst.
+  // Return OK if there is no error, regardless of whether row exists or not.
+  Status GetRow(const Slice& key, const Schema& projection, RowBlock* dst) const;
+
+  // Get row by key at a snapshot, copy projected columns to dst.
+  // Return OK if there is no error, regardless of whether row exists or not.
+  Status GetRow(const Slice& key,
+                const Schema& projection,
+                const MvccSnapshot& snap,
+                RowBlock* dst) const;
+
   // Flush the current MemRowSet for this tablet to disk. This swaps
   // in a new (initially empty) MemRowSet in its place.
   //
@@ -415,6 +426,13 @@ class Tablet {
                                     const MvccSnapshot &snap,
                                     const ScanSpec *spec,
                                     vector<std::shared_ptr<RowwiseIterator> > *iters) const;
+
+  // The returned iterators are not Init()ed.
+  // 'projection' must remain valid and unchanged for the lifetime of the returned iterator.
+  Status CaptureConsistentIteratorsForGet(const Slice & key,
+                                          const Schema *projection,
+                                          const MvccSnapshot &snap,
+                                          vector<std::shared_ptr<RowwiseIterator> > *iters) const;
 
   Status PickRowSetsToCompact(RowSetsInCompaction *picked,
                               CompactFlags flags) const;

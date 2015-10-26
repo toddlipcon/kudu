@@ -88,6 +88,10 @@ class KUDU_EXPORT KuduColumnStorageAttributes {
     return compression_;
   }
 
+  const int32_t block_size() const {
+    return block_size_;
+  }
+
   std::string ToString() const;
 
  private:
@@ -322,6 +326,7 @@ class KUDU_EXPORT KuduSchema {
 
  private:
   friend class KuduClient;
+  friend class KuduGetter;
   friend class KuduScanner;
   friend class KuduScanToken;
   friend class KuduScanTokenBuilder;

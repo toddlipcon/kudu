@@ -47,34 +47,18 @@ ScanConfiguration::ScanConfiguration(KuduTable* table)
 }
 
 Status ScanConfiguration::SetProjectedColumnNames(const vector<string>& col_names) {
-  const Schema& schema = *table().schema().schema_;
-  vector<int> col_indexes;
-  col_indexes.reserve(col_names.size());
-  for (const string& col_name : col_names) {
-    int idx = schema.find_column(col_name);
-    if (idx == Schema::kColumnNotFound) {
-      return Status::NotFound(strings::Substitute(
-            "Column: \"$0\" was not found in the table schema.", col_name));
-    }
-    col_indexes.push_back(idx);
-  }
-  return SetProjectedColumnIndexes(col_indexes);
+  const Schema* table_schema = table_->schema().schema_;
+  unique_ptr<Schema> s(new Schema());
+  RETURN_NOT_OK(table_schema->CreateProjectionByNames(col_names, s.get()));
+  projection_ = pool_.Add(s.release());
+  client_projection_ = KuduSchema(*projection_);
+  return Status::OK();
 }
 
 Status ScanConfiguration::SetProjectedColumnIndexes(const vector<int>& col_indexes) {
   const Schema* table_schema = table_->schema().schema_;
-  vector<ColumnSchema> cols;
-  cols.reserve(col_indexes.size());
-  for (const int col_index : col_indexes) {
-    if (col_index < 0 || col_index >= table_schema->columns().size()) {
-      return Status::NotFound(strings::Substitute(
-            "Column index: $0 was not found in the table schema.", col_index));
-    }
-    cols.push_back(table_schema->column(col_index));
-  }
-
   unique_ptr<Schema> s(new Schema());
-  RETURN_NOT_OK(s->Reset(cols, 0));
+  RETURN_NOT_OK(table_schema->CreateProjectionByIndexes(col_indexes, s.get()));
   projection_ = pool_.Add(s.release());
   client_projection_ = KuduSchema(*projection_);
   return Status::OK();

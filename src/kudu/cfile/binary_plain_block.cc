@@ -168,7 +168,10 @@ Status BinaryPlainBlockDecoder::ParseHeader() {
   const uint8_t *limit = data_.data() + data_.size();
 
   offsets_.clear();
-  offsets_.reserve(num_elems_);
+  // Not forget the one extra entry at last.
+  offsets_.resize(num_elems_ + 1);
+
+  uint32_t* dst_ptr = offsets_.data();
 
   size_t rem = num_elems_;
   while (rem >= 4) {
@@ -184,10 +187,8 @@ Status BinaryPlainBlockDecoder::ParseHeader() {
         StringPrintf("unable to decode offsets in block"));
     }
 
-    offsets_.push_back(ints[0]);
-    offsets_.push_back(ints[1]);
-    offsets_.push_back(ints[2]);
-    offsets_.push_back(ints[3]);
+    memcpy(dst_ptr, &ints[0], 4 * sizeof(ints[0]));
+    dst_ptr += 4;
     rem -= 4;
   }
 
@@ -201,12 +202,12 @@ Status BinaryPlainBlockDecoder::ParseHeader() {
     }
 
     for (int i = 0; i < rem; i++) {
-      offsets_.push_back(ints[i]);
+      *dst_ptr++ = ints[i];
     }
   }
 
-  // Add one extra entry pointing after the last item to make the indexing easier.
-  offsets_.push_back(offsets_pos);
+  // One extra entry pointing after the last item to make the indexing easier.
+  offsets_[num_elems_] = offsets_pos;
 
   parsed_ = true;
 

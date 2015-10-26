@@ -755,7 +755,7 @@ TEST_F(ClientTest, TestScanEmptyProjection) {
 TEST_F(ClientTest, TestProjectInvalidColumn) {
   KuduScanner scanner(client_table_.get());
   Status s = scanner.SetProjectedColumns({ "column-doesnt-exist" });
-  ASSERT_EQ("Not found: Column: \"column-doesnt-exist\" was not found in the table schema.",
+  ASSERT_EQ("Not found: column not found: column-doesnt-exist",
             s.ToString());
 
   // Test trying to use a projection where a column is used multiple times.
@@ -897,6 +897,75 @@ TEST_F(ClientTest, TestScanCloseProxy) {
     ASSERT_OK(scanner.Open());
     scanner.Close();
     CHECK_EQ(0, scanner.data_->proxy_.use_count()) << "Proxy was not reset!";
+  }
+}
+
+TEST_F(ClientTest, TestGet) {
+  int num_rows = FLAGS_test_scan_num_rows;
+  KuduTable * table = client_table2_.get();
+  ASSERT_NO_FATAL_FAILURE(InsertTestRows(
+      table, num_rows));
+
+  vector<string> projs;
+  projs.push_back("string_val");
+  KuduRowResult result;
+  KuduGetter getter(table);
+  CHECK_OK(getter.SetProjectedColumnNames(projs));
+  gscoped_ptr<KuduPartialRow> rowkey(table->schema().NewRow());
+
+  // Get inserted row should return OK.
+  for (int i = 0; i < num_rows; i++) {
+    CHECK_OK(rowkey->SetInt32(0, i));
+    Status ret = getter.Get(*rowkey, &result);
+    CHECK_OK(ret);
+    Slice s;
+    CHECK_OK(result.GetString(0, &s));
+    CHECK_EQ(s, StringPrintf("hello %d", i)) << "Get value not equal!";
+  }
+
+  ASSERT_NO_FATAL_FAILURE(DeleteTestRows(
+      table, 0, num_rows/2));
+
+  // Get deleted row should return NOT_FOUND.
+  for (int i = 0; i < num_rows/2; i++) {
+    CHECK_OK(rowkey->SetInt32(0, i));
+    Status ret = getter.Get(*rowkey, &result);
+    CHECK(ret.IsNotFound()) << "Get " << i << " should return not found error, but returns "
+                            << ret.ToString();
+  }
+
+  // Flush to DRS and make sure Get also work for DRS.
+  ASSERT_NO_FATAL_FAILURE(InsertTestRows(
+      table, num_rows/2));
+
+  string tablet_id = GetFirstTabletId(table);
+  for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
+    scoped_refptr<TabletPeer> tablet_peer;
+    ASSERT_TRUE(cluster_->mini_tablet_server(i)->server()->tablet_manager()->LookupTablet(
+            tablet_id, &tablet_peer));
+    ASSERT_OK(tablet_peer->tablet()->Flush());
+  }
+
+  for (int i = 0; i < num_rows; i++) {
+    CHECK_OK(rowkey->SetInt32(0, i));
+    Status ret = getter.Get(*rowkey, &result);
+    CHECK_OK(ret);
+    Slice s;
+    CHECK_OK(result.GetString(0, &s));
+    CHECK_EQ(s, StringPrintf("hello %d", i)) << "Get value not equal!";
+  }
+
+  // Get updated row should return updated value.
+  ASSERT_NO_FATAL_FAILURE(UpdateTestRows(
+      table, 0, num_rows));
+
+  for (int i = 0; i < num_rows; i++) {
+    CHECK_OK(rowkey->SetInt32(0, i));
+    Status ret = getter.Get(*rowkey, &result);
+    CHECK_OK(ret);
+    Slice s;
+    CHECK_OK(result.GetString(0, &s));
+    CHECK_EQ(s, StringPrintf("hello again %d", i)) << "Get value not equal!";
   }
 }
 

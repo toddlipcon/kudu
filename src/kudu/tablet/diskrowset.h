@@ -310,6 +310,12 @@ class DiskRowSet : public RowSet {
   ////////////////////
   // Read functions.
   ////////////////////
+  virtual Status GetRow(const EncodedKey* key,
+                        const Schema& projection,
+                        const MvccSnapshot& snap,
+                        RowBlock* dst,
+                        ProbeStats* stats) const OVERRIDE;
+
   virtual Status NewRowIterator(const Schema *projection,
                                 const MvccSnapshot &snap,
                                 gscoped_ptr<RowwiseIterator>* out) const OVERRIDE;

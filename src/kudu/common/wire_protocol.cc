@@ -286,10 +286,9 @@ Status ColumnPBsToSchema(const RepeatedPtrField<ColumnSchemaPB>& column_pbs,
 
   DCHECK_LE(num_key_columns, columns.size());
 
-  // TODO(perf): could make the following faster by adding a
-  // Reset() variant which actually takes ownership of the column
-  // vector.
-  return schema->Reset(columns, column_ids, num_key_columns);
+  return schema->Reset(std::move(columns),
+                       std::move(column_ids),
+                       num_key_columns);
 }
 
 Status SchemaToColumnPBs(const Schema& schema,
@@ -657,6 +656,7 @@ void SerializeRowBlock(const RowBlock& block, RowwiseRowBlockPB* rowblock_pb,
   if (projection_schema == nullptr) {
     projection_schema = &tablet_schema;
   }
+  bool same = (&tablet_schema == projection_schema);
 
   size_t old_size = data_buf->size();
   size_t row_stride = ContiguousRowHelper::row_size(*projection_schema);
@@ -667,9 +667,13 @@ void SerializeRowBlock(const RowBlock& block, RowwiseRowBlockPB* rowblock_pb,
   size_t proj_schema_idx = 0;
   for (int t_schema_idx = 0; t_schema_idx < tablet_schema.num_columns(); t_schema_idx++) {
     const ColumnSchema& col = tablet_schema.column(t_schema_idx);
-    proj_schema_idx = projection_schema->find_column(col.name());
-    if (proj_schema_idx == -1) {
-      continue;
+    if (same) {
+      proj_schema_idx = t_schema_idx;
+    } else {
+      proj_schema_idx = projection_schema->find_column(col.name());
+      if (proj_schema_idx == -1) {
+        continue;
+      }
     }
 
     // Generating different functions for each of these cases makes them much less

@@ -293,6 +293,49 @@ Status Tablet::NewRowIterator(const Schema &projection,
   return Status::OK();
 }
 
+Status Tablet::GetRow(const Slice& key, const Schema& projection, RowBlock* dst) const {
+  MvccSnapshot snap(mvcc_);
+  return GetRow(key, projection, snap, dst);
+}
+
+Status Tablet::GetRow(const Slice& key,
+                      const Schema& projection,
+                      const MvccSnapshot& snap,
+                      RowBlock* dst) const {
+  CHECK_EQ(state_, kOpen);
+  VLOG(2) << "GetRow (" << key.ToDebugString() << ") under snap: " << snap.ToString();
+
+  Schema read_projection;
+  RETURN_NOT_OK(GetMappedReadProjection(projection, &read_projection));
+
+  const Schema& schema = *this->schema();
+  gscoped_ptr<EncodedKey> encoded_key;
+  RETURN_NOT_OK_PREPEND(EncodedKey::DecodeEncodedString(schema, dst->arena(), key, &encoded_key),
+                        "Invalid get key");
+
+  scoped_refptr<const TabletComponents> components;
+  {
+    boost::lock_guard<rw_spinlock> lock(component_lock_);
+    components = components_;
+  }
+  vector<RowSet *> rowsets;
+  // First check DRS because it is more likely in DRS than in MRS.
+  components->rowsets->FindRowSetsWithKeyInRange(key, &rowsets);
+  rowsets.push_back(components->memrowset.get());
+
+  ProbeStats stats;
+  for (RowSet * rowset : rowsets) {
+    RETURN_NOT_OK(rowset->GetRow(encoded_key.get(), read_projection, snap, dst, &stats));
+    if (dst->selection_vector()->IsRowSelected(0)) {
+      break;
+    }
+  }
+  if (metrics_) {
+    metrics_->AddProbeStats(&stats, 1, dst->arena());
+  }
+  return Status::OK();
+}
+
 Status Tablet::DecodeWriteOperations(const Schema* client_schema,
                                      WriteTransactionState* tx_state) {
   TRACE_EVENT0("tablet", "Tablet::DecodeWriteOperations");
@@ -1523,6 +1566,35 @@ Status Tablet::CaptureConsistentIterators(
   }
 
   // Swap results into the parameters.
+  ret.swap(*iters);
+  return Status::OK();
+}
+
+Status Tablet::CaptureConsistentIteratorsForGet(
+    const Slice & key,
+    const Schema *projection,
+    const MvccSnapshot &snap,
+    vector<shared_ptr<RowwiseIterator> > *iters) const {
+  boost::shared_lock<rw_spinlock> lock(component_lock_);
+
+  // Construct all the iterators locally first, so that if we fail
+  // in the middle, we don't modify the output arguments.
+  vector<shared_ptr<RowwiseIterator> > ret;
+
+  // Grab the memrowset iterator.
+  gscoped_ptr<RowwiseIterator> ms_iter;
+  RETURN_NOT_OK(components_->memrowset->NewRowIterator(projection, snap, &ms_iter));
+  ret.push_back(shared_ptr<RowwiseIterator>(ms_iter.release()));
+
+  vector<RowSet *> interval_sets;
+  components_->rowsets->FindRowSetsWithKeyInRange(key, &interval_sets);
+  for (const RowSet *rs : interval_sets) {
+    gscoped_ptr<RowwiseIterator> row_it;
+    RETURN_NOT_OK_PREPEND(rs->NewRowIterator(projection, snap, &row_it),
+                          Substitute("Could not create iterator for rowset $0",
+                                     rs->ToString()));
+    ret.push_back(shared_ptr<RowwiseIterator>(row_it.release()));
+  }
   ret.swap(*iters);
   return Status::OK();
 }

@@ -45,6 +45,14 @@ class MockRowSet : public RowSet {
     LOG(FATAL) << "Unimplemented";
     return Status::OK();
   }
+  virtual Status GetRow(const EncodedKey* key,
+                        const Schema& projection,
+                        const MvccSnapshot& snap,
+                        RowBlock* dst,
+                        ProbeStats* stats) const OVERRIDE {
+    LOG(FATAL) << "Unimplemented";
+    return Status::OK();
+  }
   virtual Status NewRowIterator(const Schema *projection,
                                 const MvccSnapshot &snap,
                                 gscoped_ptr<RowwiseIterator>* out) const OVERRIDE {

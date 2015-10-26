@@ -34,6 +34,7 @@ set(CLIENT_SRCS
   client-internal.cc
   error_collector.cc
   error-internal.cc
+  getter-internal.cc
   meta_cache.cc
   scan_batch.cc
   scan_configuration.cc

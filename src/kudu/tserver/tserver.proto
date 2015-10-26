@@ -343,6 +343,32 @@ message ScannerKeepAliveResponsePB {
   optional TabletServerErrorPB error = 1;
 }
 
+message GetRequestPB {
+  // The tablet to get from.
+  required bytes tablet_id = 1;
+
+  // Encoded-key.
+  required bytes key = 2;
+
+  // Which columns to select.
+  // if this is an empty list, no data will be returned, but the OK response
+  // will indicate the row of 'key' exists.
+  repeated ColumnSchemaPB projected_columns = 3;
+
+  // Sent by clients which previously executed CLIENT_PROPAGATED writes.
+  // This updates the server's time so that no transaction will be assigned
+  // a timestamp lower than or equal to 'previous_known_timestamp'
+  optional fixed64 propagated_timestamp = 4;
+}
+
+message GetResponsePB {
+  optional TabletServerErrorPB error = 1;
+  // NOTE: the schema-related fields will not be present in this row block.
+  // The schema will match the schema requested by the client when it created
+  // the scanner.
+  optional RowwiseRowBlockPB data = 2;
+}
+
 enum TabletServerFeatures {
   UNKNOWN_FEATURE = 0;
   COLUMN_PREDICATES = 1;

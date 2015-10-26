@@ -14,21 +14,26 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#ifndef KUDU_CLIENT_ROW_RESULT_H
-#define KUDU_CLIENT_ROW_RESULT_H
+package org.kududb.client;
 
-#include "kudu/client/scan_batch.h"
+public class SingleRowResult extends KuduRpcResponse {
+  private RowResult row;
 
-namespace kudu {
-namespace client {
+  /**
+   * @param row can be null, which means not found
+   * @param ellapseMillis
+   * @param tsUUID
+   */
+  public SingleRowResult(RowResult row, long ellapseMillis, String tsUUID) {
+    super(ellapseMillis, tsUUID);
+    this.row = row;
+  }
 
-// DEPRECATED: Kudu 0.7.0 renamed KuduRowResult to KuduScanBatch::RowPtr.
-// The newer name is clearer that the row result's lifetime is tied to the
-// lifetime of a batch.
-typedef KuduScanBatch::RowPtr KuduRowResult;
+  public RowResult getRow() {
+    return row;
+  }
 
-
-} // namespace client
-} // namespace kudu
-
-#endif
+  public String toString() {
+    return "SingleRowResult(" + ((row != null) ? row.rowToString() : "null") + ")";
+  }
+}

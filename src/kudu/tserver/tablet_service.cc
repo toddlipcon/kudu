@@ -1083,6 +1083,77 @@ void TabletServiceImpl::Scan(const ScanRequestPB* req,
   context->RespondSuccess();
 }
 
+void TabletServiceImpl::Get(const GetRequestPB* req,
+                            GetResponsePB* resp,
+                            rpc::RpcContext* context) {
+  // Rpc respnose:
+  //  Row exists: success without any data.
+  //  Row does not exist: success with row data.
+  //  Other error: error response.
+  scoped_refptr<TabletPeer> tablet_peer;
+  if (!LookupTabletPeerOrRespond(server_->tablet_manager(), req->tablet_id(), resp, context,
+                                 &tablet_peer)) {
+    return;
+  }
+
+  // Create the user's requested projection.
+  Schema projection;
+  Status s = ColumnPBsToSchema(req->projected_columns(), &projection);
+  if (PREDICT_FALSE(!s.ok())) {
+    SetupErrorAndRespond(resp->mutable_error(), s, TabletServerErrorPB::INVALID_SCHEMA, context);
+    return;
+  }
+
+  if (projection.has_column_ids()) {
+    SetupErrorAndRespond(resp->mutable_error(),
+                         Status::InvalidArgument("User requests should not have Column IDs"),
+                         TabletServerErrorPB::INVALID_SCHEMA,
+                         context);
+    return;
+  }
+
+  size_t row_stride = ContiguousRowHelper::row_size(projection);
+  // Pre-alloc space for one row and 1024 bytes for other stuff (EncodedKey, ProbeStats, etc.).
+  Arena arena(row_stride + 1024, 10 * 1024 * 1024);
+  RowBlock block(projection, 1, &arena);
+  // RowBlock's constructor does not fully initialize selection vector,
+  // so SetAllFalse needs to be called.
+  block.selection_vector()->SetAllFalse();
+
+  s = tablet_peer->tablet()->GetRow(req->key(), projection, &block);
+  if (PREDICT_FALSE(!s.ok())) {
+    SetupErrorAndRespond(resp->mutable_error(),
+                         s,
+                         TabletServerErrorPB::Code::TabletServerErrorPB_Code_UNKNOWN_ERROR,
+                         context);
+    return;
+  }
+  if (block.selection_vector()->IsRowSelected(0)) {
+    gscoped_ptr<faststring> rows_data(new faststring(row_stride));
+    gscoped_ptr<faststring> indirect_data(new faststring());
+    RowwiseRowBlockPB* rowblock_pb = resp->mutable_data();
+
+    // TODO: Optimize this, too expensive for single row.
+    SerializeRowBlock(block, rowblock_pb, &projection,
+                      rows_data.get(), indirect_data.get());
+
+    // Add sidecar data to context and record the returned indices.
+    int rows_idx;
+    CHECK_OK(context->AddRpcSidecar(make_gscoped_ptr(
+        new rpc::RpcSidecar(rows_data.Pass())), &rows_idx));
+    rowblock_pb->set_rows_sidecar(rows_idx);
+
+    // Add indirect data as a sidecar, if applicable.
+    if (indirect_data->size() > 0) {
+      int indirect_idx;
+      CHECK_OK(context->AddRpcSidecar(make_gscoped_ptr(
+          new rpc::RpcSidecar(indirect_data.Pass())), &indirect_idx));
+      rowblock_pb->set_indirect_data_sidecar(indirect_idx);
+    }
+  }
+  context->RespondSuccess();
+}
+
 void TabletServiceImpl::ListTablets(const ListTabletsRequestPB* req,
                                     ListTabletsResponsePB* resp,
                                     rpc::RpcContext* context) {

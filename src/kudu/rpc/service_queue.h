@@ -17,17 +17,27 @@
 #ifndef KUDU_UTIL_SERVICE_QUEUE_H
 #define KUDU_UTIL_SERVICE_QUEUE_H
 
+#include <atomic>
 #include <boost/optional.hpp>
 #include <memory>
 #include <string>
 #include <set>
+#include <vector>
 
 #include "kudu/rpc/inbound_call.h"
-#include "kudu/util/condition_variable.h"
+#include "kudu/gutil/spinlock_internal.h"
+#include "kudu/util/locks.h"
 #include "kudu/util/mutex.h"
 
 namespace kudu {
 namespace rpc {
+
+// Return values for ServiceQueue::Put()
+enum QueueStatus {
+  QUEUE_SUCCESS = 0,
+  QUEUE_SHUTDOWN = 1,
+  QUEUE_FULL = 2
+};
 
 // Blocking queue used for passing inbound RPC calls to the service handler pool.
 // Calls are dequeued in 'earliest-deadline first' order. The queue also maintains a
@@ -40,13 +50,6 @@ namespace rpc {
 // provide accurate deadlines for their calls.
 class ServiceQueue {
  public:
-  // Return values for ServiceQueue::Put()
-  enum QueueStatus {
-    QUEUE_SUCCESS = 0,
-    QUEUE_SHUTDOWN = 1,
-    QUEUE_FULL = 2
-  };
-
   explicit ServiceQueue(int max_size)
       : shutdown_(false),
         max_queue_size_(max_size),
@@ -170,6 +173,173 @@ class ServiceQueue {
   mutable Mutex lock_;
   ConditionVariable not_empty_;
   std::multiset<InboundCall*, DeadlineLessStruct> queue_;
+};
+
+// Blocking queue like ServiceQueue, but optimized for high concurrency
+// scenario.
+//
+// Each consumer thread will have it's own lock/condition_variable,
+// consumer thread will not wait on queue lock, so queue lock can use
+// spinlock, which has better performance.
+// Also consumer thread will wait/wake-up in lifo, reducing lot of
+// context switches.
+class LifoServiceQueue {
+ public:
+  explicit LifoServiceQueue(int max_size);
+
+  ~LifoServiceQueue();
+
+  // Get an element from the queue.  Returns false if we were shut down prior to
+  // getting the element.
+  bool BlockingGet(std::unique_ptr<InboundCall> *out);
+
+  // Add a new call to the queue.
+  // Returns:
+  // - QUEUE_SHUTDOWN if Shutdown() has already been called.
+  // - QUEUE_FULL if the queue is full and 'call' has a later deadline than any
+  //   RPC already in the queue.
+  // - QUEUE_SUCCESS if 'call' was enqueued.
+  //
+  // In the case of a 'QUEUE_SUCCESS' response, the new element may have bumped
+  // another call out of the queue. In that case, *evicted will be set to the
+  // call that was bumped.
+  QueueStatus Put(InboundCall* call, boost::optional<InboundCall*>* evicted);
+
+  // Shut down the queue.
+  // When a blocking queue is shut down, no more elements can be added to it,
+  // and Put() will return QUEUE_SHUTDOWN.
+  // Existing elements will drain out of it, and then BlockingGet will start
+  // returning false.
+  void Shutdown();
+
+  bool empty() const;
+
+  int max_size() const;
+
+  std::string ToString() const;
+
+  int estimated_queue_length() const {
+    return queue_.size();
+  }
+
+  int estimated_wait_queue_length() const {
+    return waiting_consumers_.size();
+  }
+
+ private:
+  // Comparison function which orders calls by their deadlines.
+  static bool DeadlineLess(const InboundCall* a,
+                          const InboundCall* b) {
+   auto time_a = a->GetClientDeadline();
+   auto time_b = b->GetClientDeadline();
+   if (time_a.Equals(time_b)) {
+     // If two calls have the same deadline (most likely because neither one specified
+     // one) then we should order them by arrival order.
+     time_a = a->GetTimeReceived();
+     time_b = b->GetTimeReceived();
+   }
+   return time_a.ComesBefore(time_b);
+  }
+
+  // Struct functor wrapper for DeadlineLess.
+  struct DeadlineLessStruct {
+   bool operator()(const InboundCall* a, const InboundCall* b) const {
+     return DeadlineLess(a, b);
+   }
+  };
+
+  bool shutdown_;
+  int max_queue_size_;
+  mutable simple_spinlock lock_;
+  std::multiset<InboundCall*, DeadlineLessStruct> queue_;
+
+#if 0
+  class ConsumerState {
+   public:
+    ConsumerState() :cond_(&lock_), call_(nullptr), value_(0) {
+    }
+
+    ~ConsumerState() {}
+    void Reset() {}
+
+    void Post(InboundCall* call) {
+      DCHECK(call_ == nullptr);
+      MutexLock l(lock_);
+      call_ = call;
+      value_ = 1;
+      cond_.Signal();
+    }
+
+    InboundCall* Wait() {
+      MutexLock l(lock_);
+      while (value_ == 0) {
+        cond_.Wait();
+      }
+      value_ = 0;
+      InboundCall* ret = call_;
+      call_ = nullptr;
+      return ret;
+    }
+
+   private:
+    Mutex lock_;
+    ConditionVariable cond_;
+    InboundCall* call_;
+    int value_;
+  };
+#else
+  class ConsumerState {
+   public:
+    void Reset() {
+      state_ = NOT_BLOCKED;
+      call_ = nullptr;
+    }
+
+    void Post(InboundCall* call) {
+      call_ = call;
+      if (base::subtle::Release_AtomicExchange(&state_, HAS_CALL) == SLEEPING) {
+        base::internal::SpinLockWake(&state_, false);
+      }
+    }
+
+    InboundCall* Wait() {
+      int c = 1000;
+      while (base::subtle::NoBarrier_Load(&state_) != HAS_CALL && --c > 0) {
+        base::subtle::PauseCPU();
+      }
+
+      Atomic32 old = base::subtle::Acquire_CompareAndSwap(&state_, NOT_BLOCKED, SLEEPING);
+      if (old == HAS_CALL) {
+        return call_;
+      }
+      DCHECK_EQ(old, NOT_BLOCKED);
+      int loop = 0;
+      while (base::subtle::Acquire_Load(&state_) != HAS_CALL) {
+        base::internal::SpinLockDelay(&state_, SLEEPING, loop++);
+      }
+      return call_;
+    }
+
+   private:
+    InboundCall* call_ = nullptr;
+    enum State {
+      NOT_BLOCKED,
+      SLEEPING,
+      HAS_CALL
+    };
+    Atomic32 state_ = NOT_BLOCKED;
+  };
+#endif
+
+  int num_consumer_;
+  int max_consumer_;
+  static __thread int consumer_idx_;
+  // This is a 1-based array, because consumer_idx starts from 1.
+  std::vector<std::unique_ptr<ConsumerState> > consumers_;
+
+  std::vector<int> waiting_consumers_;
+
+  DISALLOW_COPY_AND_ASSIGN(LifoServiceQueue);
 };
 
 } // namespace rpc

@@ -79,6 +79,18 @@ class RowSet {
                            ProbeStats* stats,
                            OperationResultPB* result) = 0;
 
+  // Get a row in this rowset, and project column contents to dst.
+  //
+  // RowBlock dst must have nrow == 1, and selection bit set to false.
+  // If the row does not exist in this rowset, selection bit remains false.
+  // If the row exists, selection bit will be set to true.
+  // Returns OK whether row exists or not, return error if any other error.
+  virtual Status GetRow(const EncodedKey* key,
+                        const Schema& projection,
+                        const MvccSnapshot& snap,
+                        RowBlock* dst,
+                        ProbeStats* stats) const = 0;
+
   // Return a new RowIterator for this rowset, with the given projection.
   // The projection schema must remain valid for the lifetime of the iterator.
   // The iterator will return rows/updates which were committed as of the time of
@@ -260,6 +272,12 @@ class DuplicatingRowSet : public RowSet {
 
   Status CheckRowPresent(const RowSetKeyProbe &probe, bool *present,
                          ProbeStats* stats) const OVERRIDE;
+
+  virtual Status GetRow(const EncodedKey* key,
+                        const Schema& projection,
+                        const MvccSnapshot& snap,
+                        RowBlock* dst,
+                        ProbeStats* stats) const OVERRIDE;
 
   virtual Status NewRowIterator(const Schema *projection,
                                 const MvccSnapshot &snap,

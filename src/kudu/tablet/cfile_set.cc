@@ -194,7 +194,9 @@ uint64_t CFileSet::EstimateOnDiskSize() const {
   return ret;
 }
 
-Status CFileSet::FindRow(const RowSetKeyProbe &probe, rowid_t *idx,
+Status CFileSet::FindRow(const BloomKeyProbe& probe,
+                         const EncodedKey& encoded_key,
+                         rowid_t *idx,
                          ProbeStats* stats) const {
   if (bloom_reader_ != nullptr && FLAGS_consult_bloom_filters) {
     // Fully open the BloomFileReader if it was lazily opened earlier.
@@ -204,7 +206,7 @@ Status CFileSet::FindRow(const RowSetKeyProbe &probe, rowid_t *idx,
 
     stats->blooms_consulted++;
     bool present;
-    Status s = bloom_reader_->CheckKeyPresent(probe.bloom_probe(), &present);
+    Status s = bloom_reader_->CheckKeyPresent(probe, &present);
     if (s.ok() && !present) {
       return Status::NotFound("not present in bloom filter");
     } else if (!s.ok()) {
@@ -222,7 +224,7 @@ Status CFileSet::FindRow(const RowSetKeyProbe &probe, rowid_t *idx,
   gscoped_ptr<CFileIterator> key_iter_scoped(key_iter); // free on return
 
   bool exact;
-  RETURN_NOT_OK(key_iter->SeekAtOrAfter(probe.encoded_key(), &exact));
+  RETURN_NOT_OK(key_iter->SeekAtOrAfter(encoded_key, &exact));
   if (!exact) {
     return Status::NotFound("not present in storefile (failed seek)");
   }
@@ -234,7 +236,7 @@ Status CFileSet::FindRow(const RowSetKeyProbe &probe, rowid_t *idx,
 Status CFileSet::CheckRowPresent(const RowSetKeyProbe &probe, bool *present,
                                  rowid_t *rowid, ProbeStats* stats) const {
 
-  Status s = FindRow(probe, rowid, stats);
+  Status s = FindRow(probe.bloom_probe(), probe.encoded_key(), rowid, stats);
   if (s.IsNotFound()) {
     // In the case that the key comes past the end of the file, Seek
     // will return NotFound. In that case, it is OK from this function's
@@ -318,6 +320,21 @@ Status CFileSet::Iterator::Init(ScanSpec *spec) {
   // data.
   cur_idx_ = lower_bound_idx_;
   Unprepare(); // Reset state.
+  return Status::OK();
+}
+
+Status CFileSet::Iterator::InitForGet(rowid_t row_idx) {
+  CHECK(!initted_);
+
+  // Setup column iterators.
+  RETURN_NOT_OK(CreateColumnIterators(nullptr));
+
+  lower_bound_idx_ = row_idx;
+  upper_bound_idx_ = row_idx + 1;
+  cur_idx_ = row_idx;
+
+  initted_ = true;
+  Unprepare();
   return Status::OK();
 }
 

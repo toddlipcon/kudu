@@ -304,7 +304,7 @@ Status MemRowSet::GetBounds(string *min_encoded_key,
 }
 
 // Virtual interface allows two possible row projector implementations
-class MemRowSet::Iterator::MRSRowProjector {
+class MemRowSet::MRSRowProjector {
  public:
   typedef RowProjector::ProjectionIdxMapping ProjectionIdxMapping;
   virtual ~MRSRowProjector() {}
@@ -321,7 +321,7 @@ class MemRowSet::Iterator::MRSRowProjector {
 
 namespace {
 
-typedef MemRowSet::Iterator::MRSRowProjector MRSRowProjector;
+typedef MemRowSet::MRSRowProjector MRSRowProjector;
 
 template<class ActualProjector>
 class MRSRowProjectorImpl : public MRSRowProjector {
@@ -373,6 +373,104 @@ gscoped_ptr<MRSRowProjector> GenerateAppropriateProjector(
 }
 
 } // anonymous namespace
+
+Status MemRowSet::GetRow(const EncodedKey* key,
+                         const Schema& projection,
+                         const MvccSnapshot& snap,
+                         RowBlock* dst,
+                         ProbeStats* stats) const {
+  // TODO: get entry from tree directly, skip constructing iterator.
+  std::unique_ptr<MemRowSet::MSBTIter> iter(tree_.NewIterator());
+  bool exact = false;
+  iter->SeekAtOrAfter(key->encoded_key(), &exact);
+  if (exact) {
+    Slice k;
+    Slice v;
+    iter->GetCurrentEntry(&k, &v);
+    auto projector = GenerateAppropriateProjector(&schema_nonvirtual(), &projection);
+    RETURN_NOT_OK(projector->Init());
+    dst->selection_vector()->SetRowSelected(0);
+    RowBlockRow dst_row = dst->row(0);
+    MSBTEntryToProjectedRow(v, snap, projector.get(), dst_row, dst->arena());
+  }
+  stats->mrs_consulted++;
+  return Status::OK();
+}
+
+Status MemRowSet::MSBTEntryToProjectedRow(const Slice& v,
+                                          const MvccSnapshot& snap,
+                                          MRSRowProjector* projector,
+                                          RowBlockRow& dst_row,
+                                          Arena* dst_arena) const {
+  MRSRow row(this, v);
+
+  if (snap.IsCommitted(row.insertion_timestamp())) {
+    RETURN_NOT_OK(projector->ProjectRowForRead(row, &dst_row, dst_arena));
+
+    // Roll-forward MVCC for committed updates.
+    const Mutation * mutation_head = row.header_->redo_head;
+    // Fast short-circuit the likely case of a row which was inserted and never
+    // updated.
+    if (PREDICT_TRUE(mutation_head == nullptr)) {
+      return Status::OK();
+    }
+
+    bool is_deleted = false;
+
+    for (const Mutation *mut = mutation_head;
+         mut != nullptr;
+         mut = mut->next_) {
+      if (!snap.IsCommitted(mut->timestamp_)) {
+        // Transaction which wasn't committed yet in the reader's snapshot.
+        continue;
+      }
+
+      // Apply the mutation.
+
+      // Check if it's a deletion.
+      RowChangeListDecoder decoder(mut->changelist());
+      RETURN_NOT_OK(decoder.Init());
+      if (decoder.is_delete()) {
+        decoder.TwiddleDeleteStatus(&is_deleted);
+      } else if (decoder.is_reinsert()) {
+        decoder.TwiddleDeleteStatus(&is_deleted);
+
+        Slice reinserted_slice;
+        RETURN_NOT_OK(decoder.GetReinsertedRowSlice(schema_nonvirtual(),
+                                                    &reinserted_slice));
+        ConstContiguousRow reinserted(&schema_nonvirtual(),
+                                      reinserted_slice);
+        RETURN_NOT_OK(projector->ProjectRowForRead(reinserted, &dst_row, dst_arena));
+      } else {
+        DCHECK(decoder.is_update());
+
+        // TODO: this is slow, since it makes multiple passes through the rowchangelist.
+        // Instead, we should keep the backwards mapping of columns.
+        for (const RowProjector::ProjectionIdxMapping& mapping : projector->base_cols_mapping()) {
+          RowChangeListDecoder decoder(mut->changelist());
+          RETURN_NOT_OK(decoder.Init());
+          ColumnBlock dst_col = dst_row.column_block(mapping.first);
+          RETURN_NOT_OK(decoder.ApplyToOneColumn(dst_row.row_index(), &dst_col,
+                                                 schema_nonvirtual(),
+                                                 mapping.second, dst_arena));
+        }
+
+        // TODO: Handle Delta Apply on projector_.adapter_cols_mapping()
+        DCHECK_EQ(projector->adapter_cols_mapping().size(), 0) << "alter type is not supported";
+      }
+    }
+
+    // If the most recent mutation seen for the row was a DELETE, then set the selection
+    // vector bit to 0, so it doesn't show up in the results.
+    if (is_deleted) {
+      dst_row.SetRowUnselected();
+    }
+  } else {
+    // This row was not yet committed in the current MVCC snapshot
+    dst_row.SetRowUnselected();
+  }
+  return Status::OK();
+}
 
 MemRowSet::Iterator::Iterator(const std::shared_ptr<const MemRowSet>& mrs,
                               MemRowSet::MSBTIter* iter,
@@ -482,102 +580,26 @@ Status MemRowSet::Iterator::FetchRows(RowBlock* dst, size_t* fetched) {
     Slice k, v;
     RowBlockRow dst_row = dst->row(*fetched);
 
-    // Copy the row into the destination, including projection
-    // and relocating slices.
-    // TODO: can we share some code here with CopyRowToArena() from row.h
-    // or otherwise put this elsewhere?
+    // Copy the row into the destination, including projection,
+    // mutation and relocating slices.
     iter_->GetCurrentEntry(&k, &v);
-    MRSRow row(memrowset_.get(), v);
-
-    if (mvcc_snap_.IsCommitted(row.insertion_timestamp())) {
-      if (has_upper_bound() && out_of_bounds(k)) {
-        state_ = kFinished;
-        break;
-      } else {
-        RETURN_NOT_OK(projector_->ProjectRowForRead(row, &dst_row, dst->arena()));
-
-        // Roll-forward MVCC for committed updates.
-        RETURN_NOT_OK(ApplyMutationsToProjectedRow(
-            row.header_->redo_head, &dst_row, dst->arena()));
-      }
-    } else {
-      // This row was not yet committed in the current MVCC snapshot
-      dst->selection_vector()->SetRowUnselected(*fetched);
-
-      // In debug mode, fill the row data for easy debugging
-      #ifndef NDEBUG
-      if (state_ != kFinished) {
-        dst_row.OverwriteWithPattern("MVCCMVCCMVCCMVCCMVCCMVCC"
-                                     "MVCCMVCCMVCCMVCCMVCCMVCC"
-                                     "MVCCMVCCMVCCMVCCMVCCMVCC");
-      }
-      #endif
+    if (has_upper_bound() && out_of_bounds(k)) {
+      state_ = kFinished;
+      break;
     }
+    RETURN_NOT_OK(memrowset_->MSBTEntryToProjectedRow(
+        v, mvcc_snap_, projector_.get(), dst_row, dst->arena()));
+    // In debug mode, fill the row data for easy debugging
+    #ifndef NDEBUG
+    if (state_ != kFinished && !dst->selection_vector()->IsRowSelected(*fetched)) {
+      dst_row.OverwriteWithPattern("MVCCMVCCMVCCMVCCMVCCMVCC"
+                                   "MVCCMVCCMVCCMVCCMVCCMVCC"
+                                   "MVCCMVCCMVCCMVCCMVCCMVCC");
+    }
+    #endif
 
     ++*fetched;
   } while (iter_->Next() && *fetched < dst->nrows());
-
-  return Status::OK();
-}
-
-Status MemRowSet::Iterator::ApplyMutationsToProjectedRow(
-  const Mutation *mutation_head, RowBlockRow *dst_row, Arena *dst_arena) {
-  // Fast short-circuit the likely case of a row which was inserted and never
-  // updated.
-  if (PREDICT_TRUE(mutation_head == nullptr)) {
-    return Status::OK();
-  }
-
-  bool is_deleted = false;
-
-  for (const Mutation *mut = mutation_head;
-       mut != nullptr;
-       mut = mut->next_) {
-    if (!mvcc_snap_.IsCommitted(mut->timestamp_)) {
-      // Transaction which wasn't committed yet in the reader's snapshot.
-      continue;
-    }
-
-    // Apply the mutation.
-
-    // Check if it's a deletion.
-    RowChangeListDecoder decoder(mut->changelist());
-    RETURN_NOT_OK(decoder.Init());
-    if (decoder.is_delete()) {
-      decoder.TwiddleDeleteStatus(&is_deleted);
-    } else if (decoder.is_reinsert()) {
-      decoder.TwiddleDeleteStatus(&is_deleted);
-
-      Slice reinserted_slice;
-      RETURN_NOT_OK(decoder.GetReinsertedRowSlice(memrowset_->schema_nonvirtual(),
-                                                  &reinserted_slice));
-      ConstContiguousRow reinserted(&memrowset_->schema_nonvirtual(),
-                                    reinserted_slice);
-      RETURN_NOT_OK(projector_->ProjectRowForRead(reinserted, dst_row, dst_arena));
-    } else {
-      DCHECK(decoder.is_update());
-
-      // TODO: this is slow, since it makes multiple passes through the rowchangelist.
-      // Instead, we should keep the backwards mapping of columns.
-      for (const RowProjector::ProjectionIdxMapping& mapping : projector_->base_cols_mapping()) {
-        RowChangeListDecoder decoder(mut->changelist());
-        RETURN_NOT_OK(decoder.Init());
-        ColumnBlock dst_col = dst_row->column_block(mapping.first);
-        RETURN_NOT_OK(decoder.ApplyToOneColumn(dst_row->row_index(), &dst_col,
-                                               memrowset_->schema_nonvirtual(),
-                                               mapping.second, dst_arena));
-      }
-
-      // TODO: Handle Delta Apply on projector_.adapter_cols_mapping()
-      DCHECK_EQ(projector_->adapter_cols_mapping().size(), 0) << "alter type is not supported";
-    }
-  }
-
-  // If the most recent mutation seen for the row was a DELETE, then set the selection
-  // vector bit to 0, so it doesn't show up in the results.
-  if (is_deleted) {
-    dst_row->SetRowUnselected();
-  }
 
   return Status::OK();
 }

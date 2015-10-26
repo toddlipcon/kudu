@@ -602,7 +602,7 @@ Status DiskRowSet::MutateRow(Timestamp timestamp,
   boost::shared_lock<rw_spinlock> lock(component_lock_.get_lock());
 
   rowid_t row_idx;
-  RETURN_NOT_OK(base_data_->FindRow(probe, &row_idx, stats));
+  RETURN_NOT_OK(base_data_->FindRow(probe.bloom_probe(), probe.encoded_key(), &row_idx, stats));
 
   // It's possible that the row key exists in this DiskRowSet, but it has
   // in fact been Deleted already. Check with the delta tracker to be sure.
@@ -614,6 +614,49 @@ Status DiskRowSet::MutateRow(Timestamp timestamp,
 
   RETURN_NOT_OK(delta_tracker_->Update(timestamp, row_idx, update, op_id, result));
 
+  return Status::OK();
+}
+
+Status DiskRowSet::GetRow(const EncodedKey* key,
+                          const Schema& projection,
+                          const MvccSnapshot& snap,
+                          RowBlock* dst,
+                          ProbeStats* stats) const {
+  DCHECK(open_);
+  boost::shared_lock<rw_spinlock> lock(component_lock_.get_lock());
+
+  rowid_t row_idx;
+  BloomKeyProbe probe(key->encoded_key());
+  Status ret = base_data_->FindRow(probe, *key, &row_idx, stats);
+  if (ret.IsNotFound()) {
+    return Status::OK();
+  }
+
+  shared_ptr<CFileSet::Iterator> base(base_data_->NewIterator(&projection));
+  shared_ptr<DeltaIterator> delta;
+  RETURN_NOT_OK(delta_tracker_->NewDeltaIterator(&base->schema(), snap, &delta));
+
+  RETURN_NOT_OK(base->InitForGet(row_idx));
+  ScanSpec spec;
+  spec.set_cache_blocks(true);
+  RETURN_NOT_OK(delta->Init(&spec));
+  RETURN_NOT_OK(delta->SeekToOrdinal(row_idx));
+  size_t n = 1;
+  RETURN_NOT_OK(base->PrepareBatch(&n));
+  RETURN_NOT_OK(delta->PrepareBatch(n, DeltaIterator::PREPARE_FOR_APPLY));
+
+  dst->selection_vector()->SetRowSelected(0);
+  // TODO: Add stats.deltas_consulted?
+  RETURN_NOT_OK(delta->ApplyDeletes(dst->selection_vector()));
+  if (dst->selection_vector()->IsRowSelected(0)) {
+    for (int32_t col_idx = 0; col_idx < projection.num_columns(); col_idx++) {
+      ColumnBlock blk = dst->column_block(col_idx);
+      RETURN_NOT_OK(base->MaterializeColumn(col_idx, &blk));
+      RETURN_NOT_OK(delta->ApplyUpdates(col_idx, &blk));
+    }
+  }
+
+  // There is only one row, no need to call FinishBatch();
   return Status::OK();
 }
 

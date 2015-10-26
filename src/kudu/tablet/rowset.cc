@@ -69,6 +69,20 @@ string DuplicatingRowSet::ToString() const {
   return ret;
 }
 
+Status DuplicatingRowSet::GetRow(const EncodedKey* key,
+                                 const Schema& projection,
+                                 const MvccSnapshot& snap,
+                                 RowBlock* dst,
+                                 ProbeStats* stats) const {
+  for (const shared_ptr<RowSet> &rowset : old_rowsets_) {
+    RETURN_NOT_OK(rowset->GetRow(key, projection, snap, dst, stats));
+    if (dst->selection_vector()->IsRowSelected(0)) {
+      break;
+    }
+  }
+  return Status::OK();
+}
+
 Status DuplicatingRowSet::NewRowIterator(const Schema *projection,
                                          const MvccSnapshot &snap,
                                          gscoped_ptr<RowwiseIterator>* out) const {

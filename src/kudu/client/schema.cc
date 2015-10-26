@@ -399,6 +399,7 @@ KuduColumnSchema::KuduColumnSchema(const std::string &name,
   ColumnStorageAttributes attr_private;
   attr_private.encoding = ToInternalEncodingType(attributes.encoding());
   attr_private.compression = ToInternalCompressionType(attributes.compression());
+  attr_private.cfile_block_size = attributes.block_size();
   col_ = new ColumnSchema(name, ToInternalDataType(type), is_nullable,
                           default_value, default_value, attr_private);
 }

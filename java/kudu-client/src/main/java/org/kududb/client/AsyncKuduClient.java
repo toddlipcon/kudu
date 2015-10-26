@@ -526,6 +526,17 @@ public class AsyncKuduClient implements AutoCloseable {
   }
 
   /**
+   * Creates a new {@link AsyncKuduGetter.AsyncKuduGetterBuilder} for a particular table.
+   * @param table the name of the table you intend to get row from.
+   * The string is assumed to use the platform's default charset.
+   * @return a new getter builder for this table
+   */
+  public AsyncKuduGetter.AsyncKuduGetterBuilder newGetterBuilder(KuduTable table) {
+    checkIsClosed();
+    return new AsyncKuduGetter.AsyncKuduGetterBuilder(this, table);
+  }
+
+  /**
    * Package-private access point for {@link AsyncKuduScanner}s to open themselves.
    * @param scanner The scanner to open.
    * @return A deferred {@link AsyncKuduScanner.Response}

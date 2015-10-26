@@ -280,6 +280,7 @@ class KUDU_EXPORT KuduClient : public sp::enable_shared_from_this<KuduClient> {
   friend class internal::RemoteTabletServer;
   friend class internal::WriteRpc;
   friend class KuduClientBuilder;
+  friend class KuduGetter;
   friend class KuduScanner;
   friend class KuduScanTokenBuilder;
   friend class KuduTable;
@@ -1221,6 +1222,52 @@ class KUDU_EXPORT KuduScanTokenBuilder {
   Data* data_;
 
   DISALLOW_COPY_AND_ASSIGN(KuduScanTokenBuilder);
+};
+
+// A single getter. This class is not thread-safe. But it can be reused multiple times.
+// different getters on different threads may share a single KuduTable object.
+class KUDU_EXPORT KuduGetter {
+ public:
+  // Default getter timeout.
+  // This is set to 3x the default RPC timeout (see KuduClientBuilder::default_rpc_timeout()).
+  enum { kGetTimeoutMillis = 15000 };
+
+  // Initialize the getter. The given 'table' object must remain valid
+  // for the lifetime of this scanner object.
+  // TODO: should table be a const pointer?
+  explicit KuduGetter(KuduTable* table);
+  ~KuduGetter();
+
+  // Set the projection used for this getter by passing the column names to read.
+  //
+  // This overrides any previous call to SetProjectedColumns/SetProjectedColumnIndexes.
+  Status SetProjectedColumnNames(const std::vector<std::string>& col_names) WARN_UNUSED_RESULT;
+
+  // Set the projection used for this getter by passing the column indexes to read.
+  //
+  // This overrides any previous call to SetProjectedColumns/SetProjectedColumnIndexes.
+  Status SetProjectedColumnIndexes(const std::vector<int>& col_indexes) WARN_UNUSED_RESULT;
+
+  // Sets the replica selection policy.
+  //
+  // TODO: kill this in favor of a consistency-level-based API
+  Status SetSelection(KuduClient::ReplicaSelection selection) WARN_UNUSED_RESULT;
+
+  // Get the row, the content of 'row' remains valid before next 'Get' call or
+  // this getter is destroyed.
+  // The getter does not take ownership of 'key'; the caller may free it afterward.
+  Status Get(const KuduPartialRow& key, KuduRowResult * row);
+
+  // Sets the maximum time that Get() are allowed to take.
+  Status SetTimeoutMillis(int millis);
+
+ private:
+  class KUDU_NO_EXPORT Data;
+
+  // Owned.
+  Data* data_;
+
+  DISALLOW_COPY_AND_ASSIGN(KuduGetter);
 };
 
 // In-memory representation of a remote tablet server.

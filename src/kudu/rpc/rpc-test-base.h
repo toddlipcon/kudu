@@ -421,7 +421,10 @@ class RpcTestBase : public KuduTest {
     gscoped_ptr<ServiceIf> service(new ServiceClass(metric_entity_));
     service_name_ = service->service_name();
     scoped_refptr<MetricEntity> metric_entity = server_messenger_->metric_entity();
-    service_pool_ = new ServicePool(std::move(service), metric_entity, service_queue_length_);
+    service_pool_ = new ServicePool(std::move(service),
+                                    metric_entity,
+                                    service_queue_length_,
+                                    n_worker_threads_);
     server_messenger_->RegisterService(service_name_, service_pool_);
     ASSERT_OK(service_pool_->Init(n_worker_threads_));
   }

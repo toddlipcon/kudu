@@ -469,9 +469,9 @@ Status KuduScanBatch::Data::Reset(RpcController* controller,
       return Status::Corruption("Server sent invalid response: indirect data "
                                 "sidecar index corrupt", s.ToString());
     }
+    RETURN_NOT_OK(RewriteRowBlockPointers(*projection_, resp_data_, indirect_data_, &direct_data_));
   }
 
-  RETURN_NOT_OK(RewriteRowBlockPointers(*projection_, resp_data_, indirect_data_, &direct_data_));
   projected_row_size_ = CalculateProjectedRowSize(*projection_);
   return Status::OK();
 }

@@ -73,7 +73,14 @@ InboundTransfer::InboundTransfer()
   buf_.resize(kMsgLengthPrefixLength);
 }
 
-Status InboundTransfer::ReceiveBuffer(Socket &socket) {
+InboundTransfer::InboundTransfer(int32_t body_length)
+  : total_length_(body_length + kMsgLengthPrefixLength),
+    cur_offset_(4) {
+  buf_.resize(total_length_ + kMsgLengthPrefixLength);
+  NetworkByteOrder::Store32(&buf_[0], body_length);
+}
+
+Status InboundTransfer::ReceiveBuffer(Socket &socket, gscoped_ptr<InboundTransfer>& next) {
   if (cur_offset_ < kMsgLengthPrefixLength) {
     // receive int32 length prefix
     int32_t rem = kMsgLengthPrefixLength - cur_offset_;
@@ -106,19 +113,32 @@ Status InboundTransfer::ReceiveBuffer(Socket &socket) {
       return Status::NetworkError(Substitute("RPC frame had invalid length of $0",
                                              total_length_));
     }
-    buf_.resize(total_length_);
+    buf_.resize(total_length_ + kMsgLengthPrefixLength);
 
     // Fall through to receive the message body, which is likely to be already
     // available on the socket.
   }
 
-  // receive message body
+  // Receive message body plus next length prefix.
   int32_t nread;
-  int32_t rem = total_length_ - cur_offset_;
+  int32_t rem = total_length_ + kMsgLengthPrefixLength - cur_offset_;
   Status status = socket.Recv(&buf_[cur_offset_], rem, &nread);
   RETURN_ON_ERROR_OR_SOCKET_NOT_READY(status);
   cur_offset_ += nread;
 
+  if (cur_offset_ > total_length_) {
+    int32_t extra = cur_offset_ - total_length_;
+    cur_offset_ = total_length_;
+    if (extra == kMsgLengthPrefixLength) {
+      int32_t body_length = NetworkByteOrder::Load32(buf_.data() + total_length_);
+      next.reset(new InboundTransfer(body_length));
+    } else {
+      next.reset(new InboundTransfer());
+      next->cur_offset_ = extra;
+      memcpy(next->buf_.data(), buf_.data() + total_length_, next->cur_offset_);
+    }
+  }
+  buf_.resize(total_length_);
   return Status::OK();
 }
 
