@@ -101,6 +101,8 @@ class Connection : public RefCountedThreadSafe<Connection> {
   // same Status).
   void Shutdown(const Status &status);
 
+  void GracefulShutdown();
+
   // Queue a new call to be made. If the queueing fails, the call will be
   // marked failed.
   // Takes ownership of the 'call' object regardless of whether it succeeds or fails.
@@ -203,6 +205,8 @@ class Connection : public RefCountedThreadSafe<Connection> {
   // client callback.
   void HandleCallResponse(gscoped_ptr<InboundTransfer> transfer);
 
+  void HandleTransportMessage(gscoped_ptr<CallResponse> resp);
+
   // The given CallAwaitingResponse has elapsed its user-defined timeout.
   // Set it to Failed.
   void HandleOutboundCallTimeout(CallAwaitingResponse *car);
@@ -211,6 +215,10 @@ class Connection : public RefCountedThreadSafe<Connection> {
   // We will take ownership of the transfer.
   // This must be called from the reactor thread.
   void QueueOutbound(gscoped_ptr<OutboundTransfer> transfer);
+
+  // TODO doc
+  void FinishGracefulShutdown(const Status& s);
+
 
   // The reactor thread that created this connection.
   ReactorThread * const reactor_thread_;
@@ -259,6 +267,12 @@ class Connection : public RefCountedThreadSafe<Connection> {
 
   // Starts as Status::OK, gets set to a shutdown status upon Shutdown().
   Status shutdown_status_;
+  enum State {
+    NEGOTIATING,
+    RUNNING,
+    SHUTTING_DOWN
+  };
+  State state_;
 
   // Temporary vector used when serializing - avoids an allocation
   // when serializing calls.
@@ -274,9 +288,6 @@ class Connection : public RefCountedThreadSafe<Connection> {
 
   // SASL server instance used for connection negotiation when Direction == SERVER.
   SaslServer sasl_server_;
-
-  // Whether we completed connection negotiation.
-  bool negotiation_complete_;
 };
 
 } // namespace rpc

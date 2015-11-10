@@ -36,6 +36,7 @@
 #include "kudu/rpc/rpc_header.pb.h"
 #include "kudu/rpc/sasl_client.h"
 #include "kudu/rpc/sasl_server.h"
+#include "kudu/rpc/serialization.h"
 #include "kudu/rpc/transfer.h"
 #include "kudu/util/debug-util.h"
 #include "kudu/util/net/sockaddr.h"
@@ -45,6 +46,11 @@
 using std::tr1::shared_ptr;
 using std::vector;
 using strings::Substitute;
+
+DEFINE_int32(rpc_graceful_shutdown_timeout_ms, 1000,
+             "The number of milliseconds that the RPC server will wait between "
+             "sending a graceful shutdown message to the client and actually "
+             "closing the TCP socket.");
 
 namespace kudu {
 namespace rpc {
@@ -61,9 +67,9 @@ Connection::Connection(ReactorThread *reactor_thread, const Sockaddr &remote,
     last_activity_time_(MonoTime::Now(MonoTime::FINE)),
     is_epoll_registered_(false),
     next_call_id_(1),
+    state_(NEGOTIATING),
     sasl_client_(kSaslAppName, socket),
-    sasl_server_(kSaslAppName, socket),
-    negotiation_complete_(false) {
+    sasl_server_(kSaslAppName, socket) {
 }
 
 Status Connection::SetNonBlocking(bool enabled) {
@@ -73,10 +79,11 @@ Status Connection::SetNonBlocking(bool enabled) {
 void Connection::EpollRegister(ev::loop_ref& loop) {
   DCHECK(reactor_thread_->IsCurrentThread());
   DVLOG(4) << "Registering connection for epoll: " << ToString();
+  DCHECK_EQ(state_, RUNNING);
   write_io_.set(loop);
   write_io_.set(socket_.GetFd(), ev::WRITE);
   write_io_.set<Connection, &Connection::WriteHandler>(this);
-  if (direction_ == CLIENT && negotiation_complete_) {
+  if (direction_ == CLIENT) {
     write_io_.start();
   }
   read_io_.set(loop);
@@ -118,7 +125,7 @@ bool Connection::Idle() const {
   }
 
   // We are not idle if we are in the middle of connection negotiation.
-  if (!negotiation_complete_) {
+  if (state_ == NEGOTIATING || state_ == SHUTTING_DOWN) {
     return false;
   }
 
@@ -128,6 +135,7 @@ bool Connection::Idle() const {
 void Connection::Shutdown(const Status &status) {
   DCHECK(reactor_thread_->IsCurrentThread());
   shutdown_status_ = status;
+  state_ = SHUTTING_DOWN;
 
   if (inbound_ && inbound_->TransferStarted()) {
     double secs_since_active = reactor_thread_->cur_time()
@@ -142,7 +150,7 @@ void Connection::Shutdown(const Status &status) {
   BOOST_FOREACH(const car_map_t::value_type &v, awaiting_response_) {
     CallAwaitingResponse *c = v.second;
     if (c->call) {
-      c->call->SetFailed(status);
+      c->call->ConnectionFailed(status);
     }
     // And we must return the CallAwaitingResponse to the pool
     car_pool_.Destroy(c);
@@ -162,6 +170,66 @@ void Connection::Shutdown(const Status &status) {
   WARN_NOT_OK(socket_.Close(), "Error closing socket");
 }
 
+struct GoAwayTransferFinished : public TransferCallbacks {
+ public:
+  explicit GoAwayTransferFinished(Connection* conn)
+    : conn_(conn) {
+  }
+
+  virtual void NotifyTransferFinished() OVERRIDE {
+    delete this;
+  }
+
+  virtual void NotifyTransferAborted(const Status &status) OVERRIDE {
+    delete this;
+  }
+
+ private:
+  scoped_refptr<Connection> conn_;
+};
+
+
+void Connection::FinishGracefulShutdown(const Status& s) {
+  Shutdown(Status::Aborted("Connection shut down due to keepalive"));
+  Release();
+}
+
+void Connection::GracefulShutdown() {
+  CHECK_EQ(direction_, SERVER);
+  CHECK(outbound_transfers_.empty());
+  CHECK_EQ(state_, RUNNING);
+  CHECK_OK(shutdown_status_);
+
+  //  TransferCallbacks *cb = new CallTransferCallbacks(call);
+  gscoped_ptr<faststring> msg_buf(new faststring());
+  GoAwayPB go_away;
+  go_away.set_last_received_call_id(123);
+  CHECK_OK(serialization::SerializeMessage(go_away, msg_buf.get(), 0, false));
+
+  gscoped_ptr<faststring> header_buf(new faststring());
+  ResponseHeader resp_hdr;
+  resp_hdr.set_call_id(-1);
+  resp_hdr.set_transport_message_type(ResponseHeader::GO_AWAY);
+  CHECK_OK(serialization::SerializeHeader(resp_hdr, msg_buf->size(), header_buf.get()));
+
+  slices_tmp_.resize(2);
+  slices_tmp_[0] = Slice(*header_buf);
+  slices_tmp_[1] = Slice(*msg_buf);
+
+  gscoped_ptr<OutboundTransfer> goaway_msg(
+      new OutboundTransfer(slices_tmp_, new GoAwayTransferFinished(this)));
+  QueueOutbound(goaway_msg.Pass());
+  state_ = SHUTTING_DOWN;
+  read_io_.stop();
+
+  AddRef();
+  MonoDelta timeout = MonoDelta::FromMilliseconds(FLAGS_rpc_graceful_shutdown_timeout_ms);
+  (new DelayedTask(boost::bind(&Connection::FinishGracefulShutdown, this, _1),
+                   timeout))->Run(reactor_thread_);
+
+  WARN_NOT_OK(socket_.Shutdown(true, false), "couldn't graceful shutdown server");
+}
+
 void Connection::QueueOutbound(gscoped_ptr<OutboundTransfer> transfer) {
   DCHECK(reactor_thread_->IsCurrentThread());
 
@@ -176,7 +244,7 @@ void Connection::QueueOutbound(gscoped_ptr<OutboundTransfer> transfer) {
 
   outbound_transfers_.push_back(*transfer.release());
 
-  if (negotiation_complete_ && !write_io_.is_active()) {
+  if (state_ == RUNNING && !write_io_.is_active()) {
     // If we weren't currently in the middle of sending anything,
     // then our write_io_ interest is stopped. Need to re-start it.
     // Only do this after connection negotiation is done doing its work.
@@ -252,7 +320,7 @@ void Connection::QueueOutboundCall(const shared_ptr<OutboundCall> &call) {
 
   if (PREDICT_FALSE(!shutdown_status_.ok())) {
     // Already shutdown
-    call->SetFailed(shutdown_status_);
+    call->ConnectionFailed(shutdown_status_);
     return;
   }
 
@@ -451,10 +519,33 @@ void Connection::HandleIncomingCall(gscoped_ptr<InboundTransfer> transfer) {
   reactor_thread_->reactor()->messenger()->QueueInboundCall(call.Pass());
 }
 
+void Connection::HandleTransportMessage(gscoped_ptr<CallResponse> resp) {
+  switch (resp->header().transport_message_type()) {
+    case ResponseHeader::GO_AWAY: {
+      Slice bytes(resp->serialized_response());
+      GoAwayPB msg;
+      if (!msg.ParseFromArray(bytes.data(), bytes.size())) {
+        LOG(WARNING) << "Received invalid GO_AWAY message: " << bytes.ToDebugString();
+        break;
+      }
+      VLOG(2) << "Received GO_AWAY message: " << msg.ShortDebugString();
+      Shutdown(Status::Aborted("server graceful shut down connection"));
+      break;
+    }
+    default:
+      LOG(WARNING) << "Received unknown transport-level message: " << resp->header().DebugString();
+  }
+}
+
 void Connection::HandleCallResponse(gscoped_ptr<InboundTransfer> transfer) {
   DCHECK(reactor_thread_->IsCurrentThread());
   gscoped_ptr<CallResponse> resp(new CallResponse);
   CHECK_OK(resp->ParseFrom(transfer.Pass()));
+
+  if (resp->call_id() == -1) {
+    HandleTransportMessage(resp.Pass());
+    return;
+  }
 
   CallAwaitingResponse *car_ptr =
     EraseKeyReturnValuePtr(&awaiting_response_, resp->call_id());
@@ -582,20 +673,27 @@ void Connection::CompleteNegotiation(const Status& negotiation_status) {
 
 void Connection::MarkNegotiationComplete() {
   DCHECK(reactor_thread_->IsCurrentThread());
-  negotiation_complete_ = true;
+  DCHECK_EQ(state_, NEGOTIATING);
+  state_ = RUNNING;
 }
 
 Status Connection::DumpPB(const DumpRunningRpcsRequestPB& req,
                           RpcConnectionPB* resp) {
   DCHECK(reactor_thread_->IsCurrentThread());
   resp->set_remote_ip(remote_.ToString());
-  if (negotiation_complete_) {
-    resp->set_state(RpcConnectionPB::OPEN);
-    resp->set_remote_user_credentials(user_credentials_.ToString());
-  } else {
-    // It's racy to dump credentials while negotiating, since the Connection
-    // object is owned by the negotiation thread at that point.
-    resp->set_state(RpcConnectionPB::NEGOTIATING);
+  switch (state_) {
+    case RUNNING:
+      resp->set_state(RpcConnectionPB::OPEN);
+      resp->set_remote_user_credentials(user_credentials_.ToString());
+      break;
+    case NEGOTIATING:
+      // It's racy to dump credentials while negotiating, since the Connection
+      // object is owned by the negotiation thread at that point.
+      resp->set_state(RpcConnectionPB::NEGOTIATING);
+      break;
+    case SHUTTING_DOWN:
+      resp->set_state(RpcConnectionPB::SHUTTING_DOWN);
+      break;
   }
 
   if (direction_ == CLIENT) {

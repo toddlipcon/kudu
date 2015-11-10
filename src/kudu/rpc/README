@@ -360,3 +360,8 @@ The client must send calls in strictly increasing 'call_id' order. The server
 may reject repeated calls or calls with lower IDs. The server's responses may
 arrive out-of-order, and use the 'call_id' in the response to associate a response
 with the correct call.
+
+
+Graceful termination
+---------------------
+TODO: doc the GO_AWAY message

@@ -195,6 +195,9 @@ class OutboundCall {
   void SetFailed(const Status& status,
                  ErrorStatusPB* err_pb = NULL);
 
+  // Mark that the call failed because the underlying RPC connection failed.
+  void ConnectionFailed(const Status& conn_error);
+
   // Mark the call as timed out. This also triggers the callback to notify
   // the caller.
   void SetTimedOut();
@@ -325,8 +328,12 @@ class CallResponse {
 
   // Return the call ID that this response is related to.
   int32_t call_id() const {
+    return header().call_id();
+  }
+
+  const ResponseHeader& header() const {
     DCHECK(parsed_);
-    return header_.call_id();
+    return header_;
   }
 
   // Return the serialized response data. This is just the response "body" --

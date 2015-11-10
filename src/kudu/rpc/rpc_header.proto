@@ -104,6 +104,8 @@ message RequestHeader {
 }
 
 message ResponseHeader {
+  // The call ID being responded to, or -1 for generic RPC messages (e.g.
+  // 'GoAwayMessage')
   required int32 call_id = 1;
 
   // If this is set, then this is an error response and the
@@ -116,6 +118,16 @@ message ResponseHeader {
   // is the first byte after the bytes for this protobuf.
   repeated uint32 sidecar_offsets = 3;
 
+  enum ProtocolMessageType {
+    UNKNOWN = 999;
+    GO_AWAY = 1;
+  }
+  optional ProtocolMessageType transport_message_type = 4;
+}
+
+// TODO doc
+message GoAwayPB {
+  optional int32 last_received_call_id = 1;
 }
 
 // Sent as response when is_error == true.

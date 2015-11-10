@@ -261,7 +261,7 @@ void ReactorThread::ScanIdleConnections() {
   // enforce TCP connection timeouts
   conn_list_t::iterator c = server_conns_.begin();
   conn_list_t::iterator c_end = server_conns_.end();
-  uint64_t timed_out = 0;
+  int timed_out = 0;
   for (; c != c_end; ) {
     const scoped_refptr<Connection>& conn = *c;
     if (!conn->Idle()) {
@@ -272,22 +272,16 @@ void ReactorThread::ScanIdleConnections() {
 
     MonoDelta connection_delta(cur_time_.GetDeltaSince(conn->last_activity_time()));
     if (connection_delta.MoreThan(connection_keepalive_time_)) {
-      conn->Shutdown(Status::NetworkError(
-                       StringPrintf("connection timed out after %s seconds",
-                                    connection_keepalive_time_.ToString().c_str())));
-      VLOG(1) << "Timing out connection " << conn->ToString() << " - it has been idle for "
-              << connection_delta.ToSeconds() << "s";
-      server_conns_.erase(c++);
-      ++timed_out;
+      conn->GracefulShutdown();
+      timed_out++;
+      ++c;
     } else {
       ++c;
     }
   }
 
-  // TODO: above only times out on the server side.
-  // Clients may want to set their keepalive timeout as well.
-
-  VLOG_IF(1, timed_out > 0) << name() << ": timed out " << timed_out << " TCP connections.";
+  VLOG_IF(1, timed_out > 0) << name() << ": initiated graceful shutdown of "
+                            << timed_out << " RPC connections.";
 }
 
 const std::string &ReactorThread::name() const {

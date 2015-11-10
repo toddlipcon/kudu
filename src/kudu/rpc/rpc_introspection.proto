@@ -32,6 +32,7 @@ message RpcConnectionPB {
     UNKNOWN = 999;
     NEGOTIATING = 0;  // Connection is still being negotiated.
     OPEN = 1;         // Connection is active.
+    SHUTTING_DOWN = 2; // Connection is shutting down.
   };
 
   required string remote_ip = 1;

@@ -31,6 +31,8 @@
 METRIC_DECLARE_histogram(handler_latency_kudu_rpc_test_CalculatorService_Sleep);
 METRIC_DECLARE_histogram(rpc_incoming_queue_time);
 
+DECLARE_int32(rpc_graceful_shutdown_timeout_ms);
+
 using std::string;
 using std::tr1::shared_ptr;
 using std::tr1::unordered_map;
@@ -198,6 +200,7 @@ TEST_F(TestRpc, TestConnectionKeepalive) {
   // one without having to check all.
   n_server_reactor_threads_ = 1;
   keepalive_time_ms_ = 50;
+  FLAGS_rpc_graceful_shutdown_timeout_ms = 1;
 
   // Set up server.
   Sockaddr server_addr;
@@ -257,6 +260,25 @@ TEST_F(TestRpc, TestCallLongerThanKeepalive) {
   SleepResponsePB resp;
   ASSERT_OK(p.SyncRequest(GenericCalculatorService::kSleepMethodName,
                                  req, &resp, &controller));
+}
+
+TEST_F(TestRpc, TestKeepaliveRace) {
+  // Set very short keepalive.
+  keepalive_time_ms_ = 1;
+
+  // Set up server.
+  Sockaddr server_addr;
+  StartTestServer(&server_addr);
+
+  shared_ptr<Messenger> client_messenger(CreateMessenger("Client"));
+  Proxy p(client_messenger, server_addr, GenericCalculatorService::static_service_name());
+
+  for (int i = 0; i < 1000; i++) {
+    //    SleepFor(MonoDelta::FromMicroseconds(i));
+    ASSERT_OK(DoTestSyncCall(p, GenericCalculatorService::kAddMethodName));
+  }
+
+  // TODO: add another test which uses async calls so there are multiple pending
 }
 
 // Test that the RpcSidecar transfers the expected messages.

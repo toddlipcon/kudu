@@ -250,6 +250,16 @@ void OutboundCall::SetFailed(const Status &status,
   CallCallback();
 }
 
+void OutboundCall::ConnectionFailed(const Status& conn_error) {
+  {
+    lock_guard<simple_spinlock> l(&lock_);
+    status_ = conn_error.CloneAndPrepend(Substitute(
+        "RPC connection failed while call was in state $0", StateName(state_)));
+    set_state_unlocked(FINISHED_ERROR);
+  }
+  CallCallback();
+}
+
 void OutboundCall::SetTimedOut() {
   {
     lock_guard<simple_spinlock> l(&lock_);
