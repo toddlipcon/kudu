@@ -20,6 +20,7 @@
 #include <tr1/unordered_set>
 #include <vector>
 
+#include "kudu/client/row_result.h"
 #include "kudu/client/scan_predicate.h"
 #include "kudu/client/schema.h"
 #ifdef KUDU_HEADERS_NO_STUBS
@@ -47,6 +48,7 @@ namespace client {
 
 class KuduLoggingCallback;
 class KuduRowResult;
+class KuduScanBatch;
 class KuduSession;
 class KuduStatusCallback;
 class KuduTable;
@@ -971,7 +973,16 @@ class KUDU_EXPORT KuduScanner {
   // Clears 'rows' and populates it with the next batch of rows from the tablet server.
   // A call to NextBatch() invalidates all previously fetched results which might
   // now be pointing to garbage memory.
+  //
+  // DEPRECATED: Use NextBatch(KuduScanBatch*) instead.
   Status NextBatch(std::vector<KuduRowResult>* rows);
+
+  // Fetches the next batch of results for this scanner.
+  //
+  // A single KuduScanBatch instance may be reused for better performance. Each subsequent
+  // call replaces the data from the previous call, and invalidates any KuduRowResult
+  // objects derived from the batch.
+  Status NextBatch(KuduScanBatch* batch);
 
   // Get the KuduTabletServer that is currently handling the scan.
   // More concretely, this is the server that handled the most recent Open or NextBatch
@@ -1020,7 +1031,6 @@ class KUDU_EXPORT KuduScanner {
   std::string ToString() const;
  private:
   class KUDU_NO_EXPORT Data;
-  friend class kudu::tools::TsAdminClient;
 
   FRIEND_TEST(ClientTest, TestScanCloseProxy);
   FRIEND_TEST(ClientTest, TestScanFaultTolerance);
@@ -1031,6 +1041,87 @@ class KUDU_EXPORT KuduScanner {
   Data* data_;
 
   DISALLOW_COPY_AND_ASSIGN(KuduScanner);
+};
+
+// A batch of zero or more rows returned from a KuduScanner.
+//
+// With C++11, you can iterate over the rows in the batch using a
+// range-foreach loop:
+//
+//   for (KuduRowResult row : batch) {
+//     ... row.GetInt(1, ...)
+//     ...
+//   }
+//
+// In C++03, you'll need to use a regular for loop:
+//
+//   for (int i = 0, num_rows = batch.NumRows();
+//        i < num_rows;
+//        i++) {
+//     KuduRowResult row = batch.Row(i);
+//     ...
+//   }
+//
+// Note that, in the above example, NumRows() is only called once at the
+// beginning of the loop to avoid extra calls to the non-inlined method.
+class KUDU_EXPORT KuduScanBatch {
+ public:
+  class const_iterator;
+
+  KuduScanBatch();
+  ~KuduScanBatch();
+
+  int NumRows() const;
+
+  // Return a reference to one of the rows in this batch.
+  // The returned object is only valid as long as this KuduScanBatch.
+  KuduRowResult Row(int idx) const;
+
+  const_iterator begin() const {
+    return const_iterator(this, 0);
+  }
+
+  const_iterator end() const {
+    return const_iterator(this, NumRows());
+  }
+
+  class const_iterator : public std::iterator<std::forward_iterator_tag, KuduRowResult> {
+   public:
+    ~const_iterator() {}
+
+    KuduRowResult operator*() const {
+      return batch_->Row(idx_);
+    }
+
+    void operator++() {
+      idx_++;
+    }
+
+    bool operator==(const const_iterator& other) {
+      return idx_ == other.idx_;
+    }
+    bool operator!=(const const_iterator& other) {
+      return idx_ != other.idx_;
+    }
+
+   private:
+    friend class KuduScanBatch;
+    const_iterator(const KuduScanBatch* b, int idx)
+        : batch_(b),
+          idx_(idx) {
+    }
+
+    const KuduScanBatch* batch_;
+    int idx_;
+  };
+
+ private:
+  class KUDU_NO_EXPORT Data;
+  friend class KuduScanner;
+  friend class kudu::tools::TsAdminClient;
+
+  Data* data_;
+  DISALLOW_COPY_AND_ASSIGN(KuduScanBatch);
 };
 
 // In-memory representation of a remote tablet server.

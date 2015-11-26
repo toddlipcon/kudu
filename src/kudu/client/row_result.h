@@ -32,11 +32,15 @@ class Schema;
 
 namespace client {
 
-// A single row result from a scan.
-//
-// Drawn extensively from ContiguousRow and KuduPartialRow.
+// A single row result from a scan. Note that this object acts as a pointer into
+// a KuduScanBatch, and therefore is valid only as long as the batch it was constructed
+// from.
 class KUDU_EXPORT KuduRowResult {
  public:
+  // Construct an invalid KuduRowResult. Before use, you must assign
+  // a properly-initialized value.
+  KuduRowResult() : schema_(NULL), row_data_(NULL) {}
+
   bool IsNull(const Slice& col_name) const;
   bool IsNull(int col_idx) const;
 
@@ -82,18 +86,14 @@ class KUDU_EXPORT KuduRowResult {
   std::string ToString() const;
 
  private:
-  friend class KuduScanner;
+  friend class KuduScanBatch;
   template<typename KeyTypeWrapper> friend struct SliceKeysTestSetup;
   template<typename KeyTypeWrapper> friend struct IntKeysTestSetup;
 
   // Only invoked by KuduScanner.
-  //
-  // Why not a constructor? Because we want to create a large number of row
-  // results in one allocation, each with distinct state. Doing that in a
-  // constructor means one allocation per result.
-  void Init(const Schema* schema, const uint8_t* row_data) {
-    schema_ = schema;
-    row_data_ = row_data;
+  KuduRowResult(const Schema* schema, const uint8_t* row_data)
+      : schema_(schema),
+      row_data_(row_data) {
   }
 
   template<typename T>

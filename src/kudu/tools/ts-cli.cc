@@ -46,7 +46,7 @@ using std::string;
 using std::tr1::shared_ptr;
 using std::vector;
 using kudu::client::KuduRowResult;
-using kudu::client::KuduScanner;
+using kudu::client::KuduScanBatch;
 using kudu::tablet::TabletStatusPB;
 using kudu::tserver::TabletServerAdminServiceProxy;
 using kudu::tserver::TabletServerServiceProxy;
@@ -272,7 +272,9 @@ Status TsAdminClient::DumpTablet(const std::string& tablet_id) {
     }
 
     rows.clear();
-    RETURN_NOT_OK(KuduScanner::Data::ExtractRows(rpc, &schema, &resp, &rows));
+    KuduScanBatch::Data results;
+    RETURN_NOT_OK(results.Reset(&rpc, &schema, resp.release_data()));
+    results.ExtractRows(&rows);
     BOOST_FOREACH(const KuduRowResult& r, rows) {
       std::cout << r.ToString() << std::endl;
     }

@@ -257,12 +257,14 @@ class ClientTest : public KuduTest {
       ASSERT_OK(scanner.Open());
 
       ASSERT_TRUE(scanner.HasMoreRows());
-      vector<KuduRowResult> rows;
+      KuduScanBatch batch;
       uint64_t sum = 0;
       while (scanner.HasMoreRows()) {
-        ASSERT_OK(scanner.NextBatch(&rows));
-
-        BOOST_FOREACH(const KuduRowResult& row, rows) {
+        ASSERT_OK(scanner.NextBatch(&batch));
+        for (KuduScanBatch::const_iterator it = batch.begin(), end = batch.end();
+             it != end;
+             ++it) {
+          KuduRowResult row = *it;
           int32_t value;
           ASSERT_OK(row.GetInt32(0, &value));
           sum += value;
@@ -289,11 +291,14 @@ class ClientTest : public KuduTest {
       ASSERT_OK(scanner.Open());
 
       ASSERT_TRUE(scanner.HasMoreRows());
-      vector<KuduRowResult> rows;
+      KuduScanBatch batch;
       while (scanner.HasMoreRows()) {
-        ASSERT_OK(scanner.NextBatch(&rows));
+        ASSERT_OK(scanner.NextBatch(&batch));
+        for (KuduScanBatch::const_iterator it = batch.begin(), end = batch.end();
+             it != end;
+             ++it) {
+          KuduRowResult row = *it;
 
-        BOOST_FOREACH(const KuduRowResult& row, rows) {
           Slice s;
           ASSERT_OK(row.GetString(2, &s));
           if (!s.starts_with("hello 2") && !s.starts_with("hello 3")) {
@@ -317,11 +322,13 @@ class ClientTest : public KuduTest {
       ASSERT_OK(scanner.Open());
 
       ASSERT_TRUE(scanner.HasMoreRows());
-      vector<KuduRowResult> rows;
+      KuduScanBatch batch;
       while (scanner.HasMoreRows()) {
-        ASSERT_OK(scanner.NextBatch(&rows));
-
-        BOOST_FOREACH(const KuduRowResult& row, rows) {
+        ASSERT_OK(scanner.NextBatch(&batch));
+        for (KuduScanBatch::const_iterator it = batch.begin(), end = batch.end();
+             it != end;
+             ++it) {
+          KuduRowResult row = *it;
           int32_t k;
           ASSERT_OK(row.GetInt32(0, &k));
           if (k < 5 || k > 10) {
@@ -359,10 +366,10 @@ class ClientTest : public KuduTest {
     CHECK_OK(scanner.Open());
 
     int count = 0;
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      CHECK_OK(scanner.NextBatch(&rows));
-      count += rows.size();
+      CHECK_OK(scanner.NextBatch(&batch));
+      count += batch.NumRows();
     }
     return count;
   }
@@ -502,6 +509,8 @@ TEST_F(ClientTest, TestScan) {
   ASSERT_NO_FATAL_FAILURE(InsertTestRows(
       client_table_.get(), FLAGS_test_scan_num_rows));
 
+  ASSERT_EQ(FLAGS_test_scan_num_rows, CountRowsFromClient(client_table_.get()));
+
   // Scan after insert
   DoTestScanWithoutPredicates();
   DoTestScanWithStringPredicate();
@@ -543,16 +552,16 @@ TEST_F(ClientTest, TestScanAtSnapshot) {
 
   KuduScanner scanner(client_table_.get());
   ASSERT_OK(scanner.Open());
-  vector<KuduRowResult> rows;
-  uint64_t sum = 0;
+  uint64_t count = 0;
 
   // Do a "normal", READ_LATEST scan
+  KuduScanBatch batch;
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&rows));
-    sum += rows.size();
+    ASSERT_OK(scanner.NextBatch(&batch));
+    count += batch.NumRows();
   }
 
-  ASSERT_EQ(FLAGS_test_scan_num_rows, sum);
+  ASSERT_EQ(FLAGS_test_scan_num_rows, count);
 
   // Now close the scanner and perform a scan at 'ts'
   scanner.Close();
@@ -560,14 +569,13 @@ TEST_F(ClientTest, TestScanAtSnapshot) {
   ASSERT_OK(scanner.SetSnapshotMicros(ts));
   ASSERT_OK(scanner.Open());
 
-  sum = 0;
-
+  count = 0;
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&rows));
-    sum += rows.size();
+    ASSERT_OK(scanner.NextBatch(&batch));
+    count += batch.NumRows();
   }
 
-  ASSERT_EQ(half_the_rows, sum);
+  ASSERT_EQ(half_the_rows, count);
 }
 
 // Test scanning at a timestamp in the future compared to the
@@ -718,9 +726,9 @@ TEST_F(ClientTest, TestScanEmptyTable) {
   // the last tablet, HasMoreRows will return true (because it doesn't
   // know whether there's data in subsequent tablets).
   ASSERT_TRUE(scanner.HasMoreRows());
-  vector<KuduRowResult> rows;
-  ASSERT_OK(scanner.NextBatch(&rows));
-  ASSERT_TRUE(rows.empty());
+  KuduScanBatch batch;
+  ASSERT_OK(scanner.NextBatch(&batch));
+  ASSERT_EQ(0, batch.NumRows());
   ASSERT_FALSE(scanner.HasMoreRows());
 }
 
@@ -736,11 +744,11 @@ TEST_F(ClientTest, TestScanEmptyProjection) {
     ASSERT_OK(scanner.Open());
 
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     uint64_t count = 0;
     while (scanner.HasMoreRows()) {
-      ASSERT_OK(scanner.NextBatch(&rows));
-      count += rows.size();
+      ASSERT_OK(scanner.NextBatch(&batch));
+      count += batch.NumRows();
     }
     ASSERT_EQ(FLAGS_test_scan_num_rows, count);
   }
@@ -779,11 +787,11 @@ TEST_F(ClientTest, TestScanPredicateKeyColNotProjected) {
     ASSERT_OK(scanner.Open());
 
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      ASSERT_OK(scanner.NextBatch(&rows));
-
-      BOOST_FOREACH(const KuduRowResult& row, rows) {
+      ASSERT_OK(scanner.NextBatch(&batch));
+      for (int i = 0; i < batch.NumRows(); i++) {
+        KuduRowResult row = batch.Row(i);
         int32_t val;
         ASSERT_OK(row.GetInt32(0, &val));
         ASSERT_EQ(curr_key * 2, val);
@@ -817,11 +825,11 @@ TEST_F(ClientTest, TestScanPredicateNonKeyColNotProjected) {
     ASSERT_OK(scanner.Open());
 
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      ASSERT_OK(scanner.NextBatch(&rows));
-
-      BOOST_FOREACH(const KuduRowResult& row, rows) {
+      ASSERT_OK(scanner.NextBatch(&batch));
+      for (int i = 0; i < batch.NumRows(); i++) {
+        KuduRowResult row = batch.Row(i);
         int32_t val;
         ASSERT_OK(row.GetInt32(0, &val));
         ASSERT_EQ(curr_key / 2, val);
@@ -896,6 +904,14 @@ TEST_F(ClientTest, TestScanCloseProxy) {
 
 namespace internal {
 
+static void ReadBatchToStrings(KuduScanner* scanner, vector<string>* rows) {
+  KuduScanBatch batch;
+  ASSERT_OK(scanner->NextBatch(&batch));
+  for (int i = 0; i < batch.NumRows(); i++) {
+    rows->push_back(batch.Row(i).ToString());
+  }
+}
+
 static void DoScanWithCallback(KuduTable* table,
                                const vector<string>& expected_rows,
                                const boost::function<Status(const string&)>& cb) {
@@ -913,12 +929,8 @@ static void DoScanWithCallback(KuduTable* table,
   {
     LOG(INFO) << "Setting up scanner.";
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> result_rows;
-    ASSERT_OK(scanner.NextBatch(&result_rows));
-    ASSERT_GT(result_rows.size(), 0);
-    BOOST_FOREACH(KuduRowResult& r, result_rows) {
-      rows.push_back(r.ToString());
-    }
+    NO_FATALS(ReadBatchToStrings(&scanner, &rows));
+    ASSERT_GT(rows.size(), 0);
     ASSERT_TRUE(scanner.HasMoreRows());
   }
 
@@ -936,11 +948,7 @@ static void DoScanWithCallback(KuduTable* table,
   ASSERT_TRUE(scanner.HasMoreRows());
   ASSERT_OK(scanner.SetBatchSizeBytes(1024*1024));
   while (scanner.HasMoreRows()) {
-    vector<KuduRowResult> result_rows;
-    ASSERT_OK(scanner.NextBatch(&result_rows));
-    BOOST_FOREACH(KuduRowResult& r, result_rows) {
-      rows.push_back(r.ToString());
-    }
+    NO_FATALS(ReadBatchToStrings(&scanner, &rows));
   }
   scanner.Close();
 
@@ -1208,9 +1216,13 @@ static void AssertScannersDisappear(const tserver::ScannerManager* manager) {
 
 namespace {
 
-int64_t SumResults(const vector<KuduRowResult>& results) {
+int64_t SumResults(const KuduScanBatch& batch) {
   int64_t sum = 0;
-  BOOST_FOREACH(const KuduRowResult row, results) {
+
+  for (KuduScanBatch::const_iterator it = batch.begin(), end = batch.end();
+       it != end;
+       ++it) {
+    KuduRowResult row = *it;
     int32_t val;
     CHECK_OK(row.GetInt32(0, &val));
     sum += val;
@@ -1231,15 +1243,15 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
   ASSERT_OK(scanner.SetBatchSizeBytes(100));
   ASSERT_OK(scanner.Open());
 
-  vector<KuduRowResult> results;
+  KuduScanBatch batch;
   int64_t sum = 0;
 
   ASSERT_TRUE(scanner.HasMoreRows());
-  ASSERT_OK(scanner.NextBatch(&results));
+  ASSERT_OK(scanner.NextBatch(&batch));
 
   // We should get only nine rows back (from the first tablet).
-  ASSERT_EQ(results.size(), 9);
-  sum += SumResults(results);
+  ASSERT_EQ(batch.NumRows(), 9);
+  sum += SumResults(batch);
 
   ASSERT_TRUE(scanner.HasMoreRows());
 
@@ -1250,10 +1262,10 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
   // Start scanning the second tablet, but break as soon as we have some data so that
   // we have a live remote scanner on the second tablet.
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&results));
-    if (results.size() > 0) break;
+    ASSERT_OK(scanner.NextBatch(&batch));
+    if (batch.NumRows() > 0) break;
   }
-  sum += SumResults(results);
+  sum += SumResults(batch);
   ASSERT_TRUE(scanner.HasMoreRows());
 
   // Now loop while keeping the scanner alive. Each time we loop we sleep 1/2 a scanner
@@ -1267,8 +1279,8 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
   // where we would only actually perform a KeepAlive() rpc after the first request and
   // not on subsequent ones.
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&results));
-    if (results.size() > 0) break;
+    ASSERT_OK(scanner.NextBatch(&batch));
+    if (batch.NumRows() > 0) break;
   }
 
   ASSERT_TRUE(scanner.HasMoreRows());
@@ -1276,12 +1288,12 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
     SleepFor(MonoDelta::FromMilliseconds(50));
     ASSERT_OK(scanner.KeepAlive());
   }
-  sum += SumResults(results);
+  sum += SumResults(batch);
 
   // Loop to get the remaining rows.
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&results));
-    sum += SumResults(results);
+    ASSERT_OK(scanner.NextBatch(&batch));
+    sum += SumResults(batch);
   }
   ASSERT_FALSE(scanner.HasMoreRows());
   ASSERT_EQ(sum, 499500);
@@ -1372,7 +1384,7 @@ TEST_F(ClientTest, TestScanTimeout) {
     ASSERT_OK(scanner.Open());
     ASSERT_TRUE(scanner.HasMoreRows());
     while (scanner.HasMoreRows()) {
-      vector<KuduRowResult> batch;
+      KuduScanBatch batch;
       ASSERT_OK(scanner.NextBatch(&batch));
     }
   }
@@ -2231,7 +2243,7 @@ namespace {
 void CheckCorrectness(KuduScanner* scanner, int expected[], int nrows) {
   scanner->Open();
   int readrows = 0;
-  vector<KuduRowResult> rows;
+  KuduScanBatch batch;
   if (nrows) {
     ASSERT_TRUE(scanner->HasMoreRows());
   } else {
@@ -2239,8 +2251,11 @@ void CheckCorrectness(KuduScanner* scanner, int expected[], int nrows) {
   }
 
   while (scanner->HasMoreRows()) {
-    ASSERT_OK(scanner->NextBatch(&rows));
-    BOOST_FOREACH(const KuduRowResult& r, rows) {
+    ASSERT_OK(scanner->NextBatch(&batch));
+    for (KuduScanBatch::const_iterator it = batch.begin(), end = batch.end();
+         it != end;
+         ++it) {
+      KuduRowResult r = *it;
       int32_t key;
       int32_t val;
       Slice strval;
@@ -2415,10 +2430,10 @@ namespace {
     KuduScanner scanner(tbl.get());
 
     scanner.Open();
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     CHECK(scanner.HasMoreRows());
-    CHECK_OK(scanner.NextBatch(&rows));
-    KuduRowResult& row = rows.front();
+    CHECK_OK(scanner.NextBatch(&batch));
+    KuduRowResult row = batch.Row(0);
     int32_t val;
     CHECK_OK(row.GetInt32(1, &val));
     return val;
@@ -2428,11 +2443,14 @@ namespace {
   int CheckRowsEqual(const shared_ptr<KuduTable>& tbl, int32_t expected) {
     KuduScanner scanner(tbl.get());
     scanner.Open();
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     int cnt = 0;
     while (scanner.HasMoreRows()) {
-      CHECK_OK(scanner.NextBatch(&rows));
-      BOOST_FOREACH(const KuduRowResult& row, rows) {
+      CHECK_OK(scanner.NextBatch(&batch));
+      for (KuduScanBatch::const_iterator it = batch.begin(), end = batch.end();
+           it != end;
+           ++it) {
+        KuduRowResult row = *it;
         // Check that for every key:
         // 1. Column 1 int32_t value == expected
         // 2. Column 2 string value is empty
@@ -2633,10 +2651,10 @@ TEST_F(ClientTest, TestClonePredicates) {
   ASSERT_OK(scanner->Open());
 
   int count = 0;
-  vector<KuduRowResult> rows;
+  KuduScanBatch batch;
   while (scanner->HasMoreRows()) {
-    ASSERT_OK(scanner->NextBatch(&rows));
-    count += rows.size();
+    ASSERT_OK(scanner->NextBatch(&batch));
+    count += batch.NumRows();
   }
 
   ASSERT_EQ(count, 1);
@@ -2647,8 +2665,8 @@ TEST_F(ClientTest, TestClonePredicates) {
 
   count = 0;
   while (scanner->HasMoreRows()) {
-    ASSERT_OK(scanner->NextBatch(&rows));
-    count += rows.size();
+    ASSERT_OK(scanner->NextBatch(&batch));
+    count += batch.NumRows();
   }
 
   ASSERT_EQ(count, 1);
