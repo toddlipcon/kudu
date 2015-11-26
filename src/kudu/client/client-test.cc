@@ -261,7 +261,6 @@ class ClientTest : public KuduTest {
       uint64_t sum = 0;
       while (scanner.HasMoreRows()) {
         ASSERT_OK(scanner.NextBatch(&rows));
-
         BOOST_FOREACH(const KuduRowResult& row, rows) {
           int32_t value;
           ASSERT_OK(row.GetInt32(0, &value));
@@ -359,10 +358,10 @@ class ClientTest : public KuduTest {
     CHECK_OK(scanner.Open());
 
     int count = 0;
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      CHECK_OK(scanner.NextBatch(&rows));
-      count += rows.size();
+      CHECK_OK(scanner.NextBatch(&batch));
+      count += batch.NumRows();
     }
     return count;
   }
@@ -501,6 +500,8 @@ TEST_F(ClientTest, TestMasterDown) {
 TEST_F(ClientTest, TestScan) {
   ASSERT_NO_FATAL_FAILURE(InsertTestRows(
       client_table_.get(), FLAGS_test_scan_num_rows));
+
+  ASSERT_EQ(FLAGS_test_scan_num_rows, CountRowsFromClient(client_table_.get()));
 
   // Scan after insert
   DoTestScanWithoutPredicates();

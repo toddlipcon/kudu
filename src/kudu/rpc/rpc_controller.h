@@ -43,6 +43,8 @@ class RpcController {
   RpcController();
   ~RpcController();
 
+  void Swap(RpcController* other);
+
   // Reset this controller so it may be used with another call.
   void Reset();
 

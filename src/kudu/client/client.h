@@ -47,6 +47,7 @@ namespace client {
 
 class KuduLoggingCallback;
 class KuduRowResult;
+class KuduScanBatch;
 class KuduSession;
 class KuduStatusCallback;
 class KuduTable;
@@ -971,7 +972,12 @@ class KUDU_EXPORT KuduScanner {
   // Clears 'rows' and populates it with the next batch of rows from the tablet server.
   // A call to NextBatch() invalidates all previously fetched results which might
   // now be pointing to garbage memory.
+  //
+  // DEPRECATED: Use NextBatch(KuduScanBatch*) instead.
   Status NextBatch(std::vector<KuduRowResult>* rows);
+
+  // Fetches the next batch of results for this scanner.
+  Status NextBatch(KuduScanBatch* batch);
 
   // Get the KuduTabletServer that is currently handling the scan.
   // More concretely, this is the server that handled the most recent Open or NextBatch
@@ -1031,6 +1037,21 @@ class KUDU_EXPORT KuduScanner {
   Data* data_;
 
   DISALLOW_COPY_AND_ASSIGN(KuduScanner);
+};
+
+class KUDU_EXPORT KuduScanBatch {
+ public:
+  KuduScanBatch();
+  ~KuduScanBatch();
+
+  int NumRows() const;
+
+ private:
+  class KUDU_NO_EXPORT Data;
+  friend class KuduScanner;
+
+  Data* data_;
+  DISALLOW_COPY_AND_ASSIGN(KuduScanBatch);
 };
 
 // In-memory representation of a remote tablet server.

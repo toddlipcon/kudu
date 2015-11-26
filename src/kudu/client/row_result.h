@@ -82,7 +82,7 @@ class KUDU_EXPORT KuduRowResult {
   std::string ToString() const;
 
  private:
-  friend class KuduScanner;
+  friend class KuduScanBatch;
   template<typename KeyTypeWrapper> friend struct SliceKeysTestSetup;
   template<typename KeyTypeWrapper> friend struct IntKeysTestSetup;
 

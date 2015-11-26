@@ -62,16 +62,6 @@ class KuduScanner::Data {
                     const MonoTime& deadline,
                     std::set<std::string>* blacklist);
 
-  // Extracts data from the last scan response and adds them to 'rows'.
-  Status ExtractRows(std::vector<KuduRowResult>* rows);
-
-  // Static implementation of ExtractRows. This is used by some external
-  // tools.
-  static Status ExtractRows(const rpc::RpcController& controller,
-                            const Schema* projection,
-                            tserver::ScanResponsePB* resp,
-                            std::vector<KuduRowResult>* rows);
-
   Status KeepAlive();
 
   // Returns whether there exist more tablets we should scan.
@@ -95,9 +85,6 @@ class KuduScanner::Data {
 
   // Modifies fields in 'next_req_' in preparation for a new request.
   void PrepareRequest(RequestType state);
-
-  // Returns the size of a row for the given projection 'proj'.
-  static size_t CalculateProjectedRowSize(const Schema& proj);
 
   bool open_;
   bool data_in_open_;
@@ -151,7 +138,38 @@ class KuduScanner::Data {
   // Number of attempts since the last successful scan.
   int scan_attempts_;
 
+  // TODO: doc me
+  KuduScanBatch batch_for_old_api_;
+
   DISALLOW_COPY_AND_ASSIGN(Data);
+};
+
+class KuduScanBatch::Data {
+ public:
+  Data();
+  ~Data();
+
+  Status Reset(rpc::RpcController* controller,
+               const Schema* projection,
+               RowwiseRowBlockPB* resp_data);
+
+  int num_rows() const {
+    return resp_data_.num_rows();
+  }
+
+  void ExtractRows(vector<KuduRowResult>* rows);
+
+  void Clear();
+
+  // Returns the size of a row for the given projection 'proj'.
+  static size_t CalculateProjectedRowSize(const Schema& proj);
+
+
+
+  rpc::RpcController controller_;
+  RowwiseRowBlockPB resp_data_;
+  Slice direct_data_, indirect_data_;
+  const Schema* projection_;
 };
 
 } // namespace client
