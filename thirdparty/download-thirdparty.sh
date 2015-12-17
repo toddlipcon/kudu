@@ -70,7 +70,7 @@ fetch_and_expand() {
   echo "Unpacking $FILENAME"
   if echo "$FILENAME" | egrep -q '\.zip$'; then
     unzip -q $FILENAME
-  elif echo "$FILENAME" | egrep -q '(\.tar\.gz|\.tgz)$'; then
+  elif echo "$FILENAME" | egrep -q '(\.tar\.gz|\.tgz|\.tar\.xz)$'; then
     tar xf $FILENAME
   else
     echo "Error: unknown file format: $FILENAME"
@@ -228,6 +228,10 @@ fi
 
 if [ ! -d $TRACE_VIEWER_DIR ]; then
   fetch_and_expand kudu-trace-viewer-${TRACE_VIEWER_VERSION}.tar.gz
+fi
+
+if [ -n "$OS_LINUX" -a ! -d $UTIL_LINUX_DIR ]; then
+  fetch_and_expand util-linux-${UTIL_LINUX_VERSION}.tar.xz
 fi
 
 if [ -n "$OS_LINUX" -a ! -d $NVML_DIR ]; then

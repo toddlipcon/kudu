@@ -64,6 +64,7 @@ else
       "libunwind")  F_LIBUNWIND=1 ;;
       "llvm")       F_LLVM=1 ;;
       "trace-viewer") F_TRACE_VIEWER=1 ;;
+      "libuuid")    F_LIBUUID=1 ;;
       "nvml")       F_NVML=1 ;;
       *)            echo "Unknown module: $arg"; exit 1 ;;
     esac
@@ -323,6 +324,20 @@ fi
 if [ -n "$F_ALL" -o -n "$F_TRACE_VIEWER" ]; then
   echo Installing trace-viewer into the www directory
   cp -a $TRACE_VIEWER_DIR/* $TP_DIR/../www/
+fi
+
+# Build libuuid (part of util-linux)
+if [ -n "$OS_LINUX" ] && [ -n "$F_ALL" -o -n "$F_LIBUUID" ]; then
+  cd $UTIL_LINUX_DIR
+
+  # util-linux is a big aggregation of random Linux tools, etc, most of which
+  # we don't care about, and some of which are GPL. We only want to build and use libuuid,
+  # so we don't use its normal build. However, we still need to run 'configure' to generate
+  # 'config.h'. We try to disable all features of the build except for libuuid here.
+  CFLAGS=$EXTRA_CXXFLAGS ./configure \
+    --prefix=$PREFIX --disable-all-programs --enable-libuuid
+  make -j$PARALLEL
+  make install-uuidincHEADERS install-exec
 fi
 
 # Build NVML
