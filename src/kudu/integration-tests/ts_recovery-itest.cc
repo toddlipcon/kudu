@@ -15,13 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include "kudu/client/client-test-util.h"
 #include "kudu/integration-tests/cluster_verifier.h"
 #include "kudu/integration-tests/external_mini_cluster.h"
 #include "kudu/integration-tests/test_workload.h"
+#include "kudu/util/random.h"
+#include "kudu/util/random_util.h"
 #include "kudu/util/test_util.h"
 
+#include <memory>
 #include <string>
 
+using namespace kudu::client; // NOLINT(*) // TODO
 using std::string;
 
 namespace kudu {
@@ -133,6 +138,142 @@ TEST_F(TsRecoveryITest, TestCrashDuringLogReplay) {
                                        ClusterVerifier::AT_LEAST,
                                        work.rows_inserted(),
                                        MonoDelta::FromSeconds(30)));
+}
+
+static int IntToKey(int i) {
+  return 100000 * (i % 3) + i;
+}
+
+class UpdaterThreads {
+ public:
+  UpdaterThreads(AtomicInt<int32_t>* inserted,
+                 const sp::shared_ptr<KuduClient>& client,
+                 const sp::shared_ptr<KuduTable>& table)
+    : should_run_(false),
+      inserted_(inserted),
+      client_(client),
+      table_(table) {
+  }
+
+  void Start() {
+    CHECK(!should_run_.Load());
+    should_run_.Store(true);
+    threads_.resize(4);
+    for (int i = 0; i < threads_.size(); i++) {
+      CHECK_OK(kudu::Thread::Create("test", "updater",
+                                    &UpdaterThreads::Run, this,
+                                    &threads_[i]));
+    }
+  }
+
+  void StopAndJoin() {
+    CHECK(should_run_.Load());
+    should_run_.Store(false);
+
+    for (const auto& t : threads_) {
+      t->Join();
+    }
+    threads_.clear();
+  }
+
+  void Run() {
+    Random rng(GetRandomSeed32());
+    sp::shared_ptr<KuduSession> session = client_->NewSession();
+    session->SetTimeoutMillis(2000);
+    CHECK_OK(session->SetFlushMode(KuduSession::MANUAL_FLUSH));
+    while (should_run_.Load()) {
+      int i = inserted_->Load();
+      if (i == 0) continue;
+
+      gscoped_ptr<KuduUpdate> up(table_->NewUpdate());
+      CHECK_OK(up->mutable_row()->SetInt32("key", IntToKey(rng.Uniform(i) + 1)));
+      CHECK_OK(up->mutable_row()->SetInt32("int_val", rng.Next32()));
+      CHECK_OK(session->Apply(up.release()));
+      // The server might crash due to a compaction while we're still updating.
+      // That's OK - we expect the main thread to shut us down quickly.
+      WARN_NOT_OK(session->Flush(), "failed to flush updates");
+    }
+  }
+
+ private:
+  AtomicBool should_run_;
+  AtomicInt<int32_t>* inserted_;
+  sp::shared_ptr<KuduClient> client_;
+  sp::shared_ptr<KuduTable> table_;
+  vector<scoped_refptr<Thread> > threads_;
+};
+
+
+// TODO: put in util (share with delete-table-test)
+Status WaitForTSToCrash(ExternalTabletServer* ts) {
+  for (int i = 0; i < 1000; i++) {
+    if (!ts->IsProcessAlive()) return Status::OK();
+    SleepFor(MonoDelta::FromMilliseconds(10));
+  }
+  return Status::TimedOut("ts never crashed");
+}
+
+TEST_F(TsRecoveryITest, KUDU_969) {
+  ExternalMiniClusterOptions opts;
+  opts.num_tablet_servers = 3;
+  cluster_.reset(new ExternalMiniCluster(opts));
+  ASSERT_OK(cluster_->Start());
+
+
+  cluster_->SetFlag(cluster_->tablet_server(0),
+                    "flush_threshold_mb", "1");
+
+  // Use TestWorkload to create a table
+  TestWorkload work(cluster_.get());
+  work.set_num_replicas(3);
+  work.Setup();
+
+  // Open the table.
+  KuduClientBuilder builder;
+  sp::shared_ptr<KuduClient> client;
+  ASSERT_OK(cluster_->CreateClient(builder, &client));
+  sp::shared_ptr<KuduTable> table;
+  CHECK_OK(client->OpenTable(work.table_name(), &table));
+
+  // Keep track of how many rows have been inserted.
+  AtomicInt<int32_t> inserted(0);
+
+  // Start updater thread.
+  UpdaterThreads updater(&inserted, client, table);
+  updater.Start();
+
+  cluster_->SetFlag(cluster_->tablet_server(0),
+                    "fault_crash_before_flush_tablet_meta_after_compaction", "1.0");
+
+
+  // Insert some data.
+  sp::shared_ptr<KuduSession> session = client->NewSession();
+  session->SetTimeoutMillis(60000);
+  CHECK_OK(session->SetFlushMode(KuduSession::MANUAL_FLUSH));
+  for (int i = 1; ; i++) {
+    gscoped_ptr<KuduInsert> ins(table->NewInsert());
+    ASSERT_OK(ins->mutable_row()->SetInt32("key", IntToKey(i)));
+    ASSERT_OK(ins->mutable_row()->SetInt32("int_val", i));
+    ASSERT_OK(ins->mutable_row()->SetNull("string_val"));
+    ASSERT_OK(session->Apply(ins.release()));
+    if (i % 100 == 0) {
+      WARN_NOT_OK(session->Flush(), "could not flush session");
+      inserted.Store(i);
+    }
+
+    if (!cluster_->tablet_server(0)->IsProcessAlive()) {
+      LOG(INFO) << "detected TS crash!";
+      break;
+    }
+  }
+  updater.StopAndJoin();
+
+  cluster_->tablet_server(0)->Shutdown();
+  ASSERT_OK(cluster_->tablet_server(0)->Restart());
+
+  ClusterVerifier v(cluster_.get());
+  NO_FATALS(v.CheckCluster());
+
 }
 
 } // namespace kudu

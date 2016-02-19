@@ -27,6 +27,8 @@
 #include <utility>
 #include <vector>
 
+#include <glog/stl_logging.h>
+
 #include "kudu/cfile/cfile_writer.h"
 #include "kudu/common/iterator.h"
 #include "kudu/common/row_changelist.h"
@@ -475,6 +477,7 @@ Status Tablet::MutateRowUnlocked(WriteTransactionState *tx_state,
                       &stats,
                       result.get());
     if (s.ok()) {
+      //LOG(INFO) << "Applied mutate to " << rs->ToString();
       mutate->SetMutateSucceeded(std::move(result));
       return s;
     }
@@ -482,6 +485,7 @@ Status Tablet::MutateRowUnlocked(WriteTransactionState *tx_state,
       mutate->SetFailed(s);
       return s;
     }
+    //LOG(INFO) << "notfound in " << rs->ToString();
   }
 
   s = Status::NotFound("key not found");
@@ -1247,6 +1251,7 @@ Status Tablet::DoCompactionOrFlush(const RowSetsInCompaction &input, int64_t mrs
     non_duplicated_txns_snap = MvccSnapshot(mvcc_);
   }
 
+
   // All transactions committed in 'non_duplicated_txns_snap' saw the pre-swap components_.
   // Additionally, any transactions that were APPLYING during the above block by definition
   // _started_ doing so before the swap. Hence those transactions also need to get included in
@@ -1269,6 +1274,8 @@ Status Tablet::DoCompactionOrFlush(const RowSetsInCompaction &input, int64_t mrs
   // Then we want to consider all those transactions that were in-flight when we did the
   // swap as committed in 'non_duplicated_txns_snap'.
   non_duplicated_txns_snap.AddCommittedTimestamps(applying_during_swap);
+
+  SleepFor(MonoDelta::FromMilliseconds(50));
 
   if (common_hooks_) {
     RETURN_NOT_OK_PREPEND(common_hooks_->PostSwapInDuplicatingRowSet(),

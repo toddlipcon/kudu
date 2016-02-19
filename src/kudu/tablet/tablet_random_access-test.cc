@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <gflags/gflags.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "kudu/common/schema.h"
@@ -37,6 +38,7 @@ DEFINE_int32(update_delete_ratio, 4, "ratio of update:delete when mutating exist
 DECLARE_int32(deltafile_default_block_size);
 
 using std::string;
+using std::unique_ptr;
 using std::vector;
 
 enum TestOp {
@@ -88,11 +90,11 @@ class TestRandomAccess : public KuduTabletTest {
     // multiple delta blocks.
     FLAGS_deltafile_default_block_size = 1024;
     expected_tablet_state_.resize(FLAGS_keyspace_size);
+    locks_.reset(new Mutex[32]);
   }
 
   virtual void SetUp() OVERRIDE {
     KuduTabletTest::SetUp();
-    writer_.reset(new LocalTabletWriter(tablet().get(), &client_schema_));
   }
 
   // Pick a random row of the table, verify its current state, and then
@@ -105,16 +107,19 @@ class TestRandomAccess : public KuduTabletTest {
   //
   // TODO: should add a version of this test which also tries invalid operations
   // and validates the correct errors.
-  void DoRandomBatch() {
+  void DoRandomBatch(LocalTabletWriter* writer) {
     int key = rand() % expected_tablet_state_.size();
+    MutexLock l(locks_[key % 32]);
+
     string& cur_val = expected_tablet_state_[key];
 
     // Check that a read yields what we expect.
     string val_in_table = GetRow(key);
     ASSERT_EQ("(" + cur_val + ")", val_in_table);
 
+
     vector<LocalTabletWriter::Op> pending;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 1; i++) {
       int new_val = rand();
       if (cur_val.empty()) {
         // If there is no row, then insert one.
@@ -127,7 +132,9 @@ class TestRandomAccess : public KuduTabletTest {
         }
       }
     }
-    CHECK_OK(writer_->WriteBatch(pending));
+    CHECK_OK(writer->WriteBatch(pending));
+    l.Unlock();
+
     for (LocalTabletWriter::Op op : pending) {
       delete op.row;
     }
@@ -135,11 +142,13 @@ class TestRandomAccess : public KuduTabletTest {
 
   void DoRandomBatches() {
     int op_count = 0;
+    LocalTabletWriter writer(tablet().get(), &client_schema_);
+
     Stopwatch s;
     s.start();
     while (s.elapsed().wall_seconds() < FLAGS_runtime_seconds) {
       for (int i = 0; i < 100; i++) {
-        ASSERT_NO_FATAL_FAILURE(DoRandomBatch());
+        ASSERT_NO_FATAL_FAILURE(DoRandomBatch(&writer));
         op_count++;
       }
     }
@@ -151,14 +160,15 @@ class TestRandomAccess : public KuduTabletTest {
   void BackgroundOpThread() {
     int n_flushes = 0;
     while (!done_.WaitFor(MonoDelta::FromMilliseconds(FLAGS_sleep_between_background_ops_ms))) {
+      CHECK_OK(tablet()->FlushBiggestDMS());
       CHECK_OK(tablet()->Flush());
       ++n_flushes;
-      switch (n_flushes % 3) {
+      switch (rand() % 3) {
         case 0:
-          CHECK_OK(tablet()->Compact(Tablet::FORCE_COMPACT_ALL));
+          CHECK_OK(tablet()->Compact(0));
           break;
         case 1:
-          CHECK_OK(tablet()->CompactWorstDeltas(RowSet::MAJOR_DELTA_COMPACTION));
+          //CHECK_OK(tablet()->CompactWorstDeltas(RowSet::MAJOR_DELTA_COMPACTION));
           break;
         case 2:
           CHECK_OK(tablet()->CompactWorstDeltas(RowSet::MINOR_DELTA_COMPACTION));
@@ -249,23 +259,37 @@ class TestRandomAccess : public KuduTabletTest {
 
   // The current expected state of the tablet.
   vector<string> expected_tablet_state_;
+  std::unique_ptr<Mutex[]> locks_;
 
   // Latch triggered when the main thread is finished performing
   // operations. This stops the compact/flush thread.
   CountDownLatch done_;
-
-  gscoped_ptr<LocalTabletWriter> writer_;
 };
 
 TEST_F(TestRandomAccess, Test) {
-  scoped_refptr<Thread> flush_thread;
-  CHECK_OK(Thread::Create("test", "flush",
-                          boost::bind(&TestRandomAccess::BackgroundOpThread, this),
-                          &flush_thread));
+  vector<scoped_refptr<Thread>> bg_threads;
+  for (int i = 0; i < 2; i++) {
+    scoped_refptr<Thread> t;
+    CHECK_OK(Thread::Create("test", "flush",
+                            boost::bind(&TestRandomAccess::BackgroundOpThread, this),
+                            &t));
+    bg_threads.emplace_back(std::move(t));
+  }
 
-  DoRandomBatches();
+  vector<std::thread> threads;
+  for (int t = 0; t < 16; t++) {
+    threads.emplace_back([this] {
+        DoRandomBatches();
+      });
+  }
+  for (auto& t : threads) {
+    t.join();
+  }
   done_.CountDown();
-  flush_thread->Join();
+
+  for (auto& t : bg_threads) {
+    t->Join();
+  }
 }
 
 

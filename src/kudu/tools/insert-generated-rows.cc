@@ -95,10 +95,13 @@ static int WriteRandomDataToTable(int argc, char** argv) {
 
     gscoped_ptr<KuduInsert> insert(table->NewInsert());
     KuduPartialRow* row = insert->mutable_row();
-    GenerateDataForRow(schema, record_id, &random, row);
+    int64_t k = random.Next32() * record_id;
+    if (record_id % 2 == 1) { k = -k; }
+    GenerateDataForRow(schema, k, &random, row);
 
-    LOG(INFO) << "Inserting record: " << row->ToString();
+    //LOG(INFO) << "Inserting record: " << row->ToString();
     CHECK_OK(session->Apply(insert.release()));
+    if (record_id % 1000 != 0) { continue; }
     Status s = session->Flush();
     if (PREDICT_FALSE(!s.ok())) {
       std::vector<client::KuduError*> errors;

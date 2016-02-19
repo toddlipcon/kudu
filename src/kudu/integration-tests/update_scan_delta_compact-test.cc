@@ -21,6 +21,7 @@
 
 #include "kudu/client/callbacks.h"
 #include "kudu/client/client.h"
+#include "kudu/client/client-test-util.h"
 #include "kudu/client/row_result.h"
 #include "kudu/gutil/strings/strcat.h"
 #include "kudu/integration-tests/mini_cluster.h"
@@ -36,6 +37,7 @@
 
 DECLARE_int32(flush_threshold_mb);
 DECLARE_int32(log_segment_size_mb);
+DECLARE_int32(log_min_seconds_to_retain);
 DECLARE_int32(maintenance_manager_polling_interval_ms);
 DEFINE_int32(mbs_for_flushes_and_rolls, 1, "How many MBs are needed to flush and roll");
 DEFINE_int32(row_count, 2000, "How many rows will be used in this test for the base data");
@@ -49,6 +51,7 @@ using client::KuduInsert;
 using client::KuduClient;
 using client::KuduClientBuilder;
 using client::KuduColumnSchema;
+using client::KuduDelete;
 using client::KuduRowResult;
 using client::KuduScanner;
 using client::KuduSchema;
@@ -103,7 +106,7 @@ class UpdateScanDeltaCompactionTest : public KuduTest {
   // Starts the update and scan threads then stops them after seconds_to_run.
   void RunThreads();
 
- private:
+protected:
   enum {
     kKeyCol,
     kStrCol,
@@ -141,10 +144,8 @@ class UpdateScanDeltaCompactionTest : public KuduTest {
   // TODO randomize the string column.
   void MakeRow(int64_t key, int64_t val, KuduPartialRow* row) const;
 
-  // If 'key' is a multiple of kSessionBatchSize, it uses 'last_s' to wait for the previous batch
-  // to finish and then flushes the current one.
-  Status WaitForLastBatchAndFlush(int64_t key,
-                                  Synchronizer* last_s,
+  // TODO rewrite
+  Status WaitForLastBatchAndFlush(Synchronizer* last_s,
                                   KuduStatusCallback* last_s_cb,
                                   shared_ptr<KuduSession> session);
 
@@ -155,14 +156,17 @@ class UpdateScanDeltaCompactionTest : public KuduTest {
 };
 
 const char* const UpdateScanDeltaCompactionTest::kTableName = "update-scan-delta-compact-tbl";
-const int kSessionBatchSize = 1000;
+const int kInsertBatchSize = 2000;
+const int kUpdateBatchSize = 1;
 
 TEST_F(UpdateScanDeltaCompactionTest, TestAll) {
   OverrideFlagForSlowTests("seconds_to_run", "100");
-  OverrideFlagForSlowTests("row_count", "1000000");
-  OverrideFlagForSlowTests("mbs_for_flushes_and_rolls", "8");
+  OverrideFlagForSlowTests("row_count", "5000000");
+  OverrideFlagForSlowTests("mbs_for_flushes_and_rolls", "32");
   // Setting this high enough that we see the effects of flushes and compactions.
+  OverrideFlagForSlowTests("maintenance_manager_num_threads", "1");
   OverrideFlagForSlowTests("maintenance_manager_polling_interval_ms", "2000");
+  FLAGS_log_min_seconds_to_retain = 45;
   FLAGS_flush_threshold_mb = FLAGS_mbs_for_flushes_and_rolls;
   FLAGS_log_segment_size_mb = FLAGS_mbs_for_flushes_and_rolls;
   if (!AllowSlowTests()) {
@@ -173,6 +177,11 @@ TEST_F(UpdateScanDeltaCompactionTest, TestAll) {
   ASSERT_NO_FATAL_FAILURE(CreateTable());
   ASSERT_NO_FATAL_FAILURE(InsertBaseData());
   ASSERT_NO_FATAL_FAILURE(RunThreads());
+
+  exit(1);
+  cluster_->mini_tablet_server(0)->Restart();
+  sleep(10);
+
 }
 
 void UpdateScanDeltaCompactionTest::InsertBaseData() {
@@ -186,10 +195,13 @@ void UpdateScanDeltaCompactionTest::InsertBaseData() {
     for (int64_t key = 0; key < FLAGS_row_count; key++) {
       gscoped_ptr<KuduInsert> insert(table_->NewInsert());
       MakeRow(key, 0, insert->mutable_row());
-      ASSERT_OK(session->Apply(insert.release()));
-      ASSERT_OK(WaitForLastBatchAndFlush(key, &last_s, &last_s_cb, session));
+      CHECK_OK(session->Apply(insert.release()));
+
+      if (key % kInsertBatchSize == 0) {
+        CHECK_OK(WaitForLastBatchAndFlush(&last_s, &last_s_cb, session));
+      }
     }
-    ASSERT_OK(WaitForLastBatchAndFlush(kSessionBatchSize, &last_s, &last_s_cb, session));
+    ASSERT_OK(WaitForLastBatchAndFlush(&last_s, &last_s_cb, session));
     ASSERT_OK(last_s.Wait());
   }
 }
@@ -199,7 +211,7 @@ void UpdateScanDeltaCompactionTest::RunThreads() {
 
   CountDownLatch stop_latch(1);
 
-  {
+  for (int i = 0; i < 4; i++) {
     scoped_refptr<Thread> t;
     ASSERT_OK(Thread::Create(CURRENT_TEST_NAME(),
                              StrCat(CURRENT_TEST_CASE_NAME(), "-update"),
@@ -208,6 +220,7 @@ void UpdateScanDeltaCompactionTest::RunThreads() {
     threads.push_back(t);
   }
 
+  /*
   {
     scoped_refptr<Thread> t;
     ASSERT_OK(Thread::Create(CURRENT_TEST_NAME(),
@@ -225,6 +238,7 @@ void UpdateScanDeltaCompactionTest::RunThreads() {
                              &stop_latch, &t));
     threads.push_back(t);
   }
+  */
 
   SleepFor(MonoDelta::FromSeconds(FLAGS_seconds_to_run * 1.0));
   stop_latch.CountDown();
@@ -244,14 +258,31 @@ void UpdateScanDeltaCompactionTest::UpdateRows(CountDownLatch* stop_latch) {
 
   for (int64_t iteration = 1; stop_latch->count() > 0; iteration++) {
     last_s_cb.Run(Status::OK());
-    LOG_TIMING(INFO, "Update") {
-      for (int64_t key = 0; key < FLAGS_row_count && stop_latch->count() > 0; key++) {
-        gscoped_ptr<KuduUpdate> update(table_->NewUpdate());
-        MakeRow(key, iteration, update->mutable_row());
-        CHECK_OK(session->Apply(update.release()));
-        CHECK_OK(WaitForLastBatchAndFlush(key, &last_s, &last_s_cb, session));
+    {
+      for (int64_t i = 0; i < 10000; i++) {
+        int64_t key = rand() % FLAGS_row_count;
+
+        if (i % 2 == 0) {
+          // Delete
+          gscoped_ptr<KuduDelete> del(table_->NewDelete());
+          CHECK_OK(del->mutable_row()->SetInt64(kKeyCol, key));
+          CHECK_OK(session->Apply(del.release()));
+
+          // And reinsert
+          gscoped_ptr<KuduInsert> insert(table_->NewInsert());
+          MakeRow(key, iteration, insert->mutable_row());
+          CHECK_OK(session->Apply(insert.release()));
+        } else {
+          gscoped_ptr<KuduUpdate> update(table_->NewUpdate());
+          MakeRow(key, iteration, update->mutable_row());
+          CHECK_OK(session->Apply(update.release()));
+        }
+
+        if (i % kUpdateBatchSize == 0) {
+          CHECK_OK(WaitForLastBatchAndFlush(&last_s, &last_s_cb, session));
+        }
       }
-      CHECK_OK(WaitForLastBatchAndFlush(kSessionBatchSize, &last_s, &last_s_cb, session));
+      CHECK_OK(WaitForLastBatchAndFlush(&last_s, &last_s_cb, session));
       CHECK_OK(last_s.Wait());
     }
   }
@@ -297,15 +328,16 @@ void UpdateScanDeltaCompactionTest::MakeRow(int64_t key,
   CHECK_OK(row->SetInt64(kInt64Col, val));
 }
 
-Status UpdateScanDeltaCompactionTest::WaitForLastBatchAndFlush(int64_t key,
+Status UpdateScanDeltaCompactionTest::WaitForLastBatchAndFlush(
                                                                Synchronizer* last_s,
                                                                KuduStatusCallback* last_s_cb,
                                                                shared_ptr<KuduSession> session) {
-  if (key % kSessionBatchSize == 0) {
-    RETURN_NOT_OK(last_s->Wait());
-    last_s->Reset();
-    session->FlushAsync(last_s_cb);
+  Status s = last_s->Wait();
+  if (!s.ok()) {
+    client::LogSessionErrorsAndDie(session, s);
   }
+  last_s->Reset();
+  session->FlushAsync(last_s_cb);
   return Status::OK();
 }
 
