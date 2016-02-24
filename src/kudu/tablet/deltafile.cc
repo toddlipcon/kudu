@@ -136,7 +136,7 @@ Status DeltaFileWriter::AppendDelta<UNDO>(
 #ifndef NDEBUG
   // Sanity check insertion order in debug mode.
   if (has_appended_) {
-    DCHECK(last_key_.CompareTo<UNDO>(key) <= 0)
+    CHECK(last_key_.CompareTo<UNDO>(key) <= 0)
       << "must insert undo deltas in sorted order (ascending key, then descending ts): "
       << "got key " << key.ToString() << " after "
       << last_key_.ToString();

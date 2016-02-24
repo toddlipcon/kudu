@@ -462,6 +462,11 @@ Status Tablet::MutateRowUnlocked(WriteTransactionState *tx_state,
   vector<RowSet *> to_check;
   comps->rowsets->FindRowSetsWithKeyInRange(mutate->key_probe->encoded_key_slice(),
                                             &to_check);
+  //LOG(INFO) << "in range: " << to_check.size();
+  // TODO: this shuffle here is correct in that there is no guarantee of ordering
+  // for the 'to_check' array above. This reproduces KUDU-1341 more easily.
+  // Should probably only enable in debug mode.
+  std::random_shuffle(to_check.begin(), to_check.end());
   for (RowSet *rs : to_check) {
     s = rs->MutateRow(ts,
                       *mutate->key_probe,
