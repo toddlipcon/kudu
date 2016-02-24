@@ -64,9 +64,7 @@ namespace {
 } // namespace
 
 DeltaFileWriter::DeltaFileWriter(gscoped_ptr<WritableBlock> block)
-#ifndef NDEBUG
  : has_appended_(false)
-#endif
 { // NOLINT(*)
   cfile::WriterOptions opts;
   opts.write_validx = true;
@@ -114,7 +112,6 @@ template<>
 Status DeltaFileWriter::AppendDelta<REDO>(
   const DeltaKey &key, const RowChangeList &delta) {
 
-#ifndef NDEBUG
   // Sanity check insertion order in debug mode.
   if (has_appended_) {
     DCHECK(last_key_.CompareTo<REDO>(key) <= 0)
@@ -124,7 +121,6 @@ Status DeltaFileWriter::AppendDelta<REDO>(
   }
   has_appended_ = true;
   last_key_ = key;
-#endif
 
   return DoAppendDelta(key, delta);
 }
@@ -133,17 +129,15 @@ template<>
 Status DeltaFileWriter::AppendDelta<UNDO>(
   const DeltaKey &key, const RowChangeList &delta) {
 
-#ifndef NDEBUG
   // Sanity check insertion order in debug mode.
   if (has_appended_) {
-    DCHECK(last_key_.CompareTo<UNDO>(key) <= 0)
+    CHECK(last_key_.CompareTo<UNDO>(key) <= 0)
       << "must insert undo deltas in sorted order (ascending key, then descending ts): "
       << "got key " << key.ToString() << " after "
       << last_key_.ToString();
   }
   has_appended_ = true;
   last_key_ = key;
-#endif
 
   return DoAppendDelta(key, delta);
 }

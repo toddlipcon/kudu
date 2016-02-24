@@ -87,13 +87,11 @@ class DeltaFileWriter {
   // of the deltas
   faststring tmp_buf_;
 
-  #ifndef NDEBUG
   // The index of the previously written row.
   // This is used in debug mode to make sure that rows are appended
   // in order.
   DeltaKey last_key_;
   bool has_appended_;
-  #endif
 
   DISALLOW_COPY_AND_ASSIGN(DeltaFileWriter);
 };

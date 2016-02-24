@@ -456,12 +456,34 @@ Status Tablet::MutateRowUnlocked(WriteTransactionState *tx_state,
 
   // Next, check the disk rowsets.
 
-  // TODO: could iterate the rowsets in a smart order
-  // based on recent statistics - eg if a rowset is getting
-  // updated frequently, pick that one first.
   vector<RowSet *> to_check;
-  comps->rowsets->FindRowSetsWithKeyInRange(mutate->key_probe->encoded_key_slice(),
-                                            &to_check);
+  if (!mutate->orig_result_from_log_) {
+    // TODO: could iterate the rowsets in a smart order
+    // based on recent statistics - eg if a rowset is getting
+    // updated frequently, pick that one first.
+    comps->rowsets->FindRowSetsWithKeyInRange(mutate->key_probe->encoded_key_slice(),
+                                              &to_check);
+#ifndef NDEBUG
+    // The order in which the rowset tree returns its results doesn't have semantic
+    // relevance. We've had bugs in the past (eg KUDU-1341) which were obscured by
+    // relying on the order of rowsets here. So, in debug builds, we shuffle the
+    // order to encourage finding such bugs more easily.
+    std::random_shuffle(to_check.begin(), to_check.end());
+#endif
+  } else {
+    for (const auto& store : mutate->orig_result_from_log_->mutated_stores()) {
+      if (store.has_mrs_id()) {
+        to_check.push_back(comps->memrowset.get());
+      } else {
+        DCHECK(store.has_rs_id());
+        RowSet* drs = comps->rowsets->drs_by_id(store.rs_id());
+        if (PREDICT_TRUE(drs)) {
+          to_check.push_back(drs);
+        }
+      }
+    }
+  }
+
   for (RowSet *rs : to_check) {
     s = rs->MutateRow(ts,
                       *mutate->key_probe,
@@ -1624,6 +1646,7 @@ Status Tablet::CompactWorstDeltas(RowSet::DeltaCompactionType type) {
     RETURN_NOT_OK_PREPEND(rs->MinorCompactDeltaStores(),
                           "Failed minor delta compaction on " + rs->ToString());
   } else if (type == RowSet::MAJOR_DELTA_COMPACTION) {
+    LOG(INFO) << " going to major compact deltas in " << rs->ToString();
     RETURN_NOT_OK_PREPEND(down_cast<DiskRowSet*>(rs.get())->MajorCompactDeltaStores(),
                           "Failed major delta compaction on " + rs->ToString());
   }
