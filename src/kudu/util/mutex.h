@@ -34,6 +34,9 @@ class StackTrace;
 //   Acquire(), TryAcquire() - the lock isn't already held.
 //   Release() - the lock is already held by this thread.
 //
+// If this generates a deadlock, it can be convenient to gather stack
+// traces for where a mutex was first acquired. To enable this functionality,
+// #define MUTEX_TRACK_OWNER_STACKS
 class Mutex {
  public:
   Mutex();
@@ -66,7 +69,10 @@ class Mutex {
   // All private data is implicitly protected by native_handle_.
   // Be VERY careful to only access members under that lock.
   pid_t owning_tid_;
+
+#  ifdef MUTEX_TRACK_OWNER_STACKS
   gscoped_ptr<StackTrace> stack_trace_;
+#  endif
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(Mutex);

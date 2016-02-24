@@ -28,8 +28,10 @@ namespace kudu {
 
 Mutex::Mutex()
 #ifndef NDEBUG
-  : owning_tid_(0),
-    stack_trace_(new StackTrace())
+  : owning_tid_(0)
+#  ifdef MUTEX_TRACK_OWNER_STACKS
+   ,stack_trace_(new StackTrace())
+#  endif
 #endif
 {
 #ifndef NDEBUG
@@ -59,7 +61,10 @@ bool Mutex::TryAcquire() {
 #ifndef NDEBUG
   DCHECK(rv == 0 || rv == EBUSY) << ". " << strerror(rv)
       << ". Owner tid: " << owning_tid_ << "; Self tid: " << Env::Default()->gettid()
-      << "; Owner stack: " << std::endl << stack_trace_->Symbolize();;
+#  ifdef MUTEX_TRACK_OWNER_STACKS
+      << "; Owner stack: " << std::endl << stack_trace_->Symbolize()
+#  endif
+      << "";
   if (rv == 0) {
     CheckUnheldAndMark();
   }
@@ -72,7 +77,10 @@ void Mutex::Acquire() {
 #ifndef NDEBUG
   DCHECK_EQ(0, rv) << ". " << strerror(rv)
       << ". Owner tid: " << owning_tid_ << "; Self tid: " << Env::Default()->gettid()
-      << "; Owner stack: " << std::endl << stack_trace_->Symbolize();;
+#  ifdef MUTEX_TRACK_OWNER_STACKS
+      << "; Owner stack: " << std::endl << stack_trace_->Symbolize()
+#  endif
+      << "";
   CheckUnheldAndMark();
 #endif
 }
@@ -93,13 +101,17 @@ void Mutex::AssertAcquired() const {
 void Mutex::CheckHeldAndUnmark() {
   AssertAcquired();
   owning_tid_ = 0;
+#  ifdef MUTEX_TRACK_OWNER_STACKS
   stack_trace_->Reset();
+#  endif
 }
 
 void Mutex::CheckUnheldAndMark() {
   DCHECK_EQ(0, owning_tid_);
   owning_tid_ = Env::Default()->gettid();
+#  ifdef MUTEX_TRACK_OWNER_STACKS
   stack_trace_->Collect();
+#  endif
 }
 
 #endif
