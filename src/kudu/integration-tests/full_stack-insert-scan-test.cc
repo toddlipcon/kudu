@@ -280,6 +280,7 @@ TEST_F(FullStackInsertScanTest, MRSOnlyStressTest) {
 TEST_F(FullStackInsertScanTest, WithDiskStressTest) {
   NO_FATALS(CreateTable());
   NO_FATALS(DoConcurrentClientInserts());
+  exit(0);
   NO_FATALS(FlushToDisk());
   NO_FATALS(DoTestScans());
 }

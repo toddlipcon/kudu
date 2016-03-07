@@ -96,6 +96,7 @@ target_link_libraries(server_process
 if(${KUDU_TCMALLOC_AVAILABLE})
   target_link_libraries(server_process tcmalloc profiler)
 endif()
+target_link_libraries(server_process jemalloc)
 
 #########################################
 # server_process tests
