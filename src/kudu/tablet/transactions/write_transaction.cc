@@ -17,6 +17,7 @@
 
 #include "kudu/tablet/transactions/write_transaction.h"
 
+#include <coz.h>
 #include <algorithm>
 #include <vector>
 
@@ -249,6 +250,7 @@ void WriteTransactionState::StartApplying() {
 }
 
 void WriteTransactionState::CommitOrAbort(Transaction::TransactionResult result) {
+  COZ_PROGRESS;
   if (mvcc_tx_.get() != nullptr) {
     // Commit the transaction.
     switch (result) {

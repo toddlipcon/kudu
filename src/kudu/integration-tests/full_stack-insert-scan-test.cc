@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <coz.h>
 #include <cmath>
 #include <cstdlib>
 #include <gflags/gflags.h>
@@ -280,8 +281,8 @@ TEST_F(FullStackInsertScanTest, MRSOnlyStressTest) {
 TEST_F(FullStackInsertScanTest, WithDiskStressTest) {
   NO_FATALS(CreateTable());
   NO_FATALS(DoConcurrentClientInserts());
-  NO_FATALS(FlushToDisk());
-  NO_FATALS(DoTestScans());
+  //  NO_FATALS(FlushToDisk());
+  //  NO_FATALS(DoTestScans());
 }
 
 void FullStackInsertScanTest::DoConcurrentClientInserts() {

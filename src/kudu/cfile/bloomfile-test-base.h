@@ -19,6 +19,7 @@
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <coz.h>
 
 #include "kudu/cfile/bloomfile.h"
 #include "kudu/fs/fs_manager.h"

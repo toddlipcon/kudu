@@ -54,7 +54,7 @@ set(GUTIL_SRCS
 
 set(GUTIL_LIBS
   glog
-  protobuf)
+  protobuf dl)
 
 if (NOT APPLE)
   set(GUTIL_LIBS

@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+#include <coz.h>
 #include "kudu/tserver/tablet_server-test-base.h"
 
 #include "kudu/gutil/strings/substitute.h"
@@ -93,6 +94,7 @@ void TSStressTest::InserterThread(int thread_idx) {
     MonoTime after = MonoTime::Now(MonoTime::FINE);
     MonoDelta delta = after.GetDeltaSince(before);
     histogram_->Increment(delta.ToMicroseconds());
+    COZ_PROGRESS;
   }
   LOG(INFO) << "Inserter thread " << thread_idx << " complete";
 }

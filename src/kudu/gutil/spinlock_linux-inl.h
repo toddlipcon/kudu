@@ -36,6 +36,7 @@
 #include <sched.h>
 #include <time.h>
 #include <limits.h>
+#include <coz.h>
 #include "kudu/gutil/linux_syscall_support.h"
 
 #define FUTEX_WAIT 0
@@ -83,9 +84,11 @@ void SpinLockDelay(volatile Atomic32 *w, int32 value, int loop) {
     }
     if (have_futex) {
       tm.tv_nsec *= 16;  // increase the delay; we expect explicit wakeups
+      COZ_PRE_BLOCK();
       sys_futex(reinterpret_cast<int *>(const_cast<Atomic32 *>(w)),
                 FUTEX_WAIT | futex_private_flag,
                 value, reinterpret_cast<struct kernel_timespec *>(&tm));
+      COZ_POST_BLOCK(true);
     } else {
       nanosleep(&tm, NULL);
     }
@@ -95,6 +98,7 @@ void SpinLockDelay(volatile Atomic32 *w, int32 value, int loop) {
 
 void SpinLockWake(volatile Atomic32 *w, bool all) {
   if (have_futex) {
+    COZ_WAKE_OTHER();
     sys_futex(reinterpret_cast<int *>(const_cast<Atomic32 *>(w)),
               FUTEX_WAKE | futex_private_flag, all? INT_MAX : 1, 0);
   }
