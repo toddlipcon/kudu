@@ -228,6 +228,10 @@ class ThreadPool {
   scoped_refptr<Histogram> queue_time_us_histogram_;
   scoped_refptr<Histogram> run_time_us_histogram_;
 
+  const char* queue_time_trace_metric_name_;
+  const char* run_wall_time_trace_metric_name_;
+  const char* run_cpu_time_trace_metric_name_;
+
   DISALLOW_COPY_AND_ASSIGN(ThreadPool);
 };
 

@@ -17,6 +17,7 @@
 
 #include "kudu/rpc/inbound_call.h"
 
+#include <glog/stl_logging.h>
 #include <memory>
 
 #include "kudu/gutil/strings/substitute.h"
@@ -225,6 +226,9 @@ void InboundCall::LogTrace() const {
   if (PREDICT_FALSE(FLAGS_rpc_dump_all_traces)) {
     LOG(INFO) << ToString() << " took " << total_time << "ms. Trace:";
     trace_->Dump(&LOG(INFO), true);
+  } else if (total_time > 1000) {
+    LOG(INFO) << ToString() << " took " << total_time << "ms. "
+              << "Request Metrics: " << trace_->MetricsAsJSON();
   }
 }
 

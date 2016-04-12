@@ -39,6 +39,7 @@
 #include "kudu/util/random_util.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/threadpool.h"
+#include "kudu/util/trace.h"
 
 // TODO: How should this be configured? Should provide some guidance.
 DEFINE_uint64(log_container_max_size, 10LU * 1024 * 1024 * 1024,
@@ -984,7 +985,23 @@ Status LogReadableBlock::Read(uint64_t offset, size_t length,
                                       log_block_->offset(),
                                       log_block_->offset() + log_block_->length()));
   }
+
+  MicrosecondsInt64 start_time = GetMonoTimeMicros();
   RETURN_NOT_OK(container_->ReadData(read_offset, length, result, scratch));
+  MicrosecondsInt64 end_time = GetMonoTimeMicros();
+
+  int64_t dur = end_time - start_time;
+  TRACE_COUNTER_INCREMENT("lbm_read_time_us", dur);
+
+  if (dur >= 100000) {
+    TRACE_COUNTER_INCREMENT("lbm_reads_gt_100ms", dur);
+  } else if (dur >= 10000) {
+    TRACE_COUNTER_INCREMENT("lbm_reads_gt_10ms", dur);
+  } else if (dur >= 1000) {
+    TRACE_COUNTER_INCREMENT("lbm_reads_gt_10ms", dur);
+  } else {
+    TRACE_COUNTER_INCREMENT("lbm_reads_lt_10ms", dur);
+  }
 
   if (container_->metrics()) {
     container_->metrics()->generic_metrics.total_bytes_read->IncrementBy(length);
