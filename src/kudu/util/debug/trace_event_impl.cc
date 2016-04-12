@@ -563,7 +563,7 @@ void TraceEvent::Initialize(
     arg_names_[i] = arg_names[i];
     arg_types_[i] = arg_types[i];
 
-    if (arg_types[i] == TRACE_VALUE_TYPE_CONVERTABLE)
+    if (PREDICT_FALSE(arg_types[i] == TRACE_VALUE_TYPE_CONVERTABLE))
       convertable_values_[i] = convertable_values[i];
     else
       arg_values_[i].as_uint = arg_values[i];
@@ -577,7 +577,7 @@ void TraceEvent::Initialize(
 
   bool copy = !!(flags & TRACE_EVENT_FLAG_COPY);
   size_t alloc_size = 0;
-  if (copy) {
+  if (PREDICT_FALSE(copy)) {
     alloc_size += GetAllocLength(name);
     for (i = 0; i < num_args; ++i) {
       alloc_size += GetAllocLength(arg_names_[i]);
@@ -1776,7 +1776,7 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
   // Avoid re-entrance of AddTraceEvent. This may happen in GPU process when
   // ECHO_TO_CONSOLE is enabled: AddTraceEvent -> LOG(ERROR) ->
   // GpuProcessLogMessageHandler -> PostPendingTask -> TRACE_EVENT ...
-  if (base::subtle::NoBarrier_Load(&thr_info->is_in_trace_event_))
+  if (PREDICT_FALSE(base::subtle::NoBarrier_Load(&thr_info->is_in_trace_event_)))
     return handle;
 
   MarkFlagInScope thread_is_in_trace_event(&thr_info->is_in_trace_event_);
@@ -1859,16 +1859,16 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
 #endif
     }
 
-    if (trace_options() & ECHO_TO_CONSOLE) {
+    if (PREDICT_FALSE(trace_options() & ECHO_TO_CONSOLE)) {
       console_message = EventToConsoleMessage(
           phase == TRACE_EVENT_PHASE_COMPLETE ? TRACE_EVENT_PHASE_BEGIN : phase,
           timestamp, trace_event);
-    }
+      if (PREDICT_FALSE(console_message.size()))
+        LOG(ERROR) << console_message;
+   }
   }
 
-  if (PREDICT_FALSE(console_message.size()))
-    LOG(ERROR) << console_message;
-
+ 
   if (PREDICT_FALSE(reinterpret_cast<const unsigned char*>(
                       base::subtle::NoBarrier_Load(&watch_category_)) == category_group_enabled)) {
     bool event_name_matches;
