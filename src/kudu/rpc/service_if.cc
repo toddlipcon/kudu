@@ -23,20 +23,15 @@
 
 #include "kudu/rpc/connection.h"
 #include "kudu/rpc/inbound_call.h"
+#include "kudu/rpc/rpc_context.h"
 #include "kudu/rpc/rpc_header.pb.h"
 
+using google::protobuf::Message;
 using std::string;
 using strings::Substitute;
 
 namespace kudu {
 namespace rpc {
-
-RpcMethodMetrics::RpcMethodMetrics()
-  : handler_latency(nullptr) {
-}
-
-RpcMethodMetrics::~RpcMethodMetrics() {
-}
 
 ServiceIf::~ServiceIf() {
 }
@@ -76,6 +71,27 @@ void ServiceIf::RespondBadMethod(InboundCall *call) {
   LOG(WARNING) << err;
   call->RespondFailure(ErrorStatusPB::ERROR_NO_SUCH_METHOD,
                        Status::InvalidArgument(err));
+}
+
+GeneratedServiceIf::~GeneratedServiceIf() {
+}
+
+
+void GeneratedServiceIf::Handle(InboundCall *call) {
+  const auto& method_name = call->remote_method().method_name();
+  const auto& it = methods_by_name_.find(method_name);
+  if (PREDICT_FALSE(it == methods_by_name_.end())) {
+    RespondBadMethod(call);
+    return;
+  }
+  const auto& method_info = it->second;
+  Message* req = method_info->req_prototype->New();
+  Message* resp = method_info->resp_prototype->New();
+  if (PREDICT_FALSE(!ParseParam(call, req))) {
+    return;
+  }
+  RpcContext* ctx = new RpcContext(call, req, resp, method_info->metrics);
+  method_info->func(req, resp, ctx);
 }
 
 } // namespace rpc
