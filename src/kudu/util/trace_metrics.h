@@ -53,7 +53,16 @@ class TraceMetrics {
   // Return a copy of the current counter map.
   std::map<const char*, int64_t> Get() const;
 
+  struct CounterPair {
+    Atomic64 name = 0;
+    Atomic64 amount = 0;
+  };
+  std::array<CounterPair, 4> buffer_;
+  Atomic32 last_match_pos_ = 0;
+
  private:
+  void FlushUnlocked() const;
+
   mutable simple_spinlock lock_;
   std::map<const char*, int64_t> counters_;
 
@@ -61,14 +70,42 @@ class TraceMetrics {
 };
 
 inline void TraceMetrics::Increment(const char* name, int64_t amount) {
+  int start_pos = base::subtle::NoBarrier_Load(&last_match_pos_);
+  for (int i = 0; i < buffer_.size(); i++) {
+    int idx = (start_pos + i) % buffer_.size();
+    auto& p = buffer_[idx];
+    auto cur = base::subtle::NoBarrier_Load(&p.name);
+    if (PREDICT_TRUE(cur == reinterpret_cast<uintptr_t>(name))) {
+      p.amount += amount;
+      base::subtle::NoBarrier_Store(&last_match_pos_, idx);
+      return;
+    }
+    if (cur == 0 && PREDICT_TRUE(base::subtle::NoBarrier_CompareAndSwap(&p.name, 0, (uintptr_t)name) == 0)) {
+
+      p.amount += amount;
+      base::subtle::NoBarrier_Store(&last_match_pos_, idx);
+      return;
+    }
+  }
+
   lock_guard<simple_spinlock> l(&lock_);
   counters_[name] += amount;
 }
 
 inline std::map<const char*, int64_t> TraceMetrics::Get() const {
-  lock_guard<simple_spinlock> l(&lock_);
-  return counters_;
+  std::map<const char*, int64_t> ret;
+  {
+    lock_guard<simple_spinlock> l(&lock_);
+    ret = counters_;
+  }
+  for (const auto& p : buffer_) {
+    if (p.name) {
+      ret[(const char*)p.name] += base::subtle::NoBarrier_Load(&p.amount);
+    }
+  }
+  return ret;
 }
+
 
 } // namespace kudu
 #endif /* KUDU_UTIL_TRACE_METRICS_H */
