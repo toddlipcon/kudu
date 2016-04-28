@@ -179,16 +179,26 @@ Type* ModuleBuilder::GetType(const string& name) {
   return CHECK_NOTNULL(module_->getTypeByName(name));
 }
 
-Value* ModuleBuilder::GetPointerValue(void* ptr) const {
-  CHECK_EQ(state_, kBuilding);
-  // No direct way of creating constant pointer values in LLVM, so
-  // first a constant int has to be created and then casted to a pointer
-  IntegerType* llvm_uintptr_t = Type::getIntNTy(*context_, 8 * sizeof(ptr));
-  uintptr_t int_value = reinterpret_cast<uintptr_t>(ptr);
-  ConstantInt* llvm_int_value = ConstantInt::get(llvm_uintptr_t,
-                                                 int_value, false);
-  Type* llvm_ptr_t = Type::getInt8PtrTy(*context_);
-  return ConstantExpr::getIntToPtr(llvm_int_value, llvm_ptr_t);
+Value* ModuleBuilder::GetPointerToConstantArray(const uint8_t* ptr, int len) {
+  llvm::ArrayRef<uint8_t> arr(const_cast<uint8_t*>(ptr), len);
+  llvm::Constant* c = llvm::ConstantDataArray::get(*context_, arr);
+  auto* gv = new llvm::GlobalVariable(
+      *module_,
+      c->getType(),
+      /* isConstant= */ true,
+      llvm::GlobalValue::InternalLinkage,
+      /* Initializer=*/c,
+      "my_ir_global");
+  gv->setAlignment(1);
+
+  // The following voodoo is something like grabbing the pointer to
+  // the first element of our constant array, such that we end up
+  // returning a 'const uint8_t*' equivalent rather than a
+  // 'const uint8_t[len]' equivalent.
+  vector<llvm::Constant*> gep_args = {
+    ConstantInt::get(Type::getInt32Ty(*context_), 0),
+    ConstantInt::get(Type::getInt32Ty(*context_), 0) };
+  return ConstantExpr::getGetElementPtr(c->getType(), gv, gep_args);
 }
 
 

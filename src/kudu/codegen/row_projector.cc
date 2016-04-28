@@ -41,6 +41,8 @@
 #include "kudu/util/faststring.h"
 #include "kudu/util/status.h"
 
+#include "kudu/codegen/codegen_params_generated.h"
+
 namespace llvm {
 class LLVMContext;
 } // namespace llvm
@@ -69,6 +71,66 @@ namespace codegen {
 
 namespace {
 
+vector<fbs::CellInfo> GetCellInfoFBs(const Schema& schema,
+                                     bool for_read) {
+  vector<fbs::CellInfo> ret;
+  for (int i = 0; i < schema.num_columns(); i++) {
+    const auto& col = schema.column(i);
+    auto def_val = reinterpret_cast<uint64_t>(
+        for_read ? col.read_default_value() :
+        col.write_default_value());
+    ret.emplace_back(
+        col.type_info()->physical_type(),
+        schema.column_offset(i),
+        col.type_info()->size(),
+        col.is_nullable(),
+        def_val);
+  }
+  return ret;
+}
+
+void EncodeFlatBuf(const kudu::RowProjector& proj,
+                   bool for_read,
+                   faststring* buf) {
+  // Extract schema information from projector
+  const Schema& base_schema = *proj.base_schema();
+  const Schema& projection = *proj.projection();
+
+  flatbuffers::FlatBufferBuilder fb_builder;
+
+  // Set up base_cols_mapping
+  vector<fbs::IndexPair> index_pairs;
+  for (const auto& entry : proj.base_cols_mapping()) {
+    index_pairs.emplace_back(entry.first, entry.second);
+  }
+  auto index_pairs_fb = fb_builder.CreateVectorOfStructs(index_pairs);
+
+  // Set up proj_defaults
+  vector<uint32_t> proj_defaults;
+  for (auto idx : proj.projection_defaults()) {
+    proj_defaults.push_back(idx);
+  }
+  auto proj_defaults_fb = fb_builder.CreateVector(proj_defaults);
+
+  // Set up cell info
+  vector<fbs::CellInfo> src_cell_info = GetCellInfoFBs(base_schema, for_read);
+  vector<fbs::CellInfo> dst_cell_info = GetCellInfoFBs(projection, for_read);
+  auto src_cell_info_fb = fb_builder.CreateVectorOfStructs(src_cell_info);
+  auto dst_cell_info_fb = fb_builder.CreateVectorOfStructs(dst_cell_info);
+
+  fbs::RowProjectorParamBuilder param(fb_builder);
+  param.add_src_null_bitmap_offset(base_schema.byte_size());
+  param.add_for_read(for_read);
+  param.add_base_cols_mapping(index_pairs_fb);
+  param.add_default_cols(proj_defaults_fb);
+  param.add_src_cell_info(src_cell_info_fb);
+  param.add_dst_cell_info(dst_cell_info_fb);
+  fb_builder.Finish(param.Finish());
+
+  buf->assign_copy(fb_builder.GetBufferPointer(),
+                   fb_builder.GetSize());
+}
+
 // Generates a schema-to-schema projection function of the form:
 // bool(int8_t* src, RowBlockRow* row, Arena* arena)
 // Requires src is a contiguous row of the base schema.
@@ -85,9 +147,12 @@ llvm::Function* MakeProjection(const string& name,
   ModuleBuilder::LLVMBuilder* builder = mbuilder->builder();
   LLVMContext& context = builder->getContext();
 
-  // Extract schema information from projector
-  const Schema& base_schema = *proj.base_schema();
-  const Schema& projection = *proj.projection();
+  faststring flatbuf;
+  EncodeFlatBuf(proj, READ, &flatbuf);
+
+  auto* fb_val = mbuilder->GetPointerToConstantArray(
+      flatbuf.data(), flatbuf.size());
+  auto fb_len = builder->getInt64(flatbuf.size());
 
   // Create the function after providing a declaration
   vector<Type*> argtypes = { Type::getInt8PtrTy(context),
@@ -109,133 +174,12 @@ llvm::Function* MakeProjection(const string& name,
   rbrow->setName("rbrow");
   arena->setName("arena");
 
-  // Mark our arguments as not aliasing. This eliminates a redundant
-  // load of rbrow->row_block_ and rbrow->row_index_ for each column.
-  // Note that these arguments are 1-based indexes.
-  f->setDoesNotAlias(1);
-  f->setDoesNotAlias(2);
-  f->setDoesNotAlias(3);
-
-  // Project row function in IR (note: values in angle brackets are
-  // constants whose values are determined right now, at JIT time).
-  //
-  // define i1 @name(i8* noalias %src, RowBlockRow* noalias %rbrow, Arena* noalias %arena)
-  // entry:
-  //   %src_bitmap = getelementptr i8* %src, i64 <offset to bitmap>
-  //   <for each base column to projection column mapping>
-  //     %src_cell = getelementptr i8* %src, i64 <base offset>
-  //     %result = call i1 @CopyCellToRowBlock(
-  //       i64 <type size>, i8* %src_cell, RowBlockRow* %rbrow,
-  //       i64 <column index>, i1 <is binary>, Arena* %arena)**
-  //   %success = and %success, %result***
-  //   <end implicit for each>
-  //   <for each projection column that needs defaults>
-  //     <if default column is nullable>
-  //       call void @CopyCellToRowBlockNullDefault(
-  //         RowBlockRow* %rbrow, i64 <column index>, i1 <is null>)
-  //     <end implicit if>
-  //     <if default value was not null>
-  //       %src_cell = inttoptr i64 <default value location> to i8*
-  //       %result = call i1 @CopyCellToRowBlock(
-  //         i64 <type size>, i8* %src_cell, RowBlockRow* %rbrow,
-  //         i64 <column index>, i1 <is_binary>, Arena* %arena)
-  //       %success = and %success, %result***
-  //     <end implicit if>
-  //   <end implicit for each>
-  //   ret i1 %success
-  //
-  // **If the column is nullable, then the call is replaced with
-  // call i1 @CopyCellToRowBlockNullable(
-  //   i64 <type size>, i8* %src_cell, RowBlockRow* %rbrow, i64 <column index>,
-  //   i1 <is_binary>, Arena* %arena, i8* src_bitmap, i64 <bitmap_idx>)
-  // ***If the column is nullable and the default value is NULL, then the
-  // call is replaced with
-  // call void @CopyCellToRowBlockSetNull(
-  //   RowBlockRow* %rbrow, i64 <column index>)
-  // ****Technically, llvm ir does not support mutable registers. Thus,
-  // this is implemented by having "success" be the most recent result
-  // register of the last "and" instruction. The different "success" values
-  // can be differentiated by using a success_update_number.
-
-  // Retrieve appropriate precompiled rowblock cell functions
-  Function* copy_cell_not_null =
-    mbuilder->GetFunction("_PrecompiledCopyCellToRowBlock");
-  Function* copy_cell_nullable =
-    mbuilder->GetFunction("_PrecompiledCopyCellToRowBlockNullable");
-  Function* row_block_set_null =
-    mbuilder->GetFunction("_PrecompiledCopyCellToRowBlockSetNull");
-
-  // The bitmap for a contiguous row goes after the row data
-  // See common/row.h ContiguousRowHelper class
   builder->SetInsertPoint(BasicBlock::Create(context, "entry", f));
-  Value* src_bitmap = builder->CreateConstGEP1_64(src, base_schema.byte_size());
-  src_bitmap->setName("src_bitmap");
-  Value* success = builder->getInt1(true);
-  int success_update_number = 0;
-
-  // Copy base data
-  for (const kudu::RowProjector::ProjectionIdxMapping& pmap : proj.base_cols_mapping()) {
-    // Retrieve information regarding this column-to-column transformation
-    size_t proj_idx = pmap.first;
-    size_t base_idx = pmap.second;
-    size_t src_offset = base_schema.column_offset(base_idx);
-    const ColumnSchema& col = base_schema.column(base_idx);
-
-    // Create the common values between the nullable and nonnullable calls
-    Value* size = builder->getInt64(col.type_info()->size());
-    Value* src_cell = builder->CreateConstGEP1_64(src, src_offset);
-    src_cell->setName(StrCat("src_cell_base_", base_idx));
-    Value* col_idx = builder->getInt64(proj_idx);
-    ConstantInt* is_binary = builder->getInt1(col.type_info()->physical_type() == BINARY);
-    vector<Value*> args = { size, src_cell, rbrow, col_idx, is_binary, arena };
-
-    // Add additional arguments if nullable
-    Function* to_call = copy_cell_not_null;
-    if (col.is_nullable()) {
-      args.push_back(src_bitmap);
-      args.push_back(builder->getInt64(base_idx));
-      to_call = copy_cell_nullable;
-    }
-
-    // Make the call and check the return value
-    Value* result = builder->CreateCall(to_call, args);
-    result->setName(StrCat("result_b", base_idx, "_p", proj_idx));
-    success = builder->CreateAnd(success, result);
-    success->setName(StrCat("success", success_update_number++));
-  }
-
-  // Fill defaults
-  for (size_t dfl_idx : proj.projection_defaults()) {
-    // Retrieve mapping information
-    const ColumnSchema& col = projection.column(dfl_idx);
-    const void* dfl = READ ? col.read_default_value() :
-      col.write_default_value();
-
-    // Generate arguments
-    Value* size = builder->getInt64(col.type_info()->size());
-    Value* src_cell = mbuilder->GetPointerValue(const_cast<void*>(dfl));
-    Value* col_idx = builder->getInt64(dfl_idx);
-    ConstantInt* is_binary = builder->getInt1(col.type_info()->physical_type() == BINARY);
-
-    // Handle default columns that are nullable
-    if (col.is_nullable()) {
-      Value* is_null = builder->getInt1(dfl == nullptr);
-      vector<Value*> args = { rbrow, col_idx, is_null };
-      builder->CreateCall(row_block_set_null, args);
-      // If dfl was NULL, we're done
-      if (dfl == nullptr) continue;
-    }
-
-    // Make the copy cell call and check the return value
-    vector<Value*> args = { size, src_cell, rbrow, col_idx, is_binary, arena };
-    Value* result = builder->CreateCall(copy_cell_not_null, args);
-    result->setName(StrCat("result_dfl", dfl_idx));
-    success = builder->CreateAnd(success, result);
-    success->setName(StrCat("success", success_update_number++));
-  }
-
-  // Return
-  builder->CreateRet(success);
+  // Make the call, passing along the arguments as well as the
+  // flatbuffer. The return value is passed through.
+  builder->CreateRet(builder->CreateCall(
+      mbuilder->GetFunction("_PrecompiledProjectRow"),
+      { src, rbrow, arena, fb_val, fb_len }));
 
   if (FLAGS_codegen_dump_functions) {
     LOG(INFO) << "Dumping " << (READ? "read" : "write") << " projection:";
@@ -336,7 +280,11 @@ Status RowProjectorFunctions::EncodeKey(const Schema& base, const Schema& proj,
                                         faststring* out) {
   kudu::RowProjector projector(&base, &proj);
   RETURN_NOT_OK(projector.Init());
-
+  // TODO: this can be implemented with EncodeFlatBuf, except that currently
+  // a single flatbuf is either read _or_ write, whereas here we really need
+  // to get _both_ defaults.
+  // TODO: it seems like there's a bug here since we're using the pointer value
+  // of the read_default in the case of STRINGs, which could get reused.
   AddNext(out, JITWrapper::ROW_PROJECTOR);
   AddNext(out, base.num_columns());
   for (const ColumnSchema& col : base.columns()) {

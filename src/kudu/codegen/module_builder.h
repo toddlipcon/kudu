@@ -83,8 +83,11 @@ class ModuleBuilder {
   llvm::Type* GetType(const std::string& name);
   // Retrieve a precompiled function
   llvm::Function* GetFunction(const std::string& name);
-  // Get the LLVM wrapper for a constant pointer value of type i8*
-  llvm::Value* GetPointerValue(void* ptr) const;
+
+  // Create an LLVM constant array with the given data, and return
+  // a pointer to its first element (i8* LLVM type).
+  llvm::Value* GetPointerToConstantArray(const uint8_t* ptr, int len);
+
 
   LLVMBuilder* builder() { return &builder_; }
 

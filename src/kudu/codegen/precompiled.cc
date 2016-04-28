@@ -40,6 +40,8 @@
 #include "kudu/util/bitmap.h"
 #include "kudu/util/memory/arena.h"
 
+#include "kudu/codegen/codegen_params_generated.h"
+
 // Even though this file is only needed for IR purposes, we need to check for
 // IR_BUILD because we use a fake static library target to workaround a cmake
 // dependencies bug. See 'ir_fake_target' in CMakeLists.txt.
@@ -68,11 +70,11 @@ namespace kudu {
 // which can only occur if is_string is true).
 // If arena is NULL, then no relocation occurs.
 IR_ALWAYS_INLINE static bool BasicCopyCell(
-    uint64_t size, uint8_t* src, uint8_t* dst, bool is_string, Arena* arena) {
+    uint64_t size, const uint8_t* src, uint8_t* dst, bool is_string, Arena* arena) {
   // Relocate indirect data
   if (is_string) {
     if (PREDICT_TRUE(arena != nullptr)) {
-      return PREDICT_TRUE(arena->RelocateSlice(*reinterpret_cast<Slice*>(src),
+      return PREDICT_TRUE(arena->RelocateSlice(*reinterpret_cast<const Slice*>(src),
                                                reinterpret_cast<Slice*>(dst)));
     }
     // If arena is NULL, don't relocate, but do copy the pointers to the raw
@@ -99,65 +101,63 @@ extern "C" {
 //   (2) The functions below are all prefixed with _Precompiled to avoid
 //       any potential naming conflicts.
 
+IR_ALWAYS_INLINE
+bool _PrecompiledProjectRow(uint8_t*  __restrict__ src,
+                            RowBlockRow* __restrict__ dst,
+                            Arena* dst_arena,
+                            const char* flatbuf, int64_t fb_len) {
+  auto fb = flatbuffers::GetRoot<fbs::RowProjectorParam>(flatbuf);
 
-// declare i1 @_PrecompiledCopyCellToRowBlock(
-//   i64 size, i8* src, RowBlockRow* dst, i64 col, i1 is_string, Arena* arena)
-//
-//   Performs the same function as CopyCell, copying size bytes of the
-//   cell pointed to by src to the cell of column col in the row pointed
-//   to by dst, copying indirect data to the parameter arena if is_string
-//   is true. Will hard crash if insufficient memory is available for
-//   relocation. Copies size bytes directly from the src cell.
-//   If arena is NULL then only the direct copy will occur.
-//   Returns whether successful. If not, out-of-memory during relocation of
-//   slices has occured, which can only happen if is_string is true.
-IR_ALWAYS_INLINE bool _PrecompiledCopyCellToRowBlock(
-    uint64_t size, uint8_t* src, RowBlockRow* dst,
-    uint64_t col, bool is_string, Arena* arena) {
+#if 0
+  flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(flatbuf), fb_len);
+  CHECK(fb->Verify(v));
+#endif
 
-  // We manually compute the destination cell pointer here, rather than
-  // using dst->cell_ptr(), since we statically know the size of the column
-  // type. Using the normal access path would generate an 'imul' instruction,
-  // since it would be loading the column type info from the RowBlock object
-  // instead of our static parameter here.
-  size_t idx = dst->row_index();
-  const RowBlock* block = dst->row_block();
-  uint8_t* dst_cell = block->column_data_base_ptr(col) + idx * size;
-  return BasicCopyCell(size, src, dst_cell, is_string, arena);
-}
+  const uint8_t* src_null_bitmap = src + fb->src_null_bitmap_offset();
+  const RowBlock* dst_block = dst->row_block();
 
-// declare i1 @_PrecompiledCopyCellToRowBlockNullable(
-//   i64 size, i8* src, RowBlockRow* dst, i64 col, i1 is_string, Arena* arena,
-//   i8* src_bitmap, i64 bitmap_idx)
-//
-//   Performs the same function as _PrecompiledCopyCellToRowBlock but for nullable
-//   columns. Checks the parameter bitmap at the specified index and updates
-//   The row's bitmap accordingly. Then goes on to copy the cell over if it
-//   is not null.
-//   If arena is NULL then only the direct copy will occur (if the source
-//   bitmap indicates the cell itself is non-null).
-//   Returns whether successful. If not, out-of-memory during relocation of
-//   slices has occured, which can only happen if is_string is true.
-IR_ALWAYS_INLINE bool _PrecompiledCopyCellToRowBlockNullable(
-    uint64_t size, uint8_t* src, RowBlockRow* dst, uint64_t col, bool is_string,
-    Arena* arena, uint8_t* src_bitmap, uint64_t bitmap_idx) {
-  // Using this method implies the nullablity of the column.
-  // Write whether the column is nullable to the RowBlock's ColumnBlock's bitmap
-  bool is_null = BitmapTest(src_bitmap, bitmap_idx);
-  dst->cell(col).set_null(is_null);
-  // No more copies necessary if null
-  if (is_null) return true;
-  return _PrecompiledCopyCellToRowBlock(size, src, dst, col, is_string, arena);
-}
+  // Copy directly from base Data
+  #pragma unroll
+  for (const auto* m : *fb->base_cols_mapping()) {
+    auto dst_col_idx = m->first();
+    auto src_col_idx = m->second();
+    auto src_info = fb->src_cell_info()->Get(src_col_idx);
+    auto size = src_info->size();
 
-// declare void @_PrecompiledSetRowBlockCellSetNull
-//   RowBlockRow* %dst, i64 <column index>, i1 %is_null)
-//
-//   Sets the cell at column 'col' for destination RowBlockRow 'dst'
-//   to be marked as 'is_null' (requires the column is nullable).
-IR_ALWAYS_INLINE void _PrecompiledCopyCellToRowBlockSetNull(
-    RowBlockRow* dst, uint64_t col, bool is_null) {
-  dst->cell(col).set_null(is_null);
+    const uint8_t* src_cell = &src[src_info->offset()];
+    uint8_t* dst_cell = dst_block->column_data_base_ptr(dst_col_idx) + dst->row_index() * size;
+
+    if (src_info->nullable()) {
+      bool is_null = BitmapTest(src_null_bitmap, src_col_idx);
+      dst->cell(dst_col_idx).set_null(is_null);
+      if (is_null) continue;
+    }
+    bool is_binary = src_info->physical_type() == DataType::BINARY;
+    if (!BasicCopyCell(size, src_cell, dst_cell, is_binary, dst_arena)) {
+      return false;
+    }
+  }
+
+  // Fill in defaults
+  for (auto dst_col_idx : *fb->default_cols()) {
+    auto dst_info = fb->dst_cell_info()->Get(dst_col_idx);
+    auto size = dst_info->size();
+    uint8_t* dst_cell = dst_block->column_data_base_ptr(dst_col_idx) + dst->row_index() * size;
+    const uint8_t* default_val = reinterpret_cast<const uint8_t*>(dst_info->default_ptr());
+
+    if (dst_info->nullable()) {
+      bool is_null = default_val == nullptr;
+      dst->cell(dst_col_idx).set_null(is_null);
+      if (is_null) continue;
+    }
+
+    if (!BasicCopyCell(size, default_val, dst_cell,
+                       dst_info->physical_type() == DataType::BINARY, dst_arena)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 } // extern "C"

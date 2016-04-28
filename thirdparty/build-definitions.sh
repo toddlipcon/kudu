@@ -328,3 +328,14 @@ build_nvml() {
   cp -a $NVML_DIR/src/include/libvmem.h $PREFIX/include
   cp -a $NVML_DIR/src/nondebug/libvmem.{so*,a} $PREFIX/lib
 }
+
+build_flatbuffers() {
+  cd $FLATBUFFERS_DIR/
+  cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=$PREFIX \
+    -DFLATBUFFERS_BUILD_FLATHASH=OFF \
+    -DFLATBUFFERS_BUILD_TESTS=OFF \
+    -DCMAKE_CXX_FLAGS="$EXTRA_CXXFLAGS" .
+  make -j$PARALLEL install
+}

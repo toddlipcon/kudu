@@ -109,6 +109,7 @@ else
   for arg in $*; do
     case $arg in
       "cmake")      F_CMAKE=1 ;;
+      "flatbuffers") F_FLATBUFFERS=1 ;;
       "gflags")     F_GFLAGS=1 ;;
       "glog")       F_GLOG=1 ;;
       "gmock")      F_GMOCK=1 ;;
@@ -259,6 +260,10 @@ if [ -n "$F_ALL" -o -n "$F_CRCUTIL" ]; then
   build_crcutil
 fi
 
+if [ -n "$F_ALL" -o -n "$F_FLATBUFFERS" ]; then
+  build_flatbuffers
+fi
+
 restore_env
 
 ## Build C++ dependencies with TSAN instrumentation
@@ -360,6 +365,10 @@ if [ -n "$F_TSAN" ]; then
 
   if [ -n "$F_ALL" -o -n "$F_CRCUTIL" ]; then
     build_crcutil
+  fi
+
+  if [ -n "$F_ALL" -o -n "$F_FLATBUFFERS" ]; then
+    build_flatbuffers
   fi
 fi
 

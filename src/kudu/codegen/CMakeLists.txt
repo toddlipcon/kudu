@@ -20,6 +20,11 @@
 # see http://llvm.org/docs/CMake.html#embedding-llvm-in-your-project
 ################################################################################
 
+FLATBUFFERS_GENERATE_CPP(CODEGEN_FBS_HDRS CODEGEN_FBS_TGTS
+  SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..
+  BINARY_ROOT ${CMAKE_CURRENT_BINARY_DIR}/../..
+  FBS_FILES codegen_params.fbs)
+
 #######################################
 # Configure LLVM-specific dependencies
 #######################################
@@ -126,7 +131,10 @@ list(REMOVE_ITEM IR_FLAGS "-O3" "-O2" "-O1" "-Os")
 # having stale IR.
 #
 # See: http://www.cmake.org/Bug/bug_relationship_graph.php?bug_id=13234
-add_library(ir_fake_target ${IR_SOURCE})
+#
+# TODO: this doesn't seem to be picking up the flatbuf file as a dependency
+# and recompiling on chnage :/
+add_library(ir_fake_target ${IR_SOURCE} ${CODEGEN_FBS_HDRS})
 # The IR uses protobufs from kudu_common, so we have to generate that code first.
 target_link_libraries(ir_fake_target kudu_common_proto kudu_util ${KUDU_BASE_LIBS})
 
@@ -136,7 +144,7 @@ add_custom_command(
     ${IR_FLAGS}
     ${IR_SOURCE}
     -o ${IR_OUTPUT}
-  DEPENDS ir_fake_target)
+  DEPENDS ir_fake_target ${CODEGEN_FBS_TGTS})
 
 # Use 'xxd' to create a cc file containing the precompiled bitcode as a literal array.
 # See http://stackoverflow.com/questions/4158900/embedding-resources-in-executable-using-gcc

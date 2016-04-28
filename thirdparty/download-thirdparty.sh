@@ -248,5 +248,9 @@ if [ -n "$OS_LINUX" -a ! -d $NVML_DIR ]; then
   fetch_and_expand nvml-${NVML_VERSION}.tar.gz
 fi
 
+if [ -n "$OS_LINUX" -a ! -d $FLATBUFFERS_DIR ]; then
+  fetch_and_expand flatbuffers-${FLATBUFFERS_VERSION}.tar.gz
+fi
+
 echo "---------------"
 echo "Thirdparty dependencies downloaded successfully"

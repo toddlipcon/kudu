@@ -763,6 +763,13 @@ ADD_THIRDPARTY_LIB(protoc
   DEPS protobuf)
 find_package(KRPC REQUIRED)
 
+## Flatbuffers
+find_package(Flatbuffers REQUIRED)
+include_directories(SYSTEM ${FLATBUFFERS_INCLUDE_DIR})
+ADD_THIRDPARTY_LIB(flatbuffers
+  STATIC_LIB "${FLATBUFFERS_STATIC_LIBRARY}"
+  SHARED_LIB "${FLATBUFFERS_SHARED_LIBRARY}")
+
 ## Snappy
 find_package(Snappy REQUIRED)
 include_directories(SYSTEM ${SNAPPY_INCLUDE_DIR})
