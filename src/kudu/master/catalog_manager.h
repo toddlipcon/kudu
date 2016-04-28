@@ -81,16 +81,7 @@ struct PersistentTabletInfo {
   SysTabletsEntryPB pb;
 };
 
-// Information on a current replica of a tablet.
-// This is copyable so that no locking is needed.
-struct TabletReplica {
-  TSDescriptor* ts_desc;
-  tablet::TabletStatePB state;
-  consensus::RaftPeerPB::Role role;
-};
-
 // The information about a single tablet which exists in the cluster,
-// including its state and locations.
 //
 // This object uses copy-on-write for the portions of data which are persisted
 // on disk. This allows the mutated data to be staged and written to disk
@@ -109,7 +100,6 @@ struct TabletReplica {
 class TabletInfo : public RefCountedThreadSafe<TabletInfo> {
  public:
   typedef PersistentTabletInfo cow_state;
-  typedef std::unordered_map<std::string, TabletReplica> ReplicaMap;
 
   TabletInfo(const scoped_refptr<TableInfo>& table, std::string tablet_id);
 
@@ -120,16 +110,6 @@ class TabletInfo : public RefCountedThreadSafe<TabletInfo> {
   // TabletMetadataLock to gain access to this data.
   const CowObject<PersistentTabletInfo>& metadata() const { return metadata_; }
   CowObject<PersistentTabletInfo>* mutable_metadata() { return &metadata_; }
-
-  // Accessors for the latest known tablet replica locations.
-  // These locations include only the members of the latest-reported Raft
-  // configuration whose tablet servers have ever heartbeated to this Master.
-  void SetReplicaLocations(const ReplicaMap& replica_locations);
-  void GetReplicaLocations(ReplicaMap* replica_locations) const;
-
-  // Adds the given replica to the replica_locations_ map.
-  // Returns true iff the replica was inserted.
-  bool AddToReplicaLocations(const TabletReplica& replica);
 
   // Accessors for the last time the replica locations were updated.
   void set_last_update_time(const MonoTime& ts);
@@ -158,10 +138,6 @@ class TabletInfo : public RefCountedThreadSafe<TabletInfo> {
   // The last time the replica locations were updated.
   // Also set when the Master first attempts to create the tablet.
   MonoTime last_update_time_;
-
-  // The locations in the latest raft config where this tablet has been
-  // reported. The map is keyed by tablet server UUID.
-  ReplicaMap replica_locations_;
 
   // Reported schema version (in-memory only).
   uint32_t reported_schema_version_;
@@ -498,17 +474,6 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
                                                const scoped_refptr<TabletInfo>& tablet,
                                                TabletMetadataLock* tablet_lock,
                                                TableMetadataLock* table_lock);
-
-  // Register a tablet server whenever it heartbeats with a consensus configuration. This is
-  // needed because we have logic in the Master that states that if a tablet
-  // server that is part of a consensus configuration has not heartbeated to the Master yet, we
-  // leave it out of the consensus configuration reported to clients.
-  // TODO: See if we can remove this logic, as it seems confusing.
-  void AddReplicaToTabletIfNotFound(TSDescriptor* ts_desc,
-                                    const ReportedTabletPB& report,
-                                    const scoped_refptr<TabletInfo>& tablet);
-
-  void NewReplica(TSDescriptor* ts_desc, const ReportedTabletPB& report, TabletReplica* replica);
 
   // Extract the set of tablets that must be processed because not running yet.
   void ExtractTabletsToProcess(std::vector<scoped_refptr<TabletInfo>>* tablets_to_process);

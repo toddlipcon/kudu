@@ -17,12 +17,14 @@
 #ifndef KUDU_MASTER_MASTER_PATH_HANDLERS_H
 #define KUDU_MASTER_MASTER_PATH_HANDLERS_H
 
-#include "kudu/gutil/macros.h"
-#include "kudu/server/webserver.h"
-
+#include <utility>
 #include <string>
 #include <sstream>
 #include <vector>
+
+#include "kudu/consensus/metadata.pb.h"
+#include "kudu/gutil/macros.h"
+#include "kudu/server/webserver.h"
 
 namespace kudu {
 
@@ -61,7 +63,8 @@ class MasterPathHandlers {
   // Convert location of peers to HTML, indicating the roles
   // of each tablet server in a consensus configuration.
   // This method will display 'locations' in the order given.
-  std::string RaftConfigToHtml(const std::vector<TabletReplica>& locations,
+  std::string RaftConfigToHtml(const std::vector<std::pair
+                                 <TSDescriptor*, consensus::RaftPeerPB::Role>>& locations,
                                const std::string& tablet_id) const;
 
   // Convert the specified TSDescriptor to HTML, adding a link to the

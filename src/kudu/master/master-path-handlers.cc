@@ -20,8 +20,10 @@
 #include <algorithm>
 #include <boost/bind.hpp>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
+#include <kudu/consensus/quorum_util.h>
 
 #include "kudu/common/partition.h"
 #include "kudu/common/schema.h"
@@ -43,10 +45,13 @@
 
 namespace kudu {
 
+using consensus::ConsensusStatePB;
 using consensus::RaftPeerPB;
-using std::vector;
+using std::pair;
+using std::shared_ptr;
 using std::string;
 using std::stringstream;
+using std::vector;
 using strings::Substitute;
 
 namespace master {
@@ -108,8 +113,9 @@ void MasterPathHandlers::HandleCatalogManager(const Webserver::WebRequest& req,
 
 namespace {
 
-bool CompareByRole(const TabletReplica& a, const TabletReplica& b) {
-  return a.role < b.role;
+bool CompareByRole(const pair<TSDescriptor*, RaftPeerPB::Role>& a,
+                   const pair<TSDescriptor*, RaftPeerPB::Role>& b) {
+  return a.second < b.second;
 }
 
 } // anonymous namespace
@@ -167,13 +173,24 @@ void MasterPathHandlers::HandleTablePage(const Webserver::WebRequest& req,
   *output << "  <tr><th>Tablet ID</th><th>Partition</th><th>State</th>"
       "<th>Message</th><th>RaftConfig</th></tr>\n";
   for (const scoped_refptr<TabletInfo>& tablet : tablets) {
-    TabletInfo::ReplicaMap locations;
-    tablet->GetReplicaLocations(&locations);
-    vector<TabletReplica> sorted_locations;
-    AppendValuesFromMap(locations, &sorted_locations);
+    vector<pair<TSDescriptor*, RaftPeerPB::Role>> sorted_locations;
+    TabletMetadataLock l(tablet.get(), TabletMetadataLock::READ);
+    if (l.data().pb.has_committed_consensus_state()) {
+      const ConsensusStatePB& cstate = l.data().pb.committed_consensus_state();
+      for (const auto& peer : cstate.config().peers()) {
+        shared_ptr<TSDescriptor> ts_desc;
+        if (!master_->ts_manager()->LookupTSByUUID(peer.permanent_uuid(), &ts_desc)) {
+          LOG(WARNING) << Substitute("Could not find TS with UUID $0",
+                                     peer.permanent_uuid());
+          continue;
+        }
+        sorted_locations.emplace_back(
+          make_pair(ts_desc.get(),
+                    GetConsensusRole(peer.permanent_uuid(), cstate)));
+      }
+    }
     std::sort(sorted_locations.begin(), sorted_locations.end(), &CompareByRole);
 
-    TabletMetadataLock l(tablet.get(), TabletMetadataLock::READ);
 
     Partition partition;
     Partition::FromPB(l.data().pb.partition(), &partition);
@@ -405,18 +422,19 @@ Status MasterPathHandlers::Register(Webserver* server) {
   return Status::OK();
 }
 
-string MasterPathHandlers::RaftConfigToHtml(const std::vector<TabletReplica>& locations,
-                                            const std::string& tablet_id) const {
+string MasterPathHandlers::RaftConfigToHtml(const vector<pair
+                                              <TSDescriptor*, RaftPeerPB::Role>>& locations,
+                                            const string& tablet_id) const {
   stringstream html;
 
   html << "<ul>\n";
-  for (const TabletReplica& location : locations) {
-    string location_html = TSDescriptorToHtml(*location.ts_desc, tablet_id);
-    if (location.role == RaftPeerPB::LEADER) {
+  for (const auto& location : locations) {
+    string location_html = TSDescriptorToHtml(*location.first, tablet_id);
+    if (location.second == RaftPeerPB::LEADER) {
       html << Substitute("  <li><b>LEADER: $0</b></li>\n", location_html);
     } else {
       html << Substitute("  <li>$0: $1</li>\n",
-                         RaftPeerPB_Role_Name(location.role), location_html);
+                         RaftPeerPB_Role_Name(location.second), location_html);
     }
   }
   html << "</ul>\n";
