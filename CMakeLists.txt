@@ -313,7 +313,17 @@ if (${KUDU_USE_UBSAN})
     message(SEND_ERROR "Cannot use UBSAN without clang or gcc >= 4.9")
   endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined -fno-sanitize=alignment,vptr -fno-sanitize-recover")
-endif ()
+
+  # Use the newer libstdcxx which avoids some false positives in UBSAN
+  # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59829
+  if(not ${KUDU_USE_TSAN})
+    set(UBSAN_GCC_DIR "${CMAKE_SOURCE_DIR}/thirdparty/installed-deps/gcc")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,${UBSAN_GCC_DIR}/lib ")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -nostdinc++ -L${UBSAN_GCC_DIR}/lib")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem ${UBSAN_GCC_DIR}/include/c++/4.9.3")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem ${UBSAN_GCC_DIR}/include/c++/4.9.3/backward")
+  endif()
+endif()
 
 # Flag to enable thread sanitizer (clang or gcc 4.8)
 if (${KUDU_USE_TSAN})
