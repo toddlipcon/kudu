@@ -133,13 +133,10 @@ void RemoteBootstrapServiceImpl::BeginRemoteBootstrapSession(
                                    tablet_id));
       InsertOrDie(&sessions_, session_id, session);
     } else {
-      LOG(INFO) << "Re-initializing existing remote bootstrap session on tablet " << tablet_id
+      LOG(INFO) << "Re-sending initialization info for existing remote bootstrap session"
+                << " on tablet " << tablet_id
                 << " from peer " << requestor_uuid << " at " << context->requestor_string()
                 << ": session id = " << session_id;
-      RPC_RETURN_NOT_OK(session->Init(),
-                        RemoteBootstrapErrorPB::UNKNOWN_ERROR,
-                        Substitute("Error initializing remote bootstrap session for tablet $0",
-                                   tablet_id));
     }
     ResetSessionExpirationUnlocked(session_id);
   }

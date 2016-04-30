@@ -17,6 +17,7 @@
 #include "kudu/tserver/remote_bootstrap_session.h"
 
 #include <algorithm>
+#include <mutex>
 
 #include "kudu/consensus/log.h"
 #include "kudu/consensus/log_reader.h"
@@ -70,7 +71,14 @@ RemoteBootstrapSession::~RemoteBootstrapSession() {
 
 Status RemoteBootstrapSession::Init() {
   // Take locks to support re-initialization of the same session.
-  boost::lock_guard<simple_spinlock> l(session_lock_);
+  std::unique_lock<simple_spinlock> l(session_lock_, std::try_to_lock);
+  if (!l.owns_lock()) {
+    return Status::IllegalState("Remote bootstrap session already in used");
+  }
+  if (initted_) {
+    return Status::IllegalState("Remote bootstrap session already initialized");
+  }
+
   RETURN_NOT_OK(UnregisterAnchorIfNeededUnlocked());
 
   STLDeleteValues(&blocks_);
@@ -146,14 +154,17 @@ Status RemoteBootstrapSession::Init() {
   LOG(INFO) << Substitute(
       "T $0 P $1: Remote bootstrap: opened $2 blocks and $3 log segments",
       tablet_id, consensus->peer_uuid(), data_blocks.size(), log_segments_.size());
+  initted_ = true;
   return Status::OK();
 }
 
 const std::string& RemoteBootstrapSession::tablet_id() const {
+  DCHECK(initted_);
   return tablet_peer_->tablet_id();
 }
 
 const std::string& RemoteBootstrapSession::requestor_uuid() const {
+  DCHECK(initted_);
   return requestor_uuid_;
 }
 
