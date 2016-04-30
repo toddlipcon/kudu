@@ -125,8 +125,8 @@ void InboundCall::Respond(const MessageLite& response,
   TRACE_EVENT_FLOW_END0("rpc", "InboundCall", this);
   Status s = SerializeResponseBuffer(response, is_success);
   if (PREDICT_FALSE(!s.ok())) {
-    // TODO: test error case, serialize error response instead
-    LOG(DFATAL) << "Unable to serialize response: " << s.ToString();
+    LOG(FATAL) << "Unable to serialize response for "
+               << ToString() << ": " << s.ToString();
   }
 
   TRACE_EVENT_ASYNC_END1("rpc", "InboundCall", this,
@@ -139,6 +139,16 @@ void InboundCall::Respond(const MessageLite& response,
 
 Status InboundCall::SerializeResponseBuffer(const MessageLite& response,
                                             bool is_success) {
+  if (PREDICT_FALSE(!response.IsInitialized())) {
+    LOG(ERROR) << "Invalid RPC response for " << ToString()
+               << ": protobuf missing required fields: "
+               << response.InitializationErrorString();
+    // Send it along anyway -- the client will also notice the missing fields
+    // and produce an error on the other side, but this will at least
+    // make it clear on both sides of the RPC connection what kind of error
+    // happened.
+  }
+
   uint32_t protobuf_msg_size = response.ByteSize();
 
   ResponseHeader resp_hdr;

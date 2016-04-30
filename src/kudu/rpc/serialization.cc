@@ -46,11 +46,6 @@ enum {
 
 Status SerializeMessage(const MessageLite& message, faststring* param_buf,
                         int additional_size, bool use_cached_size) {
-
-  if (PREDICT_FALSE(!message.IsInitialized())) {
-    return Status::InvalidArgument("RPC argument missing required fields",
-        message.InitializationErrorString());
-  }
   int pb_size = use_cached_size ? message.GetCachedSize() : message.ByteSize();
   DCHECK_EQ(message.ByteSize(), pb_size);
   int recorded_size = pb_size + additional_size;
@@ -58,7 +53,7 @@ Status SerializeMessage(const MessageLite& message, faststring* param_buf,
   int total_size = size_with_delim + additional_size;
 
   if (total_size > FLAGS_rpc_max_message_size) {
-    LOG(DFATAL) << "Sending too long of an RPC message (" << total_size
+    LOG(WARNING) << "Sending too long of an RPC message (" << total_size
                 << " bytes)";
   }
 
