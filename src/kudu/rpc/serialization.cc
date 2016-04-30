@@ -22,6 +22,7 @@
 #include <google/protobuf/io/coded_stream.h>
 
 #include "kudu/gutil/endian.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/rpc/constants.h"
 #include "kudu/util/faststring.h"
@@ -53,8 +54,10 @@ Status SerializeMessage(const MessageLite& message, faststring* param_buf,
   int total_size = size_with_delim + additional_size;
 
   if (total_size > FLAGS_rpc_max_message_size) {
-    LOG(WARNING) << "Sending too long of an RPC message (" << total_size
-                << " bytes)";
+    LOG(WARNING) << "Serialized " << message.GetTypeName()
+                 << " (" << total_size << " bytes) is larger than maximum configured "
+                 << "RPC message size (" << FLAGS_rpc_max_message_size << " bytes). "
+                 << "Sending anyway, but peer may reject the data.";
   }
 
   param_buf->resize(size_with_delim);

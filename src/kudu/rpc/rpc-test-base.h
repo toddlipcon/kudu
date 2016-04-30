@@ -238,6 +238,10 @@ class CalculatorService : public CalculatorServiceIf {
       case rpc_test::TestInvalidResponseRequestPB_ErrorType_MISSING_REQUIRED_FIELD:
         context->RespondSuccess();
         break;
+      case rpc_test::TestInvalidResponseRequestPB_ErrorType_RESPONSE_TOO_LARGE:
+        resp->mutable_response()->resize(FLAGS_rpc_max_message_size + 1000);
+        context->RespondSuccess();
+        break;
       default:
         LOG(FATAL);
     }
