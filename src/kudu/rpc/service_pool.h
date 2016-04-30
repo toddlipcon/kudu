@@ -26,6 +26,7 @@
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/rpc/rpc_service.h"
 #include "kudu/rpc/service_queue.h"
+#include "kudu/rpc/fc_service_queue.h"
 #include "kudu/util/mutex.h"
 #include "kudu/util/thread.h"
 #include "kudu/util/status.h"
@@ -76,12 +77,14 @@ class ServicePool : public RpcService {
   const std::string service_name() const;
 
  private:
+  typedef FCServiceQueue ServiceQueueType;
+
   void RunThread();
   void RejectTooBusy(InboundCall* c);
 
   gscoped_ptr<ServiceIf> service_;
   std::vector<scoped_refptr<kudu::Thread> > threads_;
-  ServiceQueue service_queue_;
+  ServiceQueueType service_queue_;
   scoped_refptr<Histogram> incoming_queue_time_;
   scoped_refptr<Counter> rpcs_timed_out_in_queue_;
   scoped_refptr<Counter> rpcs_queue_overflow_;
