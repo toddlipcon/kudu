@@ -27,6 +27,7 @@
 #include "kudu/rpc/rpc_service.h"
 #include "kudu/rpc/service_queue.h"
 #include "kudu/rpc/fc_service_queue.h"
+#include "kudu/rpc/folly_queue.h"
 #include "kudu/util/mutex.h"
 #include "kudu/util/thread.h"
 #include "kudu/util/status.h"
@@ -61,7 +62,7 @@ class ServicePool : public RpcService {
 
   RpcMethodInfo* LookupMethod(const RemoteMethod& method) override;
 
-  virtual Status QueueInboundCall(gscoped_ptr<InboundCall> call) OVERRIDE;
+  virtual Status QueueInboundCall(gscoped_ptr<InboundCall> call) override;
 
   const Counter* RpcsTimedOutInQueueMetricForTests() const {
     return rpcs_timed_out_in_queue_.get();
