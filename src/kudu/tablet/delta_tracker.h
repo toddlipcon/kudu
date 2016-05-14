@@ -76,6 +76,16 @@ class DeltaTracker {
                       const MvccSnapshot &mvcc_snap,
                       gscoped_ptr<ColumnwiseIterator>* out) const;
 
+  // Flags used for NewDeltaIterator below.
+  enum Flags {
+    // The default: look at both UNDO and REDO deltas.
+    NO_FLAGS = 0,
+    // Do not include at any UNDO deltas.
+    NO_UNDOS = 1 << 0,
+    // Do not include any REDO deltas.
+    NO_REDOS = 1 << 1,
+  };
+
   // TODO: this shouldn't need to return a shared_ptr, but there is some messiness
   // where this has bled around.
   //
@@ -83,7 +93,15 @@ class DeltaTracker {
   // It must remain valid for the lifetime of the returned iterator.
   Status NewDeltaIterator(const Schema* schema,
                           const MvccSnapshot& snap,
+                          uint64_t flags,
                           std::shared_ptr<DeltaIterator>* out) const;
+
+  Status NewDeltaIterator(const Schema* schema,
+                          const MvccSnapshot& snap,
+                          std::shared_ptr<DeltaIterator>* out) const {
+    return NewDeltaIterator(schema, snap, NO_FLAGS, out);
+  }
+
 
   // Like NewDeltaIterator() but only includes file based stores, does not include
   // the DMS.
@@ -94,14 +112,6 @@ class DeltaTracker {
     DeltaType type,
     std::vector<std::shared_ptr<DeltaStore> >* included_stores,
     std::shared_ptr<DeltaIterator>* out) const;
-
-  // CHECKs that the given snapshot includes all of the UNDO stores in this
-  // delta tracker. If this is not the case, crashes the process. This is
-  // used as an assertion during compaction, where we always expect the
-  // compaction snapshot to be in the future relative to any UNDOs.
-  //
-  // Returns a bad status in the event of an I/O related error.
-  Status CheckSnapshotComesAfterAllUndos(const MvccSnapshot& snap) const;
 
   Status Open();
 
@@ -198,7 +208,8 @@ class DeltaTracker {
                   MetadataFlushType flush_type);
 
   // This collects all undo and redo stores.
-  void CollectStores(vector<std::shared_ptr<DeltaStore> > *stores) const;
+  void CollectStores(vector<std::shared_ptr<DeltaStore> > *stores,
+                     uint64_t flags) const;
 
   // Performs the actual compaction. Results of compaction are written to "block",
   // while delta stores that underwent compaction are appended to "compacted_stores", while
