@@ -34,6 +34,62 @@ namespace internal {
 typedef rpc::RequestTracker::SequenceNumber SequenceNumber;
 }
 
+// Merges the sequence of errors encountered in some complex RPC path
+// to determine the most appropriate error to expose in the final resulting
+// Status.
+//
+// Example scenarios:
+//
+// 1) TS Error followed by a timed out lookup
+//
+//   - client talks to a tablet server, and immediately gets some error like TABLET_NOT_FOUND
+//   - it falls back to the master to try to resolve a new location
+//   - the master request itself times out
+//
+//   Result: we should pin the error on the master
+//
+// 2) Slow 'locate' process leaves short time for real operation
+//
+//   - Client wants to write to a tablet, and has to look up the
+//     location from the master, then do a DNS lookup for the
+//     tserver, etc.
+//   - One of these "locate" workflows is slow (e.g. due to a slow
+//     master or slow DNS)
+//   - The lookup eventually succeeds, but leaves only a few milliseconds
+//     left before the deadline for the real operation
+//   - The real operation receives a Status::TimedOut
+//
+//   Result: we should pin the error on whatever phase of the lookup was
+//           longest
+//
+// 3) 
+//
+
+class ErrorMerger {
+ public:
+  enum Phase {
+    LOCATE,
+    PERFORM
+  };
+
+  void Record(Phase p, const Status &s) {
+    if (s.ok()) return;
+
+    
+
+    if (s_.ok()) {
+      s_ = s;
+      prev_phase_ = p;
+    }
+  }
+
+  const Status& get() { return s_; }
+
+ private:
+  Phase prev_phase_;
+  Status s_;
+};
+
 // A base class for retriable RPCs that handles replica picking and retry logic.
 //
 // The 'Server' template parameter refers to the the type of the server that will be looked up
@@ -120,6 +176,8 @@ class RetriableRpc : public Rpc {
   // the retrier calls the SendRpcCb directly and doesn't know the replica that was
   // being written to.
   Server* current_;
+
+  ErrorMerger error_merger_;
 };
 
 template <class Server, class RequestPB, class ResponsePB>
@@ -143,20 +201,26 @@ bool RetriableRpc<Server, RequestPB, ResponsePB>::RetryIfNeeded(const RetriableR
     }
     case RetriableRpcStatus::SERVER_NOT_ACCESSIBLE: {
       VLOG(1) << "Failing " << ToString() << " to a new target: " << result.status.ToString();
-      server_picker_->MarkServerFailed(server, result.status);
+      if (server) {
+        server_picker_->MarkServerFailed(server, result.status);
+      }
       break;
     }
       // The TabletServer was not part of the config serving the tablet.
       // We mark our tablet cache as stale, forcing a master lookup on the next attempt.
       // TODO: Don't backoff the first time we hit this error (see KUDU-1314).
     case RetriableRpcStatus::RESOURCE_NOT_FOUND: {
-      server_picker_->MarkResourceNotFound(server);
+      if (server) {
+        server_picker_->MarkResourceNotFound(server);
+      }
 
       break;
     }
       // The TabletServer was not the leader of the quorum.
     case RetriableRpcStatus::REPLICA_NOT_LEADER: {
-      server_picker_->MarkReplicaNotLeader(server);
+      if (server) {
+        server_picker_->MarkReplicaNotLeader(server);
+      }
       break;
     }
       // For the OK and NON_RETRIABLE_ERROR cases we can't/won't retry.
@@ -180,12 +244,13 @@ void RetriableRpc<Server, RequestPB, ResponsePB>::FinishInternal() {
 template <class Server, class RequestPB, class ResponsePB>
 void RetriableRpc<Server, RequestPB, ResponsePB>::ReplicaFoundCb(const Status& status,
                                                                  Server* server) {
+  error_merger_.Record(ErrorMerger::LOCATE, status);
   RetriableRpcStatus result = AnalyzeResponse(status);
   if (RetryIfNeeded(result, server)) return;
 
   if (result.result == RetriableRpcStatus::NON_RETRIABLE_ERROR) {
     FinishInternal();
-    Finish(result.status);
+    Finish(error_merger_.get());
     return;
   }
 
@@ -206,23 +271,25 @@ void RetriableRpc<Server, RequestPB, ResponsePB>::ReplicaFoundCb(const Status& s
 template <class Server, class RequestPB, class ResponsePB>
 void RetriableRpc<Server, RequestPB, ResponsePB>::SendRpcCb(const Status& status) {
   RetriableRpcStatus result = AnalyzeResponse(status);
-  if (RetryIfNeeded(result, current_)) return;
 
-  FinishInternal();
-
-  // From here on out the rpc has either succeeded of suffered a non-retriable
-  // failure.
-  Status final_status = result.status;
-  if (!final_status.ok()) {
+  Status nice_status = result.status;
+  if (!nice_status.ok()) {
     string error_string;
     if (current_) {
       error_string = strings::Substitute("Failed to write to server: $0", current_->ToString());
     } else {
       error_string = "Failed to write to server: (no server available)";
     }
-    final_status = final_status.CloneAndPrepend(error_string);
+    nice_status = nice_status.CloneAndPrepend(error_string);
   }
-  Finish(final_status);
+
+  error_merger_.Record(ErrorMerger::PERFORM, nice_status);
+  if (RetryIfNeeded(result, current_)) return;
+
+  // From here on out the rpc has either succeeded of suffered a non-retriable
+  // failure.
+  FinishInternal();
+  Finish(error_merger_.get());
 }
 
 } // namespace rpc

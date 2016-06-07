@@ -1854,17 +1854,24 @@ TEST_F(ClientTest, TestFailedDnsResolution) {
   // First time disable dns resolution.
   // Set the timeout to be short since we know it can't succeed, but not to the point where we
   // can timeout before getting the dns error.
+  //
+  // We inject a bit of latency on the master tablet lookup as well, to trigger
+  // a previous bug (KUDU-1466) where we would report back a 'GetTableLocations'
+  // timeout even though the real underlying issue was failure to resolve the
+  // tablet server.
   {
     google::FlagSaver saver;
+    FLAGS_master_inject_latency_on_tablet_lookups_ms = 100;
     FLAGS_fail_dns_resolution = true;
     session->SetTimeoutMillis(500);
     ASSERT_OK(ApplyInsertToSession(session.get(), client_table_, 1, 1, "row"));
     Status s = session->Flush();
     ASSERT_TRUE(s.IsIOError()) << "unexpected status: " << s.ToString();
     gscoped_ptr<KuduError> error = GetSingleErrorFromSession(session.get());
-    ASSERT_TRUE(error->status().IsTimedOut()) << error->status().ToString();
-    ASSERT_STR_CONTAINS(error->status().ToString(),
-                        "Network error: Failed to resolve address for TS");
+    ASSERT_TRUE(error->status().IsNetworkError()) << error->status().ToString();
+    ASSERT_STR_MATCHES(error->status().ToString(),
+                       "Failed to write batch of 1 ops to tablet .+"
+                       "after .* attempt.*Failed to resolve address for TS");
   }
 
   // Now re-enable dns resolution, the write should succeed.
