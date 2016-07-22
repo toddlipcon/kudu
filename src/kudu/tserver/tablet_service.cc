@@ -1334,7 +1334,9 @@ static Status SetupScanSpec(const NewScanRequestPB& scan_pb,
   // the last row key for the scan response.
   if (scan_pb.order_mode() == kudu::ORDERED &&
       projection.num_key_columns() != tablet_schema.num_key_columns()) {
-    for (int i = 0; i < tablet_schema.num_key_columns(); i++) {
+
+    // TODO: check test coverage for ordered scan on non-contig PK
+    for (int i : tablet_schema.key_column_indexes()) {
       const ColumnSchema &col = tablet_schema.column(i);
       if (projection.find_column(col.name()) == -1 &&
           !ContainsKey(missing_col_names, col.name())) {
@@ -1380,16 +1382,13 @@ Status TabletServiceImpl::HandleNewScanRequest(TabletPeer* tablet_peer,
   // Create the user's requested projection.
   // TODO: add test cases for bad projections including 0 columns
   Schema projection;
-  Status s = ColumnPBsToSchema(scan_pb.projected_columns(), &projection);
+  Status s = ProjectionFromColumnPBs(scan_pb.projected_columns(), &projection);
   if (PREDICT_FALSE(!s.ok())) {
     *error_code = TabletServerErrorPB::INVALID_SCHEMA;
     return s;
   }
 
-  if (projection.has_column_ids()) {
-    *error_code = TabletServerErrorPB::INVALID_SCHEMA;
-    return Status::InvalidArgument("User requests should not have Column IDs");
-  }
+  DCHECK(!projection.has_column_ids());
 
   if (scan_pb.order_mode() == ORDERED) {
     // Ordered scans must be at a snapshot so that we perform a serializable read (which can be

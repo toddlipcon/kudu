@@ -80,7 +80,7 @@ class TestRowSet : public KuduRowSetTest {
       col_schemas.push_back(schema.column(idx));
       col_ids.push_back(schema.column_id(idx));
     }
-    return Schema(col_schemas, col_ids, 0);
+    return Schema(col_schemas, col_ids, {});
   }
 
   void BuildRowKey(RowBuilder *rb, int row_idx) {

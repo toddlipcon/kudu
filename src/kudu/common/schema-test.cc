@@ -106,7 +106,7 @@ TEST(TestSchema, TestReset) {
 
   ASSERT_OK(schema.Reset({ ColumnSchema("col3", UINT32),
                            ColumnSchema("col2", STRING) },
-                         1));
+                         {}, { 0 }));
   ASSERT_TRUE(schema.initialized());
 
   // Swap the initialized schema with an uninitialized one.

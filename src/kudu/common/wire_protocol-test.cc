@@ -105,89 +105,93 @@ TEST_F(WireProtocolTest, TestBadStatusWithPosixCode) {
 }
 
 TEST_F(WireProtocolTest, TestSchemaRoundTrip) {
-  google::protobuf::RepeatedPtrField<ColumnSchemaPB> pbs;
-
-  ASSERT_OK(SchemaToColumnPBs(schema_, &pbs));
-  ASSERT_EQ(3, pbs.size());
+  SchemaPB pb;
+  ASSERT_OK(SchemaToPB(schema_, &pb));
+  ASSERT_EQ(3, pb.columns_size());
 
   // Column 0.
-  EXPECT_TRUE(pbs.Get(0).is_key());
-  EXPECT_EQ("col1", pbs.Get(0).name());
-  EXPECT_EQ(STRING, pbs.Get(0).type());
-  EXPECT_FALSE(pbs.Get(0).is_nullable());
+  EXPECT_TRUE(pb.columns(0).is_key());
+  EXPECT_EQ("col1", pb.columns(0).name());
+  EXPECT_EQ(STRING, pb.columns(0).type());
+  EXPECT_FALSE(pb.columns(0).is_nullable());
 
   // Column 1.
-  EXPECT_FALSE(pbs.Get(1).is_key());
-  EXPECT_EQ("col2", pbs.Get(1).name());
-  EXPECT_EQ(STRING, pbs.Get(1).type());
-  EXPECT_FALSE(pbs.Get(1).is_nullable());
+  EXPECT_FALSE(pb.columns(1).is_key());
+  EXPECT_EQ("col2", pb.columns(1).name());
+  EXPECT_EQ(STRING, pb.columns(1).type());
+  EXPECT_FALSE(pb.columns(1).is_nullable());
 
   // Column 2.
-  EXPECT_FALSE(pbs.Get(2).is_key());
-  EXPECT_EQ("col3", pbs.Get(2).name());
-  EXPECT_EQ(UINT32, pbs.Get(2).type());
-  EXPECT_TRUE(pbs.Get(2).is_nullable());
+  EXPECT_FALSE(pb.columns(2).is_key());
+  EXPECT_EQ("col3", pb.columns(2).name());
+  EXPECT_EQ(UINT32, pb.columns(2).type());
+  EXPECT_TRUE(pb.columns(2).is_nullable());
 
   // Convert back to a Schema object and verify they're identical.
   Schema schema2;
-  ASSERT_OK(ColumnPBsToSchema(pbs, &schema2));
+  ASSERT_OK(SchemaFromPB(pb, &schema2));
   EXPECT_EQ(schema_.ToString(), schema2.ToString());
   EXPECT_EQ(schema_.num_key_columns(), schema2.num_key_columns());
 }
 
 // Test that, when non-contiguous key columns are passed, an error Status
 // is returned.
+// TODO: update docs!
 TEST_F(WireProtocolTest, TestBadSchema_NonContiguousKey) {
-  google::protobuf::RepeatedPtrField<ColumnSchemaPB> pbs;
+  // TEST: old style (use 'is_key' in the col pb)
+  SchemaPB schema_pb;
+  auto* pbs = schema_pb.mutable_columns();
 
   // Column 0: key
-  ColumnSchemaPB* col_pb = pbs.Add();
+  ColumnSchemaPB* col_pb = pbs->Add();
   col_pb->set_name("c0");
   col_pb->set_type(STRING);
   col_pb->set_is_key(true);
 
   // Column 1: not a key
-  col_pb = pbs.Add();
+  col_pb = pbs->Add();
   col_pb->set_name("c1");
   col_pb->set_type(STRING);
   col_pb->set_is_key(false);
 
   // Column 2: marked as key. This is an error.
-  col_pb = pbs.Add();
+  col_pb = pbs->Add();
   col_pb->set_name("c2");
   col_pb->set_type(STRING);
   col_pb->set_is_key(true);
 
   Schema schema;
-  Status s = ColumnPBsToSchema(pbs, &schema);
+  Status s = SchemaFromPB(schema_pb, &schema);
   ASSERT_STR_CONTAINS(s.ToString(), "Got out-of-order key column");
 }
 
 // Test that, when multiple columns with the same name are passed, an
 // error Status is returned.
 TEST_F(WireProtocolTest, TestBadSchema_DuplicateColumnName) {
-  google::protobuf::RepeatedPtrField<ColumnSchemaPB> pbs;
+  // TODO: switch to new style
+  SchemaPB schema_pb;
+  auto* pbs = schema_pb.mutable_columns();
 
   // Column 0:
-  ColumnSchemaPB* col_pb = pbs.Add();
+  ColumnSchemaPB* col_pb = pbs->Add();
   col_pb->set_name("c0");
   col_pb->set_type(STRING);
   col_pb->set_is_key(true);
 
   // Column 1:
-  col_pb = pbs.Add();
+  col_pb = pbs->Add();
   col_pb->set_name("c1");
   col_pb->set_type(STRING);
   col_pb->set_is_key(false);
 
   // Column 2: same name as column 0
-  col_pb = pbs.Add();
+  col_pb = pbs->Add();
   col_pb->set_name("c0");
   col_pb->set_type(STRING);
   col_pb->set_is_key(false);
 
   Schema schema;
-  Status s = ColumnPBsToSchema(pbs, &schema);
+  Status s = SchemaFromPB(schema_pb, &schema);
   ASSERT_EQ("Invalid argument: Duplicate column name: c0", s.ToString());
 }
 

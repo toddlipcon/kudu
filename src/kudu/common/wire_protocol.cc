@@ -180,16 +180,50 @@ Status AddHostPortPBs(const vector<Sockaddr>& addrs,
 
 Status SchemaToPB(const Schema& schema, SchemaPB *pb, int flags) {
   pb->Clear();
-  return SchemaToColumnPBs(schema, pb->mutable_columns(), flags);
+  RETURN_NOT_OK(SchemaToColumnPBs(schema, pb->mutable_columns(), flags));
+  for (int i : schema.key_column_indexes()) {
+    pb->add_key_col_indexes(i);
+  }
+  return Status::OK();
 }
 
 Status SchemaToPBWithoutIds(const Schema& schema, SchemaPB *pb) {
-  pb->Clear();
-  return SchemaToColumnPBs(schema, pb->mutable_columns(), SCHEMA_PB_WITHOUT_IDS);
+  return SchemaToPB(schema, pb, SCHEMA_PB_WITHOUT_IDS);
 }
 
 Status SchemaFromPB(const SchemaPB& pb, Schema *schema) {
-  return ColumnPBsToSchema(pb.columns(), schema);
+  vector<ColumnSchema> columns;
+  vector<ColumnId> column_ids;
+
+  RETURN_NOT_OK(ParseColumnSchemaPBs(pb.columns(), &columns, &column_ids));
+
+  vector<int> key_col_indexes;
+  if (pb.key_col_indexes_size()) {
+    key_col_indexes.assign(pb.key_col_indexes().begin(),
+                           pb.key_col_indexes().end());
+  } else {
+    // Receiving a schema from a client prior to the addition of the
+    // 'key_col_indexes' field: we instead use the now-deprecated 'is_key'
+    // fields.
+    bool is_handling_key = true;
+    int idx = 0;
+    for (const auto& col_pb : pb.columns()) {
+      if (col_pb.is_key()) {
+        if (!is_handling_key) {
+          return Status::InvalidArgument(
+              "Got out-of-order key column", col_pb.ShortDebugString());
+        }
+        key_col_indexes.push_back(idx++);
+      } else {
+        is_handling_key = false;
+      }
+    }
+  }
+
+  // TODO(perf): could make the following faster by adding a
+  // Reset() variant which actually takes ownership of the column
+  // vector.
+  return schema->Reset(columns, column_ids, key_col_indexes);
 }
 
 void ColumnSchemaToPB(const ColumnSchema& col_schema, ColumnSchemaPB *pb, int flags) {
@@ -260,37 +294,34 @@ ColumnSchema ColumnSchemaFromPB(const ColumnSchemaPB& pb) {
                       attributes);
 }
 
-Status ColumnPBsToSchema(const RepeatedPtrField<ColumnSchemaPB>& column_pbs,
-                         Schema* schema) {
-
-  vector<ColumnSchema> columns;
-  vector<ColumnId> column_ids;
-  columns.reserve(column_pbs.size());
-  int num_key_columns = 0;
-  bool is_handling_key = true;
+Status ParseColumnSchemaPBs(const RepeatedPtrField<ColumnSchemaPB>& column_pbs,
+                            vector<ColumnSchema>* columns,
+                            vector<ColumnId>* column_ids) {
+  columns->clear();
+  column_ids->clear();
+  columns->reserve(column_pbs.size());
+  vector<int> key_col_indexes;
   for (const ColumnSchemaPB& pb : column_pbs) {
-    columns.push_back(ColumnSchemaFromPB(pb));
-    if (pb.is_key()) {
-      if (!is_handling_key) {
-        return Status::InvalidArgument(
-          "Got out-of-order key column", pb.ShortDebugString());
-      }
-      num_key_columns++;
-    } else {
-      is_handling_key = false;
-    }
+    columns->emplace_back(ColumnSchemaFromPB(pb));
     if (pb.has_id()) {
-      column_ids.push_back(ColumnId(pb.id()));
+      column_ids->push_back(ColumnId(pb.id()));
     }
   }
 
-  DCHECK_LE(num_key_columns, columns.size());
-
-  // TODO(perf): could make the following faster by adding a
-  // Reset() variant which actually takes ownership of the column
-  // vector.
-  return schema->Reset(columns, column_ids, num_key_columns);
+  return Status::OK();
 }
+
+Status ProjectionFromColumnPBs(const RepeatedPtrField<ColumnSchemaPB>& column_pbs,
+                               Schema* schema) {
+  vector<ColumnSchema> cols;
+  vector<ColumnId> ids;
+  RETURN_NOT_OK(ParseColumnSchemaPBs(column_pbs, &cols, &ids));
+  if (!ids.empty()) {
+    return Status::InvalidArgument("projections should not include Column IDs");
+  }
+  return schema->Reset(cols, ids, {});
+}
+
 
 Status SchemaToColumnPBs(const Schema& schema,
                          RepeatedPtrField<ColumnSchemaPB>* cols,
@@ -300,7 +331,8 @@ Status SchemaToColumnPBs(const Schema& schema,
   for (const ColumnSchema& col : schema.columns()) {
     ColumnSchemaPB* col_pb = cols->Add();
     ColumnSchemaToPB(col, col_pb);
-    col_pb->set_is_key(idx < schema.num_key_columns());
+    col_pb->set_is_key(schema.is_key_column(idx));
+    // TODO: address above -- this function doesn't make a lot of sense
 
     if (schema.has_column_ids() && !(flags & SCHEMA_PB_WITHOUT_IDS)) {
       col_pb->set_id(schema.column_id(idx));

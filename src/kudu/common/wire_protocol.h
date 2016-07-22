@@ -22,6 +22,7 @@
 #include <boost/optional.hpp>
 #include <vector>
 
+#include "kudu/common/schema.h"
 #include "kudu/common/wire_protocol.pb.h"
 #include "kudu/util/status.h"
 
@@ -87,14 +88,24 @@ ColumnSchema ColumnSchemaFromPB(const ColumnSchemaPB& pb);
 //
 // Returns InvalidArgument if the provided columns don't make a valid Schema
 // (eg if the keys are non-contiguous or nullable).
-Status ColumnPBsToSchema(
-  const google::protobuf::RepeatedPtrField<ColumnSchemaPB>& column_pbs,
-  Schema* schema);
+//
+Status ParseColumnSchemaPBs(
+    const google::protobuf::RepeatedPtrField<ColumnSchemaPB>& column_pbs,
+    std::vector<ColumnSchema>* columns,
+    std::vector<ColumnId>* column_ids);
+
+// TODO: doc me
+// require: no column ids
+Status ProjectionFromColumnPBs(
+    const google::protobuf::RepeatedPtrField<ColumnSchemaPB>& column_pbs,
+    Schema* schema);
 
 // Extract the columns of the given Schema into protobuf objects.
 //
 // The 'cols' list is replaced by this method.
 // 'flags' is a bitfield of SchemaPBConversionFlags values.
+//
+// TODO: remove this -- should typically use SchemaToPB
 Status SchemaToColumnPBs(
   const Schema& schema,
   google::protobuf::RepeatedPtrField<ColumnSchemaPB>* cols,

@@ -151,7 +151,7 @@ Status PartitionSchema::FromPB(const PartitionSchemaPB& pb,
     // Fill in the default range partition (PK columns).
     // like the sorting above, this should only happen during table creation
     // while deserializing the user-provided partition schema.
-    for (int32_t column_idx = 0; column_idx < schema.num_key_columns(); column_idx++) {
+    for (int column_idx : schema.key_column_indexes()) {
       partition_schema->range_schema_.column_ids.push_back(schema.column_id(column_idx));
     }
   }
@@ -897,7 +897,7 @@ Status PartitionSchema::Validate(const Schema& schema) const {
       if (column_idx == Schema::kColumnNotFound) {
         return Status::InvalidArgument("must specify existing columns for hash "
                                        "bucket partition components");
-      } else if (column_idx >= schema.num_key_columns()) {
+      } else if (!schema.is_key_column(column_idx)) {
         return Status::InvalidArgument("must specify only primary key columns for "
                                        "hash bucket partition components");
       }
@@ -909,7 +909,7 @@ Status PartitionSchema::Validate(const Schema& schema) const {
     if (column_idx == Schema::kColumnNotFound) {
       return Status::InvalidArgument("must specify existing columns for range "
                                      "partition component");
-    } else if (column_idx >= schema.num_key_columns()) {
+    } else if (!schema.is_key_column(column_idx)) {
       return Status::InvalidArgument("must specify only primary key columns for "
                                      "range partition component");
     }

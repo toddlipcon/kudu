@@ -65,7 +65,7 @@ class CodegenTest : public KuduTest {
                                   ColumnSchema("str32         ", STRING, false),
                                   ColumnSchema("str32-null-val", STRING,  true),
                                   ColumnSchema("str32-null    ", STRING,  true) };
-    base_.Reset(cols, 1);
+    base_.Reset(cols, {}, { 0 });
     base_ = SchemaBuilder(base_).Build(); // add IDs
 
     // Create an extended default schema
@@ -73,7 +73,7 @@ class CodegenTest : public KuduTest {
     cols.push_back(ColumnSchema("int32-RW",  INT32, false, kI32R, kI32W));
     cols.push_back(ColumnSchema("str32-R ", STRING, false, kStrR,  nullptr));
     cols.push_back(ColumnSchema("str32-RW", STRING, false, kStrR, kStrW));
-    defaults_.Reset(cols, 1);
+    defaults_.Reset(cols, {}, { 0 });
     defaults_ = SchemaBuilder(defaults_).Build(); // add IDs
 
     test_rows_arena_.reset(new Arena(2 * 1024, 1024 * 1024));

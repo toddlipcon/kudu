@@ -74,7 +74,7 @@ TEST(TestPartitionPruner, TestPrimaryKeyRangePruning) {
                   ColumnSchema("b", INT8),
                   ColumnSchema("c", INT8) },
                 { ColumnId(0), ColumnId(1), ColumnId(2) },
-                3);
+                {0, 1, 2});
 
   PartitionSchema partition_schema;
   ASSERT_OK(PartitionSchema::FromPB(PartitionSchemaPB(), schema, &partition_schema));
@@ -185,7 +185,7 @@ TEST(TestPartitionPruner, TestPartialPrimaryKeyRangePruning) {
       ColumnSchema("b", STRING),
       ColumnSchema("c", STRING) },
       { ColumnId(0), ColumnId(1), ColumnId(2) },
-      3);
+      { 0, 1, 2 });
 
   PartitionSchema partition_schema;
   auto pb = PartitionSchemaPB();
@@ -290,7 +290,7 @@ TEST(TestPartitionPruner, TestRangePruning) {
                   ColumnSchema("b", STRING),
                   ColumnSchema("c", INT8) },
                 { ColumnId(0), ColumnId(1), ColumnId(2) },
-                3);
+                { 0, 1, 2});
 
   PartitionSchema partition_schema;
   auto pb = PartitionSchemaPB();
@@ -449,7 +449,7 @@ TEST(TestPartitionPruner, TestHashPruning) {
                   ColumnSchema("b", INT8),
                   ColumnSchema("c", INT8) },
                 { ColumnId(0), ColumnId(1), ColumnId(2) },
-                3);
+                { 0, 1, 2 });
 
     PartitionSchema partition_schema;
     auto pb = PartitionSchemaPB();
@@ -530,7 +530,7 @@ TEST(TestPartitionPruner, TestPruning) {
                   ColumnSchema("time", TIMESTAMP),
                   ColumnSchema("value", DOUBLE) },
                 { ColumnId(0), ColumnId(1), ColumnId(2), ColumnId(3) },
-                3);
+                { 0, 1, 2 });
 
   PartitionSchema partition_schema;
   auto pb = PartitionSchemaPB();

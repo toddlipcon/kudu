@@ -96,6 +96,7 @@ void EncodeRangeKeysFromPrimaryKeyBounds(const Schema& schema,
     vector<int32_t> col_idxs(num_range_columns);
     iota(col_idxs.begin(), col_idxs.end(), 0);
 
+    // TODO: here assuming that PK starts at the front of the key.
     unique_ptr<uint8_t[]> buf(new uint8_t[schema.key_byte_size()]);
     ContiguousRow row(&schema, buf.get());
 
@@ -131,7 +132,7 @@ void EncodeRangeKeysFromPredicates(const Schema& schema,
   for (ColumnId column : range_columns) {
     int32_t col_idx = schema.find_column_by_id(column);
     CHECK(col_idx != Schema::kColumnNotFound);
-    CHECK(col_idx < schema.num_key_columns());
+    CHECK(schema.is_key_column(col_idx));
     col_idxs.push_back(col_idx);
   }
 

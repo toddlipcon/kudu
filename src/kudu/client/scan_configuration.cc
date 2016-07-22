@@ -74,7 +74,7 @@ Status ScanConfiguration::SetProjectedColumnIndexes(const vector<int>& col_index
   }
 
   unique_ptr<Schema> s(new Schema());
-  RETURN_NOT_OK(s->Reset(cols, 0));
+  RETURN_NOT_OK(s->Reset(cols, {}, {}));
   projection_ = pool_.Add(s.release());
   client_projection_ = KuduSchema(*projection_);
   return Status::OK();

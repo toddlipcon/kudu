@@ -782,7 +782,7 @@ Status CatalogManager::CreateTable(const CreateTableRequestPB* orig_req,
     SetupError(resp->mutable_error(), MasterErrorPB::INVALID_SCHEMA, s);
         return s;
   }
-  for (int i = 0; i < client_schema.num_key_columns(); i++) {
+  for (int i : client_schema.key_column_indexes()) {
     if (!IsTypeAllowableInKey(client_schema.column(i).type_info())) {
         Status s = Status::InvalidArgument(
             "Key column may not have type of BOOL, FLOAT, or DOUBLE");

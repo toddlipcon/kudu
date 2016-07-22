@@ -68,7 +68,7 @@ void CheckCreateRangePartitions(const vector<pair<optional<string>, optional<str
 
   // CREATE TABLE t (col STRING PRIMARY KEY),
   // PARITITION BY RANGE (col);
-  Schema schema({ ColumnSchema("col", STRING) }, { ColumnId(0) }, 1);
+  Schema schema({ ColumnSchema("col", STRING) }, { ColumnId(0) }, { 0 });
 
   PartitionSchema partition_schema;
   ASSERT_OK(PartitionSchema::FromPB(PartitionSchemaPB(), schema, &partition_schema));
@@ -128,7 +128,8 @@ TEST(PartitionTest, TestPartitionKeyEncoding) {
   Schema schema({ ColumnSchema("a", INT32),
                   ColumnSchema("b", STRING),
                   ColumnSchema("c", STRING) },
-                { ColumnId(0), ColumnId(1), ColumnId(2) }, 3);
+                { ColumnId(0), ColumnId(1), ColumnId(2) },
+                { 0, 1, 2 });
 
   PartitionSchemaPB schema_builder;
   AddHashBucketComponent(&schema_builder, { "a", "b" }, 32, 0);
@@ -324,7 +325,7 @@ TEST(PartitionTest, TestCreateRangePartitions) {
 TEST(PartitionTest, TestCreateHashBucketPartitions) {
   // CREATE TABLE t (a VARCHAR PRIMARY KEY),
   // PARITITION BY [HASH BUCKET (a)];
-  Schema schema({ ColumnSchema("a", STRING) }, { ColumnId(0) }, 1);
+  Schema schema({ ColumnSchema("a", STRING) }, { ColumnId(0) }, { 0 });
 
   PartitionSchemaPB schema_builder;
   SetRangePartitionComponent(&schema_builder, vector<string>());
@@ -376,7 +377,8 @@ TEST(PartitionTest, TestCreatePartitions) {
   Schema schema({ ColumnSchema("a", STRING),
                   ColumnSchema("b", STRING),
                   ColumnSchema("c", STRING) },
-                { ColumnId(0), ColumnId(1), ColumnId(2) }, 3);
+                { ColumnId(0), ColumnId(1), ColumnId(2) },
+                { 0, 1, 2 });
 
   PartitionSchemaPB schema_builder;
   AddHashBucketComponent(&schema_builder, { "a" }, 2, 0);

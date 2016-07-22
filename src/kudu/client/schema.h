@@ -339,13 +339,11 @@ class KUDU_EXPORT KuduSchema {
 
   friend KuduSchema KuduSchemaFromSchema(const Schema& schema);
 
+  Status Reset(std::vector<KuduColumnSchema> columns,
+               std::vector<int> key_col_indexes);
 
   // For use by kudu tests.
   explicit KuduSchema(const Schema& schema);
-
-  // Private since we don't want users to rely on the first N columns
-  // being the keys.
-  size_t num_key_columns() const;
 
   // Owned.
   Schema* schema_;

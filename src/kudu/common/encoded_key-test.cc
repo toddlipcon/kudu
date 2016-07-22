@@ -219,6 +219,24 @@ TEST_F(EncodedKeyTest, TestDecodeCompoundKeys) {
 
     EXPECT_ROWKEY_EQ(schema, "(uint16 key0=12345, string key1=aKey, uint8 key2=123)", *key);
   }
+
+  {
+    // Mixed type compound key with non-contiguous out-of-order
+    Schema schema({ ColumnSchema("other_col", UINT16),
+                    ColumnSchema("key1", STRING),
+                    ColumnSchema("key0", UINT8) },
+                  {},
+                  { 2, 1 });
+    EncodedKeyBuilder builder(&schema);
+    uint8_t key0 = 13;
+    Slice key1("aKey");
+    builder.AddColumnKey(&key0);
+    builder.AddColumnKey(&key1);
+    key.reset(builder.BuildEncodedKey());
+    SCOPED_TRACE(key->encoded_key().ToDebugString());
+    EXPECT_ROWKEY_EQ(schema, "(uint8 key0=13, string key1=aKey)", *key);
+  }
+
 }
 
 TEST_F(EncodedKeyTest, TestConstructFromEncodedString) {

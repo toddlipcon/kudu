@@ -94,7 +94,7 @@ class TestDeltaMemStore : public KuduTest {
     ColumnSchema col_schema(schema_.column(col_idx));
     Schema single_col_projection({ col_schema },
                                  { schema_.column_id(col_idx) },
-                                 0);
+                                 {});
 
     DeltaIterator* raw_iter;
     Status s = dms_->NewDeltaIterator(&single_col_projection, snapshot, &raw_iter);

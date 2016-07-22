@@ -1565,7 +1565,7 @@ TEST_F(TabletServerTest, TestInvalidScanRequest_BadProjectionTypes) {
   // Verify mismatched nullability for the not-null int field
   ASSERT_OK(
     projection.Reset({ ColumnSchema("int_val", INT32, true) }, // should be NOT NULL
-                     0));
+                     {}, {}));
   VerifyScanRequestFailure(projection,
                            TabletServerErrorPB::MISMATCHED_SCHEMA,
                            "The column 'int_val' must have type int32 NOT "
@@ -1574,7 +1574,7 @@ TEST_F(TabletServerTest, TestInvalidScanRequest_BadProjectionTypes) {
   // Verify mismatched nullability for the nullable string field
   ASSERT_OK(
     projection.Reset({ ColumnSchema("string_val", STRING, false) }, // should be NULLABLE
-                     0));
+                     {}, {}));
   VerifyScanRequestFailure(projection,
                            TabletServerErrorPB::MISMATCHED_SCHEMA,
                            "The column 'string_val' must have type string "
@@ -1583,7 +1583,7 @@ TEST_F(TabletServerTest, TestInvalidScanRequest_BadProjectionTypes) {
   // Verify mismatched type for the not-null int field
   ASSERT_OK(
     projection.Reset({ ColumnSchema("int_val", INT16, false) },     // should be INT32 NOT NULL
-                     0));
+                     {}, {}));
   VerifyScanRequestFailure(projection,
                            TabletServerErrorPB::MISMATCHED_SCHEMA,
                            "The column 'int_val' must have type int32 NOT "
@@ -1592,7 +1592,7 @@ TEST_F(TabletServerTest, TestInvalidScanRequest_BadProjectionTypes) {
   // Verify mismatched type for the nullable string field
   ASSERT_OK(projection.Reset(
         { ColumnSchema("string_val", INT32, true) }, // should be STRING NULLABLE
-        0));
+        {}, {}));
   VerifyScanRequestFailure(projection,
                            TabletServerErrorPB::MISMATCHED_SCHEMA,
                            "The column 'string_val' must have type string "

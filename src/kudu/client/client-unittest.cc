@@ -62,8 +62,8 @@ TEST(ClientUnitTest, TestSchemaBuilder_KeyNotFirstColumn) {
   KuduSchemaBuilder b;
   b.AddColumn("key")->Type(KuduColumnSchema::INT32);
   b.AddColumn("x")->Type(KuduColumnSchema::INT32)->NotNull()->PrimaryKey();;
-  b.AddColumn("x")->Type(KuduColumnSchema::INT32);
-  ASSERT_EQ("Invalid argument: primary key column must be the first column",
+  b.AddColumn("y")->Type(KuduColumnSchema::INT32);
+  ASSERT_EQ("OK",
             b.Build(&s).ToString());
 }
 
@@ -136,9 +136,7 @@ TEST(ClientUnitTest, TestSchemaBuilder_CompoundKey_KeyNotFirst) {
   b.AddColumn("a")->Type(KuduColumnSchema::INT32)->NotNull();
   b.AddColumn("b")->Type(KuduColumnSchema::INT32)->NotNull();
   b.SetPrimaryKey({ "a", "b" });
-  ASSERT_EQ("Invalid argument: primary key columns must be listed "
-            "first in the schema: a",
-            b.Build(&s).ToString());
+  ASSERT_EQ("OK", b.Build(&s).ToString());
 }
 
 TEST(ClientUnitTest, TestSchemaBuilder_CompoundKey_BadColumnName) {

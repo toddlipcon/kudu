@@ -17,6 +17,7 @@
 #ifndef KUDU_COMMON_SCHEMA_H
 #define KUDU_COMMON_SCHEMA_H
 
+#include <boost/iterator/counting_iterator.hpp>
 #include <functional>
 #include <glog/logging.h>
 #include <memory>
@@ -292,7 +293,7 @@ class ContiguousRow;
 // The schema for a set of rows.
 //
 // A Schema is simply a set of columns, along with information about
-// which prefix of columns makes up the primary key.
+// which columns make up the primary key.
 //
 // Note that, while Schema is copyable and assignable, it is a complex
 // object that is not inexpensive to copy. You should generally prefer
@@ -305,8 +306,7 @@ class Schema {
   static const int kColumnNotFound = -1;
 
   Schema()
-    : num_key_columns_(0),
-      name_to_index_bytes_(0),
+    : name_to_index_bytes_(0),
       // TODO: C++11 provides a single-arg constructor
       name_to_index_(10,
                      NameToIndexMap::hasher(),
@@ -328,6 +328,8 @@ class Schema {
   // empty schema and then use Reset(...)  so that errors can be
   // caught. If an invalid schema is passed to this constructor, an
   // assertion will be fired!
+  ATTRIBUTE_DEPRECATED("Specify key columns explicitly with a different ctor, "
+                       "not just their count")
   Schema(const vector<ColumnSchema>& cols,
          int key_columns)
     : name_to_index_bytes_(0),
@@ -336,7 +338,12 @@ class Schema {
                      NameToIndexMap::hasher(),
                      NameToIndexMap::key_equal(),
                      NameToIndexMapAllocator(&name_to_index_bytes_)) {
-    CHECK_OK(Reset(cols, key_columns));
+
+    vector<int> key_indexes;
+    for (int i = 0; i < key_columns; i++) {
+      key_indexes.push_back(i);
+    }
+    CHECK_OK(Reset(cols, {}, key_indexes));
   }
 
   // Construct a schema with the given information.
@@ -347,22 +354,14 @@ class Schema {
   // assertion will be fired!
   Schema(const vector<ColumnSchema>& cols,
          const vector<ColumnId>& ids,
-         int key_columns)
+         const vector<int>& key_col_indexes)
     : name_to_index_bytes_(0),
       // TODO: C++11 provides a single-arg constructor
       name_to_index_(10,
                      NameToIndexMap::hasher(),
                      NameToIndexMap::key_equal(),
                      NameToIndexMapAllocator(&name_to_index_bytes_)) {
-    CHECK_OK(Reset(cols, ids, key_columns));
-  }
-
-  // Reset this Schema object to the given schema.
-  // If this fails, the Schema object is left in an inconsistent
-  // state and may not be used.
-  Status Reset(const vector<ColumnSchema>& cols, int key_columns) {
-    std::vector<ColumnId> ids;
-    return Reset(cols, ids, key_columns);
+    CHECK_OK(Reset(cols, ids, key_col_indexes));
   }
 
   // Reset this Schema object to the given schema.
@@ -370,7 +369,7 @@ class Schema {
   // state and may not be used.
   Status Reset(const vector<ColumnSchema>& cols,
                const vector<ColumnId>& ids,
-               int key_columns);
+               const vector<int>& key_col_indexes);
 
   // Return the number of bytes needed to represent a single row of this schema.
   //
@@ -382,8 +381,13 @@ class Schema {
 
   // Return the number of bytes needed to represent
   // only the key portion of this schema.
+  // TODO: rename to KeyByteSize, out-of-line it
   size_t key_byte_size() const {
-    return col_offsets_[num_key_columns_];
+    int ret = 0;
+    for (int i : key_col_indexes_) {
+      ret += cols_[i].type_info()->size();
+    }
+    return ret;
   }
 
   // Return the number of columns in this schema
@@ -393,7 +397,11 @@ class Schema {
 
   // Return the length of the key prefix in this schema.
   size_t num_key_columns() const {
-    return num_key_columns_;
+    return key_col_indexes_.size();
+  }
+
+  const vector<int> key_column_indexes() const {
+    return key_col_indexes_;
   }
 
   // Return the byte offset within the row for the given column index.
@@ -448,14 +456,21 @@ class Schema {
     return has_nullables_;
   }
 
-  // Returns true if the specified column (by name) is a key
+  // Returns true if the specified column (by name) is part of the
+  // primary key.
+  // TODO: rename to IsKeyColumn
   bool is_key_column(const StringPiece col_name) const {
     return is_key_column(find_column(col_name));
   }
 
-  // Returns true if the specified column (by index) is a key
+  // Returns true if the specified column (by index) is part of the
+  // primary key.
+  // TODO: rename
   bool is_key_column(size_t idx) const {
-    return idx < num_key_columns_;
+    for (int i : key_col_indexes_) {
+      if (i == idx) return true;
+    }
+    return false;
   }
 
   // Return true if this Schema is initialized and valid.
@@ -499,7 +514,9 @@ class Schema {
   template<class RowType>
   string DebugRow(const RowType& row) const {
     DCHECK_SCHEMA_EQ(*this, *row.schema());
-    return DebugRowColumns(row, num_columns());
+    return DebugRowColumns(row,
+                           boost::counting_iterator<int>(0),
+                           boost::counting_iterator<int>(num_columns()));
   }
 
   // Stringify the given row, which must have a schema which is
@@ -508,7 +525,7 @@ class Schema {
   template<class RowType>
   string DebugRowKey(const RowType& row) const {
     DCHECK_KEY_PROJECTION_SCHEMA_EQ(*this, *row.schema());
-    return DebugRowColumns(row, num_key_columns());
+    return DebugRowColumns(row, key_col_indexes_.begin(), key_col_indexes_.end());
   }
 
   // Decode the specified encoded key into the given 'buffer', which
@@ -538,7 +555,7 @@ class Schema {
   int Compare(const RowTypeA& lhs, const RowTypeB& rhs) const {
     DCHECK(KeyEquals(*lhs.schema()) && KeyEquals(*rhs.schema()));
 
-    for (size_t col = 0; col < num_key_columns_; col++) {
+    for (size_t col : key_col_indexes_) {
       int col_compare = column(col).Compare(lhs.cell_ptr(col), rhs.cell_ptr(col));
       if (col_compare != 0) {
         return col_compare;
@@ -554,14 +571,19 @@ class Schema {
   // TODO this should probably be cached since the key projection
   // is not supposed to change, for a single schema.
   Schema CreateKeyProjection() const {
-    vector<ColumnSchema> key_cols(cols_.begin(),
-                                  cols_.begin() + num_key_columns_);
+    vector<ColumnSchema> key_cols;
     vector<ColumnId> col_ids;
-    if (!col_ids_.empty()) {
-      col_ids.assign(col_ids_.begin(), col_ids_.begin() + num_key_columns_);
+    vector<int> new_key_indexes;
+    int new_idx = 0;
+    for (int i : key_col_indexes_) {
+      key_cols.push_back(cols_[i]);
+      if (!col_ids_.empty()) {
+        col_ids.push_back(col_ids_[i]);
+      }
+      new_key_indexes.push_back(new_idx++);
     }
 
-    return Schema(key_cols, col_ids, num_key_columns_);
+    return Schema(key_cols, col_ids, new_key_indexes);
   }
 
   // Return a new Schema which is the same as this one, but with IDs assigned.
@@ -601,10 +623,11 @@ class Schema {
     DCHECK_KEY_PROJECTION_SCHEMA_EQ(*this, *row.schema());
 
     dst->clear();
-    for (size_t i = 0; i < num_key_columns_; i++) {
+    int rem = key_col_indexes_.size();
+    for (int i : key_col_indexes_) {
       DCHECK(!cols_[i].is_nullable());
       const TypeInfo* ti = cols_[i].type_info();
-      bool is_last = i == num_key_columns_ - 1;
+      bool is_last = --rem == 0;
       GetKeyEncoder<faststring>(ti).Encode(row.cell_ptr(i), is_last, dst);
     }
     return Slice(*dst);
@@ -618,7 +641,7 @@ class Schema {
   // and respective types.
   bool Equals(const Schema &other) const {
     if (this == &other) return true;
-    if (this->num_key_columns_ != other.num_key_columns_) return false;
+    if (this->key_col_indexes_ != other.key_col_indexes_) return false;
     if (this->cols_.size() != other.cols_.size()) return false;
 
     const bool have_column_ids = other.has_column_ids() && has_column_ids();
@@ -632,9 +655,12 @@ class Schema {
   // Return true if the key projection schemas have exactly the same set of
   // columns and respective types.
   bool KeyEquals(const Schema& other) const {
-    if (this->num_key_columns_ != other.num_key_columns_) return false;
-    for (size_t i = 0; i < this->num_key_columns_; i++) {
-      if (!this->cols_[i].Equals(other.cols_[i], false)) return false;
+    if (this->key_col_indexes_.size() != other.key_col_indexes_.size()) return false;
+    for (int i = 0; i < this->key_col_indexes_.size(); i++) {
+      int this_idx = key_col_indexes_[i];
+      int other_idx = other.key_col_indexes_[i];
+
+      if (!this->cols_[this_idx].Equals(other.cols_[other_idx], false)) return false;
     }
     return true;
   }
@@ -738,13 +764,19 @@ class Schema {
 
   // Return a stringified version of the first 'num_columns' columns of the
   // row.
-  template<class RowType>
-  std::string DebugRowColumns(const RowType& row, int num_columns) const {
+  template<class RowType, class ItType>
+  std::string DebugRowColumns(const RowType& row,
+                              const ItType& begin,
+                              const ItType& end) const {
     string ret;
     ret.append("(");
 
-    for (size_t col_idx = 0; col_idx < num_columns; col_idx++) {
-      if (col_idx > 0) {
+    int i = 0;
+    for (ItType it = begin;
+         it != end;
+         ++it) {
+      int col_idx = *it;
+      if (i++ > 0) {
         ret.append(", ");
       }
       const ColumnSchema& col = cols_[col_idx];
@@ -757,7 +789,7 @@ class Schema {
   friend class SchemaBuilder;
 
   vector<ColumnSchema> cols_;
-  size_t num_key_columns_;
+  vector<int> key_col_indexes_;
   ColumnId max_col_id_;
   vector<ColumnId> col_ids_;
   vector<size_t> col_offsets_;
@@ -820,9 +852,11 @@ class SchemaBuilder {
     return next_id_;
   }
 
-  Schema Build() const { return Schema(cols_, col_ids_, num_key_columns_); }
-  Schema BuildWithoutIds() const { return Schema(cols_, num_key_columns_); }
+  Schema Build() const { return Schema(cols_, col_ids_, key_col_indexes_); }
+  Schema BuildWithoutIds() const { return Schema(cols_, {}, key_col_indexes_); }
 
+  // TODO: deprecate/remove this, and instead add a function to set the
+  // primary key indexes/names (like the client schema builder API)
   Status AddKeyColumn(const string& name, DataType type);
 
   Status AddColumn(const ColumnSchema& column, bool is_key);
@@ -849,9 +883,9 @@ class SchemaBuilder {
 
   ColumnId next_id_;
   vector<ColumnId> col_ids_;
+  vector<int> key_col_indexes_;
   vector<ColumnSchema> cols_;
   unordered_set<string> col_names_;
-  size_t num_key_columns_;
 };
 
 } // namespace kudu

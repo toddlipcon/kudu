@@ -111,6 +111,8 @@ class ClientTest : public KuduTest {
  public:
   ClientTest() {
     KuduSchemaBuilder b;
+    // TODO: should run this test with out-of-order PK as well.
+    // If you reverse the next two lines, all the tests fail.
     b.AddColumn("key")->Type(KuduColumnSchema::INT32)->NotNull()->PrimaryKey();
     b.AddColumn("int_val")->Type(KuduColumnSchema::INT32)->NotNull();
     b.AddColumn("string_val")->Type(KuduColumnSchema::STRING)->Nullable();
@@ -156,7 +158,7 @@ class ClientTest : public KuduTest {
   vector<unique_ptr<KuduPartialRow>> GenerateSplitRows() {
     vector<unique_ptr<KuduPartialRow>> rows;
     unique_ptr<KuduPartialRow> row(schema_.NewRow());
-    CHECK_OK(row->SetInt32(0, 9));
+    CHECK_OK(row->SetInt32("key", 9));
     rows.push_back(std::move(row));
     return rows;
   }
@@ -273,26 +275,26 @@ class ClientTest : public KuduTest {
   gscoped_ptr<KuduInsert> BuildTestRow(KuduTable* table, int index) {
     gscoped_ptr<KuduInsert> insert(table->NewInsert());
     KuduPartialRow* row = insert->mutable_row();
-    CHECK_OK(row->SetInt32(0, index));
-    CHECK_OK(row->SetInt32(1, index * 2));
-    CHECK_OK(row->SetStringCopy(2, Slice(StringPrintf("hello %d", index))));
-    CHECK_OK(row->SetInt32(3, index * 3));
+    CHECK_OK(row->SetInt32("key", index));
+    CHECK_OK(row->SetInt32("int_val", index * 2));
+    CHECK_OK(row->SetStringCopy("string_val", Slice(StringPrintf("hello %d", index))));
+    CHECK_OK(row->SetInt32("non_null_with_default", index * 3));
     return std::move(insert);
   }
 
   gscoped_ptr<KuduUpdate> UpdateTestRow(KuduTable* table, int index) {
     gscoped_ptr<KuduUpdate> update(table->NewUpdate());
     KuduPartialRow* row = update->mutable_row();
-    CHECK_OK(row->SetInt32(0, index));
-    CHECK_OK(row->SetInt32(1, index * 2 + 1));
-    CHECK_OK(row->SetStringCopy(2, Slice(StringPrintf("hello again %d", index))));
+    CHECK_OK(row->SetInt32("key", index));
+    CHECK_OK(row->SetInt32("int_val", index * 2 + 1));
+    CHECK_OK(row->SetStringCopy("string_val", Slice(StringPrintf("hello again %d", index))));
     return std::move(update);
   }
 
   gscoped_ptr<KuduDelete> DeleteTestRow(KuduTable* table, int index) {
     gscoped_ptr<KuduDelete> del(table->NewDelete());
     KuduPartialRow* row = del->mutable_row();
-    CHECK_OK(row->SetInt32(0, index));
+    CHECK_OK(row->SetInt32("key", index));
     return std::move(del);
   }
 
@@ -673,7 +675,7 @@ TEST_F(ClientTest, TestScanMultiTablet) {
   vector<unique_ptr<KuduPartialRow>> rows;
   for (int i = 1; i < 5; i++) {
     unique_ptr<KuduPartialRow> row(schema_.NewRow());
-    CHECK_OK(row->SetInt32(0, i * 10));
+    CHECK_OK(row->SetInt32("key", i * 10));
     rows.push_back(std::move(row));
   }
   gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
@@ -1351,9 +1353,9 @@ TEST_F(ClientTest, TestScanWithEncodedRangePredicate) {
   // Test a double-sided range within first tablet
   {
     KuduScanner scanner(table.get());
-    CHECK_OK(row->SetInt32(0, 5));
+    CHECK_OK(row->SetInt32("key", 5));
     ASSERT_OK(scanner.AddLowerBound(*row));
-    CHECK_OK(row->SetInt32(0, 8));
+    CHECK_OK(row->SetInt32("key", 8));
     ASSERT_OK(scanner.AddExclusiveUpperBound(*row));
     vector<string> rows;
     ASSERT_NO_FATAL_FAILURE(ScanToStrings(&scanner, &rows));
@@ -1365,9 +1367,9 @@ TEST_F(ClientTest, TestScanWithEncodedRangePredicate) {
   // Test a double-sided range spanning tablets
   {
     KuduScanner scanner(table.get());
-    CHECK_OK(row->SetInt32(0, 5));
+    CHECK_OK(row->SetInt32("key", 5));
     ASSERT_OK(scanner.AddLowerBound(*row));
-    CHECK_OK(row->SetInt32(0, 15));
+    CHECK_OK(row->SetInt32("key", 15));
     ASSERT_OK(scanner.AddExclusiveUpperBound(*row));
     vector<string> rows;
     ASSERT_NO_FATAL_FAILURE(ScanToStrings(&scanner, &rows));
@@ -1379,9 +1381,9 @@ TEST_F(ClientTest, TestScanWithEncodedRangePredicate) {
   // Test a double-sided range within second tablet
   {
     KuduScanner scanner(table.get());
-    CHECK_OK(row->SetInt32(0, 15));
+    CHECK_OK(row->SetInt32("key", 15));
     ASSERT_OK(scanner.AddLowerBound(*row));
-    CHECK_OK(row->SetInt32(0, 20));
+    CHECK_OK(row->SetInt32("key", 20));
     ASSERT_OK(scanner.AddExclusiveUpperBound(*row));
     vector<string> rows;
     ASSERT_NO_FATAL_FAILURE(ScanToStrings(&scanner, &rows));
@@ -1393,7 +1395,7 @@ TEST_F(ClientTest, TestScanWithEncodedRangePredicate) {
   // Test a lower-bound only range.
   {
     KuduScanner scanner(table.get());
-    CHECK_OK(row->SetInt32(0, 5));
+    CHECK_OK(row->SetInt32("key", 5));
     ASSERT_OK(scanner.AddLowerBound(*row));
     vector<string> rows;
     ASSERT_NO_FATAL_FAILURE(ScanToStrings(&scanner, &rows));
@@ -1405,7 +1407,7 @@ TEST_F(ClientTest, TestScanWithEncodedRangePredicate) {
   // Test an upper-bound only range in first tablet.
   {
     KuduScanner scanner(table.get());
-    CHECK_OK(row->SetInt32(0, 5));
+    CHECK_OK(row->SetInt32("key", 5));
     ASSERT_OK(scanner.AddExclusiveUpperBound(*row));
     vector<string> rows;
     ASSERT_NO_FATAL_FAILURE(ScanToStrings(&scanner, &rows));
@@ -1417,7 +1419,7 @@ TEST_F(ClientTest, TestScanWithEncodedRangePredicate) {
   // Test an upper-bound only range in second tablet.
   {
     KuduScanner scanner(table.get());
-    CHECK_OK(row->SetInt32(0, 15));
+    CHECK_OK(row->SetInt32("key", 15));
     ASSERT_OK(scanner.AddExclusiveUpperBound(*row));
     vector<string> rows;
     ASSERT_NO_FATAL_FAILURE(ScanToStrings(&scanner, &rows));

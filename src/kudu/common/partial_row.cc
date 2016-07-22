@@ -611,7 +611,7 @@ Status KuduPartialRow::EncodeRowKey(string* encoded_key) const {
   // Currently, a row key must be fully specified.
   // TODO: allow specifying a prefix of the key, and automatically
   // fill the rest with minimum values.
-  for (int i = 0; i < schema_->num_key_columns(); i++) {
+  for (int i : schema_->key_column_indexes()) {
     if (PREDICT_FALSE(!IsColumnSet(i))) {
       return Status::InvalidArgument("All key columns must be set",
                                      schema_->column(i).name());
@@ -621,8 +621,8 @@ Status KuduPartialRow::EncodeRowKey(string* encoded_key) const {
   encoded_key->clear();
   ContiguousRow row(schema_, row_data_);
 
-  for (int i = 0; i < schema_->num_key_columns(); i++) {
-    bool is_last = i == schema_->num_key_columns() - 1;
+  for (int i : schema_->key_column_indexes()) {
+    bool is_last = i == schema_->key_column_indexes().back();
     const TypeInfo* ti = schema_->column(i).type_info();
     GetKeyEncoder<string>(ti).Encode(row.cell_ptr(i), is_last, encoded_key);
   }
@@ -645,7 +645,10 @@ bool KuduPartialRow::AllColumnsSet() const {
 }
 
 bool KuduPartialRow::IsKeySet() const {
-  return BitMapIsAllSet(isset_bitmap_, 0, schema_->num_key_columns());
+  for (int i : schema_->key_column_indexes()) {
+    if (!IsColumnSet(i)) return false;
+  }
+  return true;
 }
 
 

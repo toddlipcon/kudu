@@ -93,7 +93,7 @@ Schema& Schema::operator=(const Schema& other) {
 }
 
 void Schema::CopyFrom(const Schema& other) {
-  num_key_columns_ = other.num_key_columns_;
+  key_col_indexes_ = other.key_col_indexes_;
   cols_ = other.cols_;
   col_ids_ = other.col_ids_;
   col_offsets_ = other.col_offsets_;
@@ -112,7 +112,7 @@ void Schema::CopyFrom(const Schema& other) {
 }
 
 void Schema::swap(Schema& other) {
-  std::swap(num_key_columns_, other.num_key_columns_);
+  std::swap(key_col_indexes_, other.key_col_indexes_);
   cols_.swap(other.cols_);
   col_ids_.swap(other.col_ids_);
   col_offsets_.swap(other.col_offsets_);
@@ -123,27 +123,26 @@ void Schema::swap(Schema& other) {
 
 Status Schema::Reset(const vector<ColumnSchema>& cols,
                      const vector<ColumnId>& ids,
-                     int key_columns) {
+                     const vector<int>& key_col_indexes) {
+  // TODO: above arguments should pass-by-value and use std::move
   cols_ = cols;
-  num_key_columns_ = key_columns;
-
-  if (PREDICT_FALSE(key_columns > cols_.size())) {
-    return Status::InvalidArgument(
-      "Bad schema", "More key columns than columns");
-  }
-
-  if (PREDICT_FALSE(key_columns < 0)) {
-    return Status::InvalidArgument(
-      "Bad schema", "Cannot specify a negative number of key columns");
-  }
+  key_col_indexes_ = key_col_indexes;
 
   if (PREDICT_FALSE(!ids.empty() && ids.size() != cols_.size())) {
     return Status::InvalidArgument("Bad schema",
       "The number of ids does not match with the number of columns");
   }
 
-  // Verify that the key columns are not nullable
-  for (int i = 0; i < key_columns; ++i) {
+  // Verify that the key columns are not nullable, and that
+  // they are unique
+  set<int> key_idx_set;
+  for (int i : key_col_indexes_) {
+    if (PREDICT_FALSE(!InsertIfNotPresent(&key_idx_set, i))) {
+      return Status::InvalidArgument(
+          "Bad schema",
+          strings::Substitute("Column listed twice in key: $0", cols_[i].name()));
+    }
+
     if (PREDICT_FALSE(cols_[i].is_nullable())) {
       return Status::InvalidArgument(
         "Bad schema", strings::Substitute("Nullable key columns are not "
@@ -207,7 +206,7 @@ Status Schema::CreateProjectionByNames(const std::vector<StringPiece>& col_names
     }
     cols.push_back(column(idx));
   }
-  return out->Reset(cols, ids, 0);
+  return out->Reset(cols, ids, {});
 }
 
 Status Schema::CreateProjectionByIdsIgnoreMissing(const std::vector<ColumnId>& col_ids,
@@ -222,7 +221,7 @@ Status Schema::CreateProjectionByIdsIgnoreMissing(const std::vector<ColumnId>& c
     cols.push_back(column(idx));
     filtered_col_ids.push_back(id);
   }
-  return out->Reset(cols, filtered_col_ids, 0);
+  return out->Reset(cols, filtered_col_ids, {});
 }
 
 Schema Schema::CopyWithColumnIds() const {
@@ -231,12 +230,12 @@ Schema Schema::CopyWithColumnIds() const {
   for (int32_t i = 0; i < num_columns(); i++) {
     ids.push_back(ColumnId(kFirstColumnId + i));
   }
-  return Schema(cols_, ids, num_key_columns_);
+  return Schema(cols_, ids, key_col_indexes_);
 }
 
 Schema Schema::CopyWithoutColumnIds() const {
   CHECK(has_column_ids());
-  return Schema(cols_, num_key_columns_);
+  return Schema(cols_, {}, key_col_indexes_);
 }
 
 Status Schema::VerifyProjectionCompatibility(const Schema& projection) const {
@@ -290,7 +289,7 @@ Status Schema::GetMappedReadProjection(const Schema& projection,
     mapped_ids.push_back(col_ids_[index]);
   }
 
-  CHECK_OK(mapped_projection->Reset(mapped_cols, mapped_ids, projection.num_key_columns()));
+  CHECK_OK(mapped_projection->Reset(mapped_cols, mapped_ids, projection.key_col_indexes_));
   return Status::OK();
 }
 
@@ -314,18 +313,21 @@ string Schema::ToString() const {
 Status Schema::DecodeRowKey(Slice encoded_key,
                             uint8_t* buffer,
                             Arena* arena) const {
-  ContiguousRow row(this, buffer);
-
-  for (size_t col_idx = 0; col_idx < num_key_columns(); ++col_idx) {
+  // TODO: this decodes back assuming 'buffer' has the original schema,
+  // whereas in practrice maybe we should be decoding to the key-only projection
+  // schema?
+  uint8_t* dst = buffer;
+  for (size_t col_idx : key_col_indexes_) {
     const ColumnSchema& col = column(col_idx);
     const KeyEncoder<faststring>& key_encoder = GetKeyEncoder<faststring>(col.type_info());
-    bool is_last = col_idx == (num_key_columns() - 1);
+    bool is_last = col_idx == key_col_indexes_.back();
     RETURN_NOT_OK_PREPEND(key_encoder.Decode(&encoded_key,
                                              is_last,
                                              arena,
-                                             row.mutable_cell_ptr(col_idx)),
+                                             dst),
                           strings::Substitute("Error decoding composite key component '$0'",
                                               col.name()));
+    dst += col.type_info()->size();
   }
   return Status::OK();
 }
@@ -344,8 +346,11 @@ string Schema::DebugEncodedRowKey(Slice encoded_key, StartOrEnd start_or_end) co
   if (!s.ok()) {
     return "<invalid key: " + s.ToString() + ">";
   }
-  ConstContiguousRow row(this, buf);
-  return DebugRowKey(row);
+
+  // TODO: perf here isn't great.
+  Schema key_proj = CreateKeyProjection();
+  ConstContiguousRow row(&key_proj, buf);
+  return key_proj.DebugRow(row);
 }
 
 size_t Schema::memory_footprint_excluding_this() const {
@@ -362,6 +367,9 @@ size_t Schema::memory_footprint_excluding_this() const {
   }
   if (col_offsets_.capacity() > 0) {
     size += kudu_malloc_usable_size(col_offsets_.data());
+  }
+  if (key_col_indexes_.capacity() > 0) {
+    size += kudu_malloc_usable_size(key_col_indexes_.data());
   }
   size += name_to_index_bytes_;
   size += id_to_index_.memory_footprint_excluding_this();
@@ -380,14 +388,14 @@ void SchemaBuilder::Reset() {
   cols_.clear();
   col_ids_.clear();
   col_names_.clear();
-  num_key_columns_ = 0;
+  key_col_indexes_.clear();
   next_id_ = kFirstColumnId;
 }
 
 void SchemaBuilder::Reset(const Schema& schema) {
   cols_ = schema.cols_;
   col_ids_ = schema.col_ids_;
-  num_key_columns_ = schema.num_key_columns_;
+  key_col_indexes_ = schema.key_col_indexes_;
   for (const auto& column : cols_) {
     col_names_.insert(column.name());
   }
@@ -427,8 +435,9 @@ Status SchemaBuilder::RemoveColumn(const string& name) {
     if (name == cols_[i].name()) {
       cols_.erase(cols_.begin() + i);
       col_ids_.erase(col_ids_.begin() + i);
-      if (i < num_key_columns_) {
-        num_key_columns_--;
+      auto it = std::find(key_col_indexes_.begin(), key_col_indexes_.end(), i);
+      if (it != key_col_indexes_.end()) {
+        key_col_indexes_.erase(it);
       }
       return Status::OK();
     }
@@ -471,13 +480,10 @@ Status SchemaBuilder::AddColumn(const ColumnSchema& column, bool is_key) {
   }
 
   col_names_.insert(column.name());
+  cols_.push_back(column);
+  col_ids_.push_back(next_id_);
   if (is_key) {
-    cols_.insert(cols_.begin() + num_key_columns_, column);
-    col_ids_.insert(col_ids_.begin() + num_key_columns_, next_id_);
-    num_key_columns_++;
-  } else {
-    cols_.push_back(column);
-    col_ids_.push_back(next_id_);
+    key_col_indexes_.push_back(cols_.size() - 1);
   }
 
   next_id_ = ColumnId(next_id_ + 1);

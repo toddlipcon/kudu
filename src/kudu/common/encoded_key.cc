@@ -42,7 +42,7 @@ EncodedKey::EncodedKey(faststring* data,
 
 gscoped_ptr<EncodedKey> EncodedKey::FromContiguousRow(const ConstContiguousRow& row) {
   EncodedKeyBuilder kb(row.schema());
-  for (int i = 0; i < row.schema()->num_key_columns(); i++) {
+  for (int i : row.schema()->key_column_indexes()) {
     kb.AddColumnKey(row.cell_ptr(i));
   }
   return make_gscoped_ptr(kb.BuildEncodedKey());
@@ -61,13 +61,16 @@ Status EncodedKey::DecodeEncodedString(const Schema& schema,
   RETURN_NOT_OK(schema.DecodeRowKey(encoded, raw_key_buf, arena));
 
   vector<const void*> raw_keys(schema.num_key_columns());
-  for (int i = 0; i < schema.num_key_columns(); i++) {
-    raw_keys[i] = raw_key_buf + schema.column_offset(i);
+  int i = 0;
+  for (int col_idx : schema.key_column_indexes()) {
+    raw_keys[i++] = raw_key_buf;
+    raw_key_buf += schema.column(col_idx).type_info()->size();
   }
 
   faststring data_copy;
   data_copy.assign_copy(encoded.data(), encoded.size());
 
+  // TODO: isn't the third argument below the same as raw_keys.size()?
   result->reset(new EncodedKey(&data_copy, &raw_keys, schema.num_key_columns()));
   return Status::OK();
 }
@@ -83,14 +86,16 @@ Status EncodedKey::IncrementEncodedKey(const Schema& tablet_schema,
   }
 
   vector<const void*> new_raw_keys(tablet_schema.num_key_columns());
-  for (int i = 0; i < tablet_schema.num_key_columns(); i++) {
-    int size = tablet_schema.column(i).type_info()->size();
+  int i = 0;
+  for (int col_idx : tablet_schema.key_column_indexes()) {
+    int size = tablet_schema.column(col_idx).type_info()->size();
 
-    void* dst = new_row_key + tablet_schema.column_offset(i);
+    void* dst = new_row_key + tablet_schema.column_offset(col_idx);
     new_raw_keys[i] = dst;
     memcpy(dst,
            (*key)->raw_keys()[i],
            size);
+    i++;
   }
 
   // Increment the new key
@@ -109,17 +114,18 @@ Status EncodedKey::IncrementEncodedKey(const Schema& tablet_schema,
 
 string EncodedKey::Stringify(const Schema &schema) const {
   if (num_key_cols_ == 1) {
-    return schema.column(0).Stringify(raw_keys_.front());
+    return schema.column(schema.key_column_indexes()[0]).Stringify(raw_keys_.front());
   }
 
   faststring s;
   s.append("(");
   for (int i = 0; i < num_key_cols_; i++) {
+    int col_idx = schema.key_column_indexes()[i];
     if (i > 0) {
       s.append(",");
     }
     if (i < raw_keys_.size()) {
-      s.append(schema.column(i).Stringify(raw_keys_[i]));
+      s.append(schema.column(col_idx).Stringify(raw_keys_[i]));
     } else {
       s.append("*");
     }
@@ -147,7 +153,8 @@ void EncodedKeyBuilder::Reset() {
 void EncodedKeyBuilder::AddColumnKey(const void *raw_key) {
   DCHECK_LT(idx_, num_key_cols_);
 
-  const ColumnSchema &col = schema_->column(idx_);
+  int col_idx = schema_->key_column_indexes()[idx_];
+  const ColumnSchema &col = schema_->column(col_idx);
   DCHECK(!col.is_nullable());
 
   const TypeInfo* ti = col.type_info();

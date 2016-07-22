@@ -310,7 +310,7 @@ Status KuduSchemaBuilder::Build(KuduSchema* schema) {
     RETURN_NOT_OK(data_->specs[i]->ToColumnSchema(&cols[i]));
   }
 
-  int num_key_cols;
+  vector<int> key_col_indexes;
 
   if (!data_->has_key_col_names) {
     // If they didn't explicitly pass the column names for key,
@@ -332,12 +332,7 @@ Status KuduSchemaBuilder::Build(KuduSchema* schema) {
       return Status::InvalidArgument("no primary key specified");
     }
 
-    // TODO: eventually allow primary keys which aren't the first column
-    if (single_key_col_idx != 0) {
-      return Status::InvalidArgument("primary key column must be the first column");
-    }
-
-    num_key_cols = 1;
+    key_col_indexes.push_back(single_key_col_idx);
   } else {
     // Build a map from name to index of all of the columns.
     unordered_map<string, int> name_to_idx_map;
@@ -355,7 +350,6 @@ Status KuduSchemaBuilder::Build(KuduSchema* schema) {
     }
 
     // Convert the key column names to a set of indexes.
-    vector<int> key_col_indexes;
     for (const string& key_col_name : data_->key_col_names) {
       int idx;
       if (!FindCopy(name_to_idx_map, key_col_name, &idx)) {
@@ -363,21 +357,9 @@ Status KuduSchemaBuilder::Build(KuduSchema* schema) {
       }
       key_col_indexes.push_back(idx);
     }
-
-    // Currently we require that the key columns be contiguous at the front
-    // of the schema. We'll lift this restriction later -- hence the more
-    // flexible user-facing API.
-    for (int i = 0; i < key_col_indexes.size(); i++) {
-      if (key_col_indexes[i] != i) {
-        return Status::InvalidArgument("primary key columns must be listed first in the schema",
-                                       data_->key_col_names[i]);
-      }
-    }
-
-    num_key_cols = key_col_indexes.size();
   }
 
-  RETURN_NOT_OK(schema->Reset(cols, num_key_cols));
+  RETURN_NOT_OK(schema->Reset(cols, key_col_indexes));
 
   return Status::OK();
 }
@@ -488,8 +470,29 @@ Status KuduSchema::Reset(const vector<KuduColumnSchema>& columns, int key_column
   for (const KuduColumnSchema& col : columns) {
     cols_private.push_back(*col.col_);
   }
+  vector<int> key_col_indexes;
+  for (int i = 0; i < key_columns; i++) {
+    key_col_indexes.push_back(i);
+  }
+
   gscoped_ptr<Schema> new_schema(new Schema());
-  RETURN_NOT_OK(new_schema->Reset(cols_private, key_columns));
+  RETURN_NOT_OK(new_schema->Reset(cols_private, {}, key_col_indexes));
+
+  delete schema_;
+  schema_ = new_schema.release();
+  return Status::OK();
+}
+
+Status KuduSchema::Reset(vector<KuduColumnSchema> columns,
+                         vector<int> key_col_indexes) {
+  vector<ColumnSchema> cols_private;
+  for (const KuduColumnSchema& col : columns) {
+    cols_private.emplace_back(std::move(*col.col_));
+  }
+  gscoped_ptr<Schema> new_schema(new Schema());
+  RETURN_NOT_OK(new_schema->Reset(std::move(cols_private),
+                                  {},
+                                  std::move(key_col_indexes)));
 
   delete schema_;
   schema_ = new_schema.release();
@@ -518,16 +521,8 @@ size_t KuduSchema::num_columns() const {
   return schema_->num_columns();
 }
 
-size_t KuduSchema::num_key_columns() const {
-  return schema_->num_key_columns();
-}
-
 void KuduSchema::GetPrimaryKeyColumnIndexes(vector<int>* indexes) const {
-  indexes->clear();
-  indexes->resize(num_key_columns());
-  for (int i = 0; i < num_key_columns(); i++) {
-    (*indexes)[i] = i;
-  }
+  *indexes = schema_->key_column_indexes();
 }
 
 } // namespace client

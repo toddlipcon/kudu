@@ -130,6 +130,10 @@ void ScanSpec::PushPredicatesIntoPrimaryKeyBounds(const Schema& schema,
                                                   Arena* arena,
                                                   AutoReleasePool* pool,
                                                   bool remove_pushed_predicates) {
+  // TODO: this method and the one below are all broken for non-contiguous
+  // PK - here we are assuming that the column index and the index in the PK order
+  // are equivalent.
+
   // Step 1: load key column predicate values into a pair of rows.
   uint8_t* lower_buf = static_cast<uint8_t*>(
       CHECK_NOTNULL(arena->AllocateBytes(schema.key_byte_size())));

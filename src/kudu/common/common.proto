@@ -90,6 +90,10 @@ message ColumnSchemaPB {
 
 message SchemaPB {
   repeated ColumnSchemaPB columns = 1;
+
+  // TODO: doc how this is disambiguated with the 'is_key' in ColumnSchemaPB.
+  // TODO: use me
+  repeated uint32 key_col_indexes = 2;
 }
 
 message HostPortPB {

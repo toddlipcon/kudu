@@ -399,6 +399,7 @@ Status RowOperationsPBDecoder::DecodeUpdateOrDelete(const ClientServerMapping& m
   // We're passing the full schema instead of the key schema here.
   // That's OK because the keys come at the bottom. We lose some bounds
   // checking in debug builds, but it avoids an extra copy of the key schema.
+  // TODO: above isn't a valid assumption with non-contig keys.
   ContiguousRow rowkey(tablet_schema_, rowkey_storage);
 
   // First process the key columns.
