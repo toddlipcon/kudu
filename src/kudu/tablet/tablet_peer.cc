@@ -117,6 +117,7 @@ TabletPeer::TabletPeer(const scoped_refptr<TabletMetadata>& meta,
       mark_dirty_clbk_(std::move(mark_dirty_clbk)) {}
 
 TabletPeer::~TabletPeer() {
+  meta_->SetUnflushedLogIndexGetter({});
   std::lock_guard<simple_spinlock> lock(lock_);
   // We should either have called Shutdown(), or we should have never called
   // Init().
@@ -134,6 +135,13 @@ Status TabletPeer::Init(const shared_ptr<Tablet>& tablet,
 
   DCHECK(tablet) << "A TabletPeer must be provided with a Tablet";
   DCHECK(log) << "A TabletPeer must be provided with a Log";
+
+  meta_->SetUnflushedLogIndexGetter([this]() {
+      int64_t x;
+      // TODO: this function should just return int64_t
+      GetEarliestNeededLogIndex(&x);
+      return x;
+    });
 
   RETURN_NOT_OK(ThreadPoolBuilder("prepare").set_max_threads(1).Build(&prepare_pool_));
   prepare_pool_->SetQueueLengthHistogram(
@@ -367,6 +375,8 @@ Status TabletPeer::RunLogGC() {
   }
   int64_t min_log_index;
   int32_t num_gced;
+  // TODO: since this now gets forwarded into TabletMetadata at flush time,
+  // maybe this can consult that "cache"?
   GetEarliestNeededLogIndex(&min_log_index);
   Status s = log_->GC(min_log_index, &num_gced);
   if (!s.ok()) {
@@ -434,6 +444,15 @@ void TabletPeer::GetEarliestNeededLogIndex(int64_t* min_index) const {
   // and avoid racing with the other checks. This limits the Log GC candidate
   // segments before we check the anchors.
   {
+    // TODO: see the TODO in Log::DoAppend -- this is the latest appended REPLICATE
+    // but it's not necessarily durable yet. Perhaps this is handled by the
+    // transactiontracker check below?
+    //
+    // We should probably also consider the latest
+    // committed op index coming from consensus here to also avoid GCing
+    // uncommitted (but replicated) operations. Need to also be careful because
+    // on a follower, the 'committed index' can advance ahead of what it has
+    // actually replicated.
     OpId last_log_op;
     log_->GetLatestEntryOpId(&last_log_op);
     *min_index = last_log_op.index();
@@ -470,6 +489,8 @@ void TabletPeer::GetEarliestNeededLogIndex(int64_t* min_index) const {
 Status TabletPeer::GetMaxIndexesToSegmentSizeMap(MaxIdxToSegmentSizeMap* idx_size_map) const {
   RETURN_NOT_OK(CheckRunning());
   int64_t min_op_idx;
+  // TODO: since this now gets forwarded into TabletMetadata at flush time,
+  // maybe this can consult that "cache"?
   GetEarliestNeededLogIndex(&min_op_idx);
   log_->GetMaxIndexesToSegmentSizeMap(min_op_idx, idx_size_map);
   return Status::OK();
@@ -478,6 +499,8 @@ Status TabletPeer::GetMaxIndexesToSegmentSizeMap(MaxIdxToSegmentSizeMap* idx_siz
 Status TabletPeer::GetGCableDataSize(int64_t* retention_size) const {
   RETURN_NOT_OK(CheckRunning());
   int64_t min_op_idx;
+  // TODO: since this now gets forwarded into TabletMetadata at flush time,
+  // maybe this can consult that "cache"?
   GetEarliestNeededLogIndex(&min_op_idx);
   log_->GetGCableDataSize(min_op_idx, retention_size);
   return Status::OK();

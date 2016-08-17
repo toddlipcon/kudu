@@ -122,6 +122,9 @@ message TabletSuperBlockPB {
   // WAL before tombstoning.
   // Only relevant for TOMBSTONED tablets.
   optional consensus.OpId tombstone_last_logged_opid = 12;
+
+  // The earliest log index that may contain unflushed data.
+  optional int64 unflushed_log_index = 15;
 }
 
 // The enum of tablet states.

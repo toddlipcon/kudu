@@ -333,6 +333,12 @@ Status TabletMetadata::LoadFromSuperBlock(const TabletSuperBlockPB& superblock) 
     } else {
       tombstone_last_logged_opid_ = MinimumOpId();
     }
+
+    if (superblock.has_unflushed_log_index()) {
+      unflushed_log_index_ = superblock.unflushed_log_index();
+    } else {
+      unflushed_log_index_ = boost::none;
+    }
   }
 
   // Now is a good time to clean up any orphaned blocks that may have been
@@ -428,6 +434,21 @@ Status TabletMetadata::Flush() {
       LOG(INFO) << "Not flushing: waiting for " << num_flush_pins_ << " pins to be released.";
       return Status::OK();
     }
+
+    if (unflushed_log_index_getter_) {
+      // TODO: this isn't actually a good design, because while are still writing the
+      // metadata, whatever the thing we're flushing is still alive and holding its
+      // anchor. We need to compute the minimum _minus the thing being flushed_.
+      // Otherwise we're one flush out of date.
+      int64_t new_index = unflushed_log_index_getter_();
+      if (unflushed_log_index_) {
+        DCHECK_GE(new_index, *unflushed_log_index_)
+            << "log index needed for durability should only increase!";
+      }
+      unflushed_log_index_ = new_index;
+      LOG(ERROR) << "===> flushed up to index: " << *unflushed_log_index_;
+    }
+
     needs_flush_ = false;
 
     RETURN_NOT_OK(ToSuperBlockUnlocked(&pb, rowsets_));
@@ -440,6 +461,7 @@ Status TabletMetadata::Flush() {
     // is persisted. See KUDU-701 for details.
     orphaned.assign(orphaned_blocks_.begin(), orphaned_blocks_.end());
   }
+
   pre_flush_callback_.Run();
   RETURN_NOT_OK(ReplaceSuperBlockUnlocked(pb));
   TRACE("Metadata flushed");
@@ -535,6 +557,9 @@ Status TabletMetadata::ToSuperBlockUnlocked(TabletSuperBlockPB* super_block,
   pb.set_schema_version(schema_version_);
   partition_schema_.ToPB(pb.mutable_partition_schema());
   pb.set_table_name(table_name_);
+  if (unflushed_log_index_) {
+    pb.set_unflushed_log_index(*unflushed_log_index_);
+  }
 
   for (const shared_ptr<RowSetMetadata>& meta : rowsets) {
     meta->ToProtobuf(pb.add_rowsets());

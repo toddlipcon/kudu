@@ -203,7 +203,21 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
 
   void SetLastDurableMrsIdForTests(int64_t mrs_id) { last_durable_mrs_id_ = mrs_id; }
 
+  // Set a callback which is run just before flushing new metadata to disk.
   void SetPreFlushCallback(StatusClosure callback) { pre_flush_callback_ = callback; }
+
+  // Set a function which should returns the earliest log index needed for durability
+  // (i.e. the index of the earliest operation which has not yet been flushed).
+  // This function is called each time before the metadata is written to disk, and persisted.
+  void SetUnflushedLogIndexGetter(std::function<int64_t()> f) {
+    unflushed_log_index_getter_ = std::move(f);
+  }
+
+  // Return the earliest log index which may correspond to data that has not
+  // already been flushed to disk.
+  //
+  // Optional because this was not persisted in earlier versions of Kudu.
+  boost::optional<int64_t> unflushed_log_index() { return unflushed_log_index_; }
 
   consensus::OpId tombstone_last_logged_opid() const { return tombstone_last_logged_opid_; }
 
@@ -342,6 +356,11 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   // A callback that, if set, is called before this metadata is flushed
   // to disk.
   StatusClosure pre_flush_callback_;
+
+  // A callback that, if set, is called to determine the earliest log
+  // index needed for durability prior to each flush.
+  std::function<int64_t()> unflushed_log_index_getter_;
+  boost::optional<int64_t> unflushed_log_index_;
 
   DISALLOW_COPY_AND_ASSIGN(TabletMetadata);
 };

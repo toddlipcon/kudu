@@ -545,6 +545,7 @@ Status TabletBootstrap::FinishBootstrap(const string& message,
       Bind(&FlushInflightsToLogCallback::WaitForInflightsAndFlushLog,
            make_scoped_refptr(new FlushInflightsToLogCallback(tablet_.get(),
                                                               log_))));
+
   tablet_->MarkFinishedBootstrapping();
   RETURN_NOT_OK(tablet_->metadata()->UnPinFlush());
   listener_->StatusMessage(message);
@@ -1067,7 +1068,21 @@ Status TabletBootstrap::PlaySegments(ConsensusBootstrapInfo* consensus_info) {
 
   int segment_count = 0;
   for (const scoped_refptr<ReadableLogSegment>& segment : segments) {
+    if (meta_->unflushed_log_index() != boost::none &&
+        segment->HasFooter() &&
+        segment->footer().has_max_replicate_index() &&
+        segment->footer().max_replicate_index() &&
+        meta_->unflushed_log_index() > segment->footer().max_replicate_index()) {
+      LOG(ERROR) << "==> could skip replaying log segment " << segment->path();
+      // TODO: actually figure out how to skip (hard link to new directory?)
+      // TODO: need to handle index rebuild
+      // TODO: the metadata only keeps the minimum for durability, but perhaps
+      // we may need more if there are uncommitted operations?
+    }
+
     log::LogEntryReader reader(segment.get());
+
+
 
     int entry_count = 0;
     while (true) {
@@ -1362,6 +1377,15 @@ Status TabletBootstrap::PlayRowOperations(WriteTransactionState* tx_state,
                                           const RowOperationsPB& ops_pb,
                                           const TxResultPB& result,
                                           const vector<bool>& already_flushed) {
+  // If the metadata has an "earliest unflushed log index" stored, then we should
+  // not find any operations which are unflushed prior to that.
+  auto unflushed = meta_->unflushed_log_index().value_or(-1);
+  if (tx_state->op_id().index() < unflushed) {
+    return Status::Corruption(Substitute(
+        "Metadata indicated first unflushed index was $0, but found an unflushed op!",
+        unflushed));
+  }
+
   Schema inserts_schema;
   RETURN_NOT_OK_PREPEND(SchemaFromPB(schema_pb, &inserts_schema),
                         "Couldn't decode client schema");
