@@ -71,7 +71,8 @@
       "externalLink" : {
         "name" : "kudu_master_web_ui",
         "label" : "Kudu Master Web UI",
-        "url" : "http://${host}:${webserver_port}"
+        "url" : "http://${host}:${webserver_port}",
+        "secureUrl" : "https://${host}:${webserver_port}"
       },
       "topology" : { "minInstances" : 1 },
       "parameters" : [
@@ -152,7 +153,8 @@
             "excludedParams" : [
               "master_address",
               "enable_core_dump",
-              "master_core_dump_directory"
+              "master_core_dump_directory",
+              "ssl_enabled"
             ]
           },
           {
@@ -160,7 +162,8 @@
             "configFormat" : "properties",
             "includedParams" : [
               "webserver_interface",
-              "webserver_port"
+              "webserver_port",
+              "ssl_enabled"
             ]
           }
         ],
@@ -171,6 +174,14 @@
             "roleName" : "KUDU_MASTER"
           }
         ]
+      },
+      "sslServer": {
+         "keystoreFormat" : "pem",
+         "enabledConfigName": "ssl_enabled",
+         "privateKeyLocationConfigName" : "webserver_private_key_file",
+         "certificateLocationConfigName" : "webserver_certificate_file",
+         "privateKeyPasswordConfigName" : "webserver_private_key_password_cmd",
+         "privateKeyPasswordScriptBased" : "true"
       }
     },
     {
@@ -196,7 +207,8 @@
       "externalLink" : {
         "name" : "kudu_ts_web_ui",
         "label" : "Kudu Tablet Server Web UI",
-        "url" : "http://${host}:${webserver_port}"
+        "url" : "http://${host}:${webserver_port}",
+        "secureUrl" : "https://${host}:${webserver_port}"
       },
       "topology" : { "minInstances" : 1 },
       "parameters" : [
@@ -282,6 +294,14 @@
         }
 
       ],
+      "sslServer": {
+         "keystoreFormat" : "pem",
+         "enabledConfigName": "ssl_enabled",
+         "privateKeyLocationConfigName" : "webserver_private_key_file",
+         "certificateLocationConfigName" : "webserver_certificate_file",
+         "privateKeyPasswordConfigName" : "webserver_private_key_password_cmd",
+         "privateKeyPasswordScriptBased" : "true"
+      },
       "configWriter" : {
         "generators" : [
           {
@@ -289,7 +309,8 @@
             "configFormat" : "gflags",
             "excludedParams" : [
               "enable_core_dump",
-              "tserver_core_dump_directory"
+              "tserver_core_dump_directory",
+              "ssl_enabled"
             ]
           },
           {
@@ -297,7 +318,8 @@
             "configFormat" : "properties",
             "includedParams" : [
               "webserver_interface",
-              "webserver_port"
+              "webserver_port",
+              "ssl_enabled"
             ]
           }
         ],
