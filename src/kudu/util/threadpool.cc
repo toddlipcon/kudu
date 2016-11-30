@@ -114,7 +114,8 @@ ThreadPool::ThreadPool(const ThreadPoolBuilder& builder)
     not_empty_(&lock_),
     num_threads_(0),
     active_threads_(0),
-    queue_size_(0) {
+    queue_size_(0),
+    codel_(500) { // TODO(todd) make config
 
   string prefix = !builder.trace_metric_prefix_.empty() ?
       builder.trace_metric_prefix_ : builder.name_;
@@ -333,6 +334,7 @@ void ThreadPool::DispatchThread(bool permanent) {
     if (queue_time_us_histogram_) {
       queue_time_us_histogram_->Increment(queue_time_us);
     }
+    codel_.Update(now, queue_time_us);
 
     // Execute the task
     {

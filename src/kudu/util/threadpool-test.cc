@@ -234,6 +234,26 @@ TEST(TestThreadPool, TestMaxQueueSize) {
   thread_pool->Shutdown();
 }
 
+TEST(TestThreadPool, TestOverloadedStatus) {
+  gscoped_ptr<ThreadPool> thread_pool;
+  ASSERT_OK(ThreadPoolBuilder("test")
+      .set_min_threads(1).set_max_threads(2)
+      .Build(&thread_pool));
+
+  ASSERT_FALSE(thread_pool->overloaded());
+  for (int i = 0; i < 100; i++) {
+    ASSERT_OK(thread_pool->SubmitFunc([]() {
+          SleepFor(MonoDelta::FromMilliseconds(100));
+        }));
+  }
+  for (int i = 0; i < 10; i++) {
+    LOG(INFO) << "overloaded: " << thread_pool->overloaded();
+    SleepFor(MonoDelta::FromSeconds(1));
+  }
+  thread_pool->Wait();
+  thread_pool->Shutdown();
+}
+
 // Test that setting a promise from another thread yields
 // a value on the current thread.
 TEST(TestThreadPool, TestPromises) {

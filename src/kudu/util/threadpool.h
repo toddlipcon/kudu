@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "kudu/gutil/atomicops.h"
 #include "kudu/gutil/callback_forward.h"
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/gutil/macros.h"
@@ -123,6 +124,54 @@ class ThreadPoolBuilder {
   DISALLOW_COPY_AND_ASSIGN(ThreadPoolBuilder);
 };
 
+class ThreadPoolCodel {
+ public:
+  explicit ThreadPoolCodel(int64_t overload_threshold_us)
+      : overload_threshold_us_(overload_threshold_us),
+        interval_time_(MonoTime::Now()),
+        min_delay_in_interval_(0),
+        reset_delay_(true),
+        overloaded_(false) {
+  }
+
+  void Update(MonoTime now, int64_t delay) {
+    auto min_delay = min_delay_in_interval_;
+
+    if (now > interval_time_ &&
+        (!Acquire_Load(&reset_delay_) && !base::subtle::Acquire_AtomicExchange(&reset_delay_, true))) {
+      interval_time_ = now + MonoDelta::FromMilliseconds(100);
+      bool old_overloaded = overloaded_;
+      overloaded_ = min_delay > overload_threshold_us_;
+      if (old_overloaded == overloaded_) {
+        cycles_in_state_++;
+      } else {
+        cycles_in_state_ = 0;
+      }
+    }
+
+    if (Acquire_Load(&reset_delay_) && base::subtle::Acquire_AtomicExchange(&reset_delay_, false)) {
+      min_delay_in_interval_ = delay;
+      return;
+    }
+    if (delay < min_delay_in_interval_) {
+      min_delay_in_interval_ = delay;
+    }
+  }
+
+  bool overloaded() {
+    Update(MonoTime::Now(), 0);
+    return overloaded_;
+  }
+
+ private:
+  const int64_t overload_threshold_us_;
+  MonoTime interval_time_;
+  int64_t min_delay_in_interval_;
+  Atomic32 reset_delay_;
+  Atomic32 overloaded_;
+  int cycles_in_state_ = 0;
+};
+
 // Thread pool with a variable number of threads.
 // The pool can execute a class that implements the Runnable interface, or a
 // boost::function, which can be obtained via boost::bind().
@@ -192,6 +241,10 @@ class ThreadPool {
   // Attach a histogram which measures the amount of time that tasks spend running.
   void SetRunTimeMicrosHistogram(const scoped_refptr<Histogram>& hist);
 
+  bool overloaded() const {
+    return const_cast<ThreadPoolCodel&>(codel_).overloaded();
+  }
+
  private:
   friend class ThreadPoolBuilder;
 
@@ -250,6 +303,8 @@ class ThreadPool {
   scoped_refptr<Histogram> queue_length_histogram_;
   scoped_refptr<Histogram> queue_time_us_histogram_;
   scoped_refptr<Histogram> run_time_us_histogram_;
+
+  ThreadPoolCodel codel_;
 
   const char* queue_time_trace_metric_name_;
   const char* run_wall_time_trace_metric_name_;
