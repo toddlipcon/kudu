@@ -99,6 +99,11 @@ void TestWorkload::WriteThread() {
   start_latch_.CountDown();
   start_latch_.Wait();
 
+  string test_payload("hello world");
+  if (payload_bytes_ != 11) {
+    // We fill with zeros if you change the default.
+    test_payload.assign(payload_bytes_, '0');
+  }
   while (should_run_.Load()) {
     for (int i = 0; i < write_batch_size_; i++) {
       if (write_pattern_ == UPDATE_ONE_ROW) {
@@ -106,6 +111,7 @@ void TestWorkload::WriteThread() {
         KuduPartialRow* row = update->mutable_row();
         CHECK_OK(row->SetInt32(0, 0));
         CHECK_OK(row->SetInt32(1, rng_.Next()));
+        CHECK_OK(row->SetStringCopy(2, test_payload));
         CHECK_OK(session->Apply(update.release()));
       } else {
         gscoped_ptr<KuduInsert> insert(table->NewInsert());
@@ -121,17 +127,12 @@ void TestWorkload::WriteThread() {
         }
         CHECK_OK(row->SetInt32(0, key));
         CHECK_OK(row->SetInt32(1, rng_.Next()));
-        string test_payload("hello world");
-        if (payload_bytes_ != 11) {
-          // We fill with zeros if you change the default.
-          test_payload.assign(payload_bytes_, '0');
-        }
         CHECK_OK(row->SetStringCopy(2, test_payload));
         CHECK_OK(session->Apply(insert.release()));
       }
     }
 
-    int inserted = write_batch_size_;
+    int inserted = (write_pattern_ == UPDATE_ONE_ROW) ? 0 : write_batch_size_;
 
     Status s = session->Flush();
 

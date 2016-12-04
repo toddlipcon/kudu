@@ -144,6 +144,10 @@ class TestWorkload {
     }
   }
 
+  WritePattern write_pattern() const {
+    return write_pattern_;
+  }
+
   // Sets up the internal client and creates the table which will be used for
   // writing, if it doesn't already exist.
   void Setup();
