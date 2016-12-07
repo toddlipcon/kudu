@@ -16,8 +16,8 @@
 // under the License.
 {
   "name" : "KUDU",
-  "label" : "Kudu (Beta)",
-  "description" : "Kudu is a true column store for the Hadoop ecosystem. <span class=\"error\">Kudu is currently in Beta and is not supported. Before adding this service, ensure that you have installed the Kudu binaries, which are not included in CDH.</span>",
+  "label" : "Kudu",
+  "description" : "Kudu is a true column store for the Hadoop ecosystem.",
   "version" : "1.3.0",
   "compatibility" : {
     "generation" : 1
@@ -27,7 +27,7 @@
     "group" : "kudu"
   },
   "parcel" : {
-    "repoUrl" : "http://archive.cloudera.com/beta/kudu/parcels/latest/",
+    "repoUrl" : "http://archive.cloudera.com/kudu/parcels/latest/",
     "requiredTags" : [ "kudu" ]
   },
   "icon" : "images/icon.png",
