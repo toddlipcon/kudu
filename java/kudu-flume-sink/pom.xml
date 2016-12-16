@@ -21,9 +21,8 @@
   <name>Kudu Flume NG Sink</name>
 
   <properties>
-    <avro.version>1.8.1</avro.version>
-    <flume.version>1.6.0</flume.version>
-    <hadoop.version>2.7.0</hadoop.version>
+    <avro.version>1.7.6-cdh5.10.0</avro.version>
+    <flume.version>1.6.0-cdh5.10.0</flume.version>
   </properties>
 
   <build>

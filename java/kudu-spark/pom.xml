@@ -24,7 +24,7 @@
     <name>Kudu Spark Bindings</name>
 
     <properties>
-        <spark.version>1.6.1</spark.version>
+        <spark.version>1.6.0-cdh5.10.0</spark.version>
         <spark.version.label>spark</spark.version.label>
         <scala.version>2.10.4</scala.version>
         <scala.binary.version>2.10</scala.binary.version>
@@ -187,7 +187,7 @@
         <profile>
             <id>spark2_2.11</id>
             <properties>
-                <spark.version>2.0.1</spark.version>
+                <spark.version>2.0.0.cloudera1</spark.version>
                 <compat.src>src/main/spark2</compat.src>
                 <spark.version.label>spark2</spark.version.label>
                 <scala.version>2.11.6</scala.version>
