@@ -27,11 +27,11 @@
     <version>1.6.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <!-- inherit from the ASF POM for distribution management -->
+    <!-- inherit from the Cloudera POM for distribution management -->
     <parent>
-        <groupId>org.apache</groupId>
-        <artifactId>apache</artifactId>
-        <version>18</version>
+      <groupId>com.cloudera.cdh</groupId>
+      <artifactId>cdh-root</artifactId>
+      <version>5.13.0-SNAPSHOT</version>
         <relativePath/>
     </parent>
 
@@ -68,15 +68,16 @@
 
         <!-- Library dependencies -->
         <async.version>1.4.1</async.version>
-        <avro.version>1.8.2</avro.version>
+        <avro.version>${cdh.avro.version}</avro.version>
+        <clojure.version>1.8.0</clojure.version>
         <clojure.tools.version>0.3.5</clojure.tools.version>
         <clojure.version>1.8.0</clojure.version>
         <commons-io.version>2.5</commons-io.version>
-        <flume.version>1.7.0</flume.version>
+        <flume.version>${cdh.flume-ng.version}</flume.version>
         <guava.version>20.0</guava.version>
-        <hadoop.version>2.8.1</hadoop.version>
+        <hadoop.version>${cdh.hadoop.version}</hadoop.version>
         <hamcrest-core.version>1.3</hamcrest-core.version>
-        <hive.version>2.3.0</hive.version>
+        <hive.version>${cdh.hive.version}</hive.version>
         <jepsen.version>0.1.5</jepsen.version>
         <jsr305.version>3.0.2</jsr305.version>
         <junit.version>4.12</junit.version>
@@ -94,8 +95,9 @@
         <scala-2.10.version>2.10.6</scala-2.10.version>
         <scala-2.11.version>2.11.11</scala-2.11.version>
         <scalatest.version>3.0.3</scalatest.version>
-        <spark1.version>1.6.3</spark1.version>
-        <spark2.version>2.2.0</spark2.version>
+        <spark1.version>${cdh.spark.version}</spark1.version>
+        <!-- Maintain Java 7 compatibility -->
+        <spark2.version>2.1.1</spark2.version>
 
         <!-- Misc variables -->
         <testdata.dir>${project.build.directory}/testdata</testdata.dir>
@@ -366,6 +368,17 @@
             <snapshots>
                 <enabled>false</enabled>
             </snapshots>
+        </repository>
+        <repository>
+            <id>cdh.snapshots.repo</id>
+            <url>https://repository.cloudera.com/artifactory/libs-snapshot-local</url>
+            <name>Cloudera Snapshots Repository</name>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+           <releases>
+               <enabled>false</enabled>
+           </releases>
         </repository>
     </repositories>
 
