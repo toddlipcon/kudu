@@ -27,11 +27,11 @@
     <version>1.4.0-cdh5.12.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <!-- inherit from the ASF POM for distribution management -->
+    <!-- inherit from the Cloudera POM for distribution management -->
     <parent>
-      <groupId>org.apache</groupId>
-      <artifactId>apache</artifactId>
-      <version>18</version>
+      <groupId>com.cloudera.cdh</groupId>
+      <artifactId>cdh-root</artifactId>
+      <version>5.12.0-SNAPSHOT</version>
       <relativePath/>
     </parent>
 
@@ -62,7 +62,7 @@
         <async.version>1.4.1</async.version>
         <commons-io.version>2.4</commons-io.version>
         <guava.version>18.0</guava.version>
-        <hadoop.version>2.7.2</hadoop.version>
+        <hadoop.version>${cdh.hadoop.version}</hadoop.version>
         <jsr305.version>3.0.1</jsr305.version>
         <hamcrest-core.version>1.3</hamcrest-core.version>
         <junit.version>4.11</junit.version>
@@ -74,9 +74,9 @@
         <slf4j.version>1.7.12</slf4j.version>
 
         <!-- Scala Library dependencies -->
-        <spark1.version>1.6.1</spark1.version>
-        <spark2.version>2.0.1</spark2.version>
-        <scala-2.10.version>2.10.4</scala-2.10.version>
+        <spark1.version>${cdh.spark.version}</spark1.version>
+        <spark2.version>2.0.0.cloudera1</spark2.version>
+        <scala-2.10.version>2.10.5</scala-2.10.version>
         <scala-2.11.version>2.11.6</scala-2.11.version>
 
         <!-- Misc variables -->
@@ -294,6 +294,17 @@
             <snapshots>
                 <enabled>false</enabled>
             </snapshots>
+        </repository>
+        <repository>
+            <id>cdh.snapshots.repo</id>
+            <url>https://repository.cloudera.com/artifactory/libs-snapshot-local</url>
+            <name>Cloudera Snapshots Repository</name>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+           <releases>
+               <enabled>false</enabled>
+           </releases>
         </repository>
     </repositories>
 
