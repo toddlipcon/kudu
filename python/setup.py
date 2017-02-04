@@ -39,7 +39,8 @@ if Cython.__version__ < '0.21.0':
 MAJOR = 1
 MINOR = 6
 MICRO = 0
-VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
+CDH_SUFFIX = 'cdh6.x'
+VERSION = '%d.%d.%d-%s' % (MAJOR, MINOR, MICRO, CDH_SUFFIX)
 ISRELEASED = True
 
 setup_dir = os.path.abspath(os.path.dirname(__file__))
