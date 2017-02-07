@@ -110,20 +110,34 @@ if [ "$ENABLE_CORE_DUMP" == "true" ]; then
   fi
 fi
 
+KUDU_ARGS=
+
+if [ "$ENABLE_KERBEROS" == "true" ]; then
+  # Ideally the value of the enable_kerberos parameter would dictate whether CM
+  # emits --keytab_file to the flagfile in the first place. However, that isn't
+  # possible, so we emit it on the command line here instead.
+  #
+  # CM guarantees [1] this keytab filename.
+  #
+  # 1. https://github.com/cloudera/cm_ext/wiki/Service-Descriptor-Language-Reference#kerberosprincipals
+  KUDU_ARGS="$KUDU_ARGS --keytab_file=$CONF_DIR/kudu.keytab"
+fi
+
 if [ "$CMD" = "master" ]; then
   # Only pass --master_addresses if there's more than one master.
   #
   # Need to use [[ ]] for regex support.
   if [[ "$MASTER_IPS" =~ , ]]; then
-    MASTER_ADDRESSES="--master_addresses=$MASTER_IPS"
+    KUDU_ARGS="$KUDU_ARGS --master_addresses=$MASTER_IPS"
   fi
 
   exec "$KUDU_HOME/sbin/kudu-master" \
-    $MASTER_ADDRESSES \
+    $KUDU_ARGS \
     --flagfile="$GFLAG_FILE"
 elif [ "$CMD" = "tserver" ]; then
+  KUDU_ARGS="$KUDU_ARGS --tserver_master_addrs=$MASTER_IPS"
   exec "$KUDU_HOME/sbin/kudu-tserver" \
-    --tserver_master_addrs="$MASTER_IPS" \
+    $KUDU_ARGS \
     --flagfile="$GFLAG_FILE"
 else
   log "Unknown command: $CMD"
