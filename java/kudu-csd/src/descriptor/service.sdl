@@ -27,13 +27,15 @@
   },
   "runAs" : {
     "user" : "kudu",
-    "group" : "kudu"
+    "group" : "kudu",
+    "principal": "kudu"
   },
   "parcel" : {
     "repoUrl" : "http://archive.cloudera.com/kudu/parcels/latest/",
     "requiredTags" : [ "kudu" ]
   },
   "icon" : "images/icon.png",
+  "kerberos" : "${enable_kerberos}",
   "parameters" : [
     {
       "name" : "enable_core_dump",
@@ -42,6 +44,40 @@
       "type" : "boolean",
       "required" : "true",
       "default" : "false"
+    },
+    {
+      "name" : "enable_kerberos",
+      "label" : "Enable Kerberos Authentication",
+      "description" : "Enable Kerberos authentication between all Kudu clients and servers as well as between individual servers.",
+      "type" : "boolean",
+      "required" : "true",
+      "default" : "false"
+    },
+    {
+      "name" : "rpc_authentication",
+      "label" : "RPC Authentication",
+      "description" : "Whether to require RPC connections to authenticate. If optional, authentication will be used when the remote end supports it. If required, connections which are not able to authenticate (because the remote end lacks support) are rejected. Secure clusters should use required.",
+      "type" : "string_enum",
+      "required" : "true",
+      "default" : "optional",
+      "validValues" : [
+        "disabled",
+        "optional",
+        "required"
+      ]
+    },
+    {
+      "name" : "rpc_encryption",
+      "label" : "RPC Encryption",
+      "description" : "Whether to require RPC connections to be encrypted. If optional, encryption will be used when the remote end supports it. If required, connections which are not able to use encryption (because the remote end lacks support) are rejected. Secure clusters should use required.",
+      "type" : "string_enum",
+      "required" : "true",
+      "default" : "optional",
+      "validValues" : [
+        "disabled",
+        "optional",
+        "required"
+      ]
     }
   ],
   "rolesWithExternalLinks" : [
@@ -59,6 +95,7 @@
         ],
         "environmentVariables" : {
           "ENABLE_CORE_DUMP" : "${enable_core_dump}",
+          "ENABLE_KERBEROS" : "${enable_kerberos}",
           "CORE_DUMP_DIRECTORY" : "${master_core_dump_directory}"
         }
       },
@@ -74,6 +111,13 @@
         "url" : "http://${host}:${webserver_port}",
         "secureUrl" : "https://${host}:${webserver_port}"
       },
+      "kerberosPrincipals" : [
+        {
+          "name" : "kudu_principal",
+          "primary" : "${principal}",
+          "instance" : "${host}"
+        }
+      ],
       "topology" : { "minInstances" : 1 },
       "parameters" : [
         {
@@ -151,8 +195,9 @@
             "filename" : "gflagfile",
             "configFormat" : "gflags",
             "excludedParams" : [
-              "master_address",
               "enable_core_dump",
+              "enable_kerberos",
+              "master_address",
               "master_core_dump_directory",
               "ssl_enabled"
             ]
@@ -195,6 +240,7 @@
         ],
         "environmentVariables" : {
           "ENABLE_CORE_DUMP" : "${enable_core_dump}",
+          "ENABLE_KERBEROS" : "${enable_kerberos}",
           "CORE_DUMP_DIRECTORY" : "${tserver_core_dump_directory}"
         }
       },
@@ -210,6 +256,13 @@
         "url" : "http://${host}:${webserver_port}",
         "secureUrl" : "https://${host}:${webserver_port}"
       },
+      "kerberosPrincipals" : [
+        {
+          "name" : "kudu_principal",
+          "primary" : "${principal}",
+          "instance" : "${host}"
+        }
+      ],
       "topology" : { "minInstances" : 1 },
       "parameters" : [
         {
@@ -309,6 +362,7 @@
             "configFormat" : "gflags",
             "excludedParams" : [
               "enable_core_dump",
+              "enable_kerberos",
               "tserver_core_dump_directory",
               "ssl_enabled"
             ]
