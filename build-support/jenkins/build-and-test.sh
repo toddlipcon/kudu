@@ -380,7 +380,7 @@ if [ "$BUILD_JAVA" == "1" ]; then
   MVN_FLAGS="$MVN_FLAGS -Dsurefire.rerunFailingTestsCount=3"
   MVN_FLAGS="$MVN_FLAGS -Dfailsafe.rerunFailingTestsCount=3"
   MVN_FLAGS="$MVN_FLAGS -Dmaven.javadoc.skip"
-  if ! mvn $MVN_FLAGS clean verify ; then
+  if ! mvn $MVN_FLAGS -PbuildCSD clean verify ; then
     EXIT_STATUS=1
     FAILURES="$FAILURES"$'Java build/test failed\n'
   fi
