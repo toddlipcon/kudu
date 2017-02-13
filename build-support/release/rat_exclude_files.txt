@@ -13,6 +13,7 @@ build-support/iwyu/mappings/boost-all-private.imp
 build-support/iwyu/mappings/boost-all.imp
 build-support/release/rat_exclude_files.txt
 docs/support/doxygen/client_api.footer.in
+java/kudu-csd/old-version-metrics/*.json
 java/kudu-flume-sink/src/test/avro/testAvroKuduOperationsProducer.avsc
 java/kudu-client/src/main/java/org/apache/kudu/client/AsyncKuduClient.java
 java/kudu-client/src/main/java/org/apache/kudu/client/AsyncKuduScanner.java
