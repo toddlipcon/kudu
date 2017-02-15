@@ -22,8 +22,10 @@
   "compatibility" : {
     "generation" : 1,
     "cdhVersion" : {
-      "min" : "5.11.0"
+      "min" : "5.10.0",
+      "max" : "5.11.0"
     }
+
   },
   "runAs" : {
     "user" : "kudu",
