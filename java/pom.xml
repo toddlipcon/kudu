@@ -372,13 +372,14 @@
     </repositories>
 
     <profiles>
-        <!-- Build the CSD.
+        <!-- Build the CSDs.
 
              Disabled by default; add -PbuildCSD to the maven command line. -->
         <profile>
             <id>buildCSD</id>
             <modules>
                 <module>kudu-csd</module>
+                <module>kudu-csd-5.10</module>
             </modules>
         </profile>
 
