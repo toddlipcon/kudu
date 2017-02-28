@@ -78,6 +78,24 @@
         "optional",
         "required"
       ]
+    },
+    {
+      "name" : "superuser_acl",
+      "label" : "Superuser Access Control List",
+      "description" : "The list of usernames to allow as super users, comma-separated. A '*' entry indicates that all authenticated users are allowed. If this is left unset or blank, the default behavior is that the identity of the daemon itself determines the superuser. If the daemon is logged in from a Keytab, then the local username from the Kerberos principal is used; otherwise, the local Unix username is used.",
+      "required" : "false",
+      "type" : "string",
+      "default" : "",
+      "conformRegex" : "(|\\*|([^,!@#$%*=+'\\\"\\s-][^,]*,?)*)$"
+    },
+    {
+      "name" : "user_acl",
+      "label" : "User Access Control List",
+      "description" : "The list of usernames who may access the cluster, comma-separated. A '*' entry indicates that all authenticated users are allowed.",
+      "required" : "false",
+      "type" : "string",
+      "default" : "*",
+      "conformRegex" : "(|\\*|([^,!@#$%*=+'\\\"\\s-][^,]*,?)*)$"
     }
   ],
   "rolesWithExternalLinks" : [
