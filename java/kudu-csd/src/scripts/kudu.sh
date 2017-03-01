@@ -112,15 +112,18 @@ fi
 
 KUDU_ARGS=
 
-if [ "$ENABLE_KERBEROS" == "true" ]; then
-  # Ideally the value of the enable_kerberos parameter would dictate whether CM
-  # emits --keytab_file to the flagfile in the first place. However, that isn't
-  # possible, so we emit it on the command line here instead.
+if [ "$ENABLE_SECURITY" == "true" ]; then
+  # Ideally the value of the enable_security parameter would dictate whether CM
+  # emits these parameters to the flagfile in the first place. However, that
+  # isn't possible, so we emit them on the command line here instead.
   #
   # CM guarantees [1] this keytab filename.
   #
   # 1. https://github.com/cloudera/cm_ext/wiki/Service-Descriptor-Language-Reference#kerberosprincipals
-  KUDU_ARGS="$KUDU_ARGS --keytab_file=$CONF_DIR/kudu.keytab"
+  KUDU_ARGS="$KUDU_ARGS \
+             --rpc_authentication=required \
+             --rpc_encryption=required \
+             --keytab_file=$CONF_DIR/kudu.keytab"
 fi
 
 if [ "$CMD" = "master" ]; then
