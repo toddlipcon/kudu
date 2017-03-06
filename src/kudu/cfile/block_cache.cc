@@ -41,6 +41,12 @@ class MetricEntity;
 
 namespace cfile {
 
+extern "C" __attribute__((noinline))  void ProbePoint(uint64_t key, uint64_t offset) {
+  if (key == 0 && offset == 0) {
+    base::subtle::PauseCPU();
+  }
+}
+
 namespace {
 
 Cache* CreateCache(int64_t capacity) {
@@ -75,6 +81,7 @@ BlockCache::PendingEntry BlockCache::Allocate(const CacheKey& key, size_t val_si
 
 bool BlockCache::Lookup(const CacheKey& key, Cache::CacheBehavior behavior,
                         BlockCacheHandle *handle) {
+  ProbePoint(key.file_id_, key.offset_);
   Cache::Handle *h = cache_->Lookup(Slice(reinterpret_cast<const uint8_t*>(&key),
                                           sizeof(key)), behavior);
   if (h != nullptr) {

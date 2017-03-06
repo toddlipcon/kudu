@@ -52,6 +52,8 @@ RpcContext::RpcContext(InboundCall *call,
 }
 
 RpcContext::~RpcContext() {
+  request_pb_.release();
+  response_pb_.release();
 }
 
 void RpcContext::RespondSuccess() {

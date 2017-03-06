@@ -16,7 +16,10 @@
 // under the License.
 //
 // Test protocol for kudu RPC.
+syntax = "proto2";
 package kudu.rpc_test;
+
+option cc_enable_arenas = true;
 
 import "kudu/rpc/rpc_header.proto";
 import "kudu/rpc/rtest_diff_package.proto";

@@ -723,9 +723,8 @@ TEST_F(TestCBTree, TestConcurrentIterateAndInsert) {
     go_barrier.Wait();
 
     done_barrier.Wait();
-
+    tree->DebugPrint();
     if (::testing::Test::HasFatalFailure()) {
-      tree->DebugPrint();
       return;
     }
   }

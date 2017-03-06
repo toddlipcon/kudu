@@ -890,7 +890,6 @@ Status Tablet::FlushInternal(const RowSetsInCompaction& input,
   // TODO(perf): there's a memrowset.Freeze() call which we might be able to
   // use to improve iteration performance during the flush. The old design
   // used this, but not certain whether it's still doable with the new design.
-
   uint64_t start_insert_count = old_ms->debug_insert_count();
   int64_t mrs_being_flushed = old_ms->mrs_id();
 

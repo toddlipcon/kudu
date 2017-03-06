@@ -319,6 +319,10 @@ class MemRowSet : public RowSet,
     tree_.Freeze();
   }
 
+  void DebugPrint() {
+    tree_.DebugPrint();
+  }
+
   uint64_t debug_insert_count() const {
     return debug_insert_count_;
   }

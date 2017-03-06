@@ -202,8 +202,8 @@ class RpcContext {
  private:
   friend class ResultTracker;
   InboundCall* const call_;
-  const gscoped_ptr<const google::protobuf::Message> request_pb_;
-  const gscoped_ptr<google::protobuf::Message> response_pb_;
+  gscoped_ptr<const google::protobuf::Message> request_pb_;
+  gscoped_ptr<google::protobuf::Message> response_pb_;
   scoped_refptr<ResultTracker> result_tracker_;
 };
 
