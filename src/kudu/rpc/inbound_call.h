@@ -18,6 +18,7 @@
 #define KUDU_RPC_INBOUND_CALL_H
 
 #include <glog/logging.h>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,7 @@
 
 namespace google {
 namespace protobuf {
+class Arena;
 class Message;
 } // namespace protobuf
 } // namespace google
@@ -159,6 +161,10 @@ class InboundCall {
     return method_info_.get();
   }
 
+  google::protobuf::Arena* proto_arena() {
+    return proto_arena_.get();
+  }
+
   // When this InboundCall was received (instantiated).
   // Should only be called once on a given instance.
   // Not thread-safe. Should only be called by the current "owner" thread.
@@ -244,6 +250,8 @@ class InboundCall {
   // to point to the information about this method. Acts as a pointer back to
   // per-method info such as tracing.
   scoped_refptr<RpcMethodInfo> method_info_;
+
+  std::unique_ptr<google::protobuf::Arena> proto_arena_;
 
   DISALLOW_COPY_AND_ASSIGN(InboundCall);
 };

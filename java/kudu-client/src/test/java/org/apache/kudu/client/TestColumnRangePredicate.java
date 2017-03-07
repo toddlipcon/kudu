@@ -60,15 +60,15 @@ public class TestColumnRangePredicate {
     assertEquals(3, decodedPreds.size());
 
     assertEquals(col1.getName(), decodedPreds.get(0).getColumn().getName());
-    assertEquals(1, Bytes.getInt(Bytes.get(decodedPreds.get(0).getLowerBound())));
+    assertEquals(1, decodedPreds.get(0).getLowerBound().asReadOnlyByteBuffer().getInt());
     assertFalse(decodedPreds.get(0).hasInclusiveUpperBound());
 
     assertEquals(col1.getName(), decodedPreds.get(1).getColumn().getName());
-    assertEquals(2, Bytes.getInt(Bytes.get(decodedPreds.get(1).getInclusiveUpperBound())));
+    assertEquals(2, decodedPreds.get(1).getInclusiveUpperBound().asReadOnlyByteBuffer().getInt());
     assertFalse(decodedPreds.get(1).hasLowerBound());
 
     assertEquals(col2.getName(), decodedPreds.get(2).getColumn().getName());
-    assertEquals("aaa", Bytes.getString(Bytes.get(decodedPreds.get(2).getLowerBound())));
-    assertEquals("bbb", Bytes.getString(Bytes.get(decodedPreds.get(2).getInclusiveUpperBound())));
+    assertEquals("aaa", Bytes.getString(decodedPreds.get(2).getLowerBound().toByteArray()));
+    assertEquals("bbb", Bytes.getString(decodedPreds.get(2).getInclusiveUpperBound().toByteArray()));
   }
 }

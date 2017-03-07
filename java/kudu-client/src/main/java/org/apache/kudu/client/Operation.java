@@ -25,7 +25,7 @@ import java.util.List;
 import com.google.common.collect.ImmutableList;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
-import com.google.protobuf.ZeroCopyLiteralByteString;
+import com.google.protobuf.UnsafeByteOperations;
 
 import org.apache.kudu.ColumnSchema;
 import org.apache.kudu.Schema;
@@ -132,7 +132,7 @@ public abstract class Operation extends KuduRpc<OperationResponse> {
         createAndFillWriteRequestPB(ImmutableList.of(this));
     this.rowOperationSizeBytes = builder.getRowOperations().getRows().size() +
         builder.getRowOperations().getIndirectData().size();
-    builder.setTabletId(ZeroCopyLiteralByteString.wrap(getTablet().getTabletIdAsBytes()));
+    builder.setTabletId(UnsafeByteOperations.unsafeWrap(getTablet().getTabletIdAsBytes()));
     builder.setExternalConsistencyMode(this.externalConsistencyMode.pbVersion());
     if (this.propagatedTimestamp != AsyncKuduClient.NO_TIMESTAMP) {
       builder.setPropagatedTimestamp(this.propagatedTimestamp);
@@ -277,7 +277,7 @@ public abstract class Operation extends KuduRpc<OperationResponse> {
           bb.get(indirectData, offset, bbSize);
           offset += bbSize;
         }
-        rowOpsBuilder.setIndirectData(ZeroCopyLiteralByteString.wrap(indirectData));
+        rowOpsBuilder.setIndirectData(UnsafeByteOperations.unsafeWrap(indirectData));
       }
       return rowOpsBuilder.build();
     }

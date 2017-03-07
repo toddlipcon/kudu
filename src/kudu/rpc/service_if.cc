@@ -93,11 +93,11 @@ void GeneratedServiceIf::Handle(InboundCall *call) {
     RespondBadMethod(call);
     return;
   }
-  unique_ptr<Message> req(method_info->req_prototype->New());
+  unique_ptr<Message> req(method_info->req_prototype->New(call->proto_arena()));
   if (PREDICT_FALSE(!ParseParam(call, req.get()))) {
     return;
   }
-  Message* resp = method_info->resp_prototype->New();
+  Message* resp = method_info->resp_prototype->New(call->proto_arena());
 
   bool track_result = call->header().has_request_id()
                       && method_info->track_result

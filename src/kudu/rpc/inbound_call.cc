@@ -17,8 +17,10 @@
 
 #include "kudu/rpc/inbound_call.h"
 
-#include <glog/stl_logging.h>
 #include <memory>
+
+#include <google/protobuf/arena.h>
+#include <glog/stl_logging.h>
 
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/connection.h"
@@ -46,7 +48,8 @@ InboundCall::InboundCall(Connection* conn)
   : conn_(conn),
     sidecars_deleter_(&sidecars_),
     trace_(new Trace),
-    method_info_(nullptr) {
+    method_info_(nullptr),
+    proto_arena_(new google::protobuf::Arena()) {
   RecordCallReceived();
 }
 
