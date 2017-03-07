@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <sys/mman.h>
+
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
@@ -139,7 +141,7 @@ class HandleTable {
   LRUHandle** FindPointer(const Slice& key, uint32_t hash) {
     LRUHandle** ptr = &list_[hash & (length_ - 1)];
     while (*ptr != nullptr &&
-           ((*ptr)->hash != hash || key != (*ptr)->key())) {
+           ((*ptr)->hash != hash)) {
       ptr = &(*ptr)->next_hash;
     }
     return ptr;
@@ -269,15 +271,36 @@ void LRUCache::LRU_Append(LRUHandle* e) {
   usage_ += e->charge;
 }
 
+struct RingBuffer {
+  LRUHandle* h[1024];
+  Atomic32 idx = 0;
+  Atomic32 busy = 0;
+};
+
 Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash, bool caching) {
   LRUHandle* e;
+  static RingBuffer buf;
+
   {
-    std::lock_guard<MutexType> l(mutex_);
+    //std::lock_guard<MutexType> l(mutex_);
     e = table_.Lookup(key, hash);
     if (e != nullptr) {
+      int idx;
+      if (PREDICT_FALSE((idx = base::subtle::NoBarrier_AtomicIncrement(&buf.idx, 1)) == 1024)) {
+        for (int i = 0; i < 1024; i++) {
+          LRUHandle* lruh = (LRUHandle*)base::subtle::NoBarrier_AtomicExchange((Atomic64*)&buf.h[i], 0);
+          if (lruh) {
+            LRU_Remove(lruh);
+            LRU_Append(lruh);
+          }
+        }
+        base::subtle::NoBarrier_Store(&buf.idx, 0);
+        idx = 0;
+      }
+      if (idx < 1024) {
+        buf.h[idx] = e;
+      }
       base::RefCountInc(&e->refs);
-      LRU_Remove(e);
-      LRU_Append(e);
     }
   }
 
