@@ -27,10 +27,9 @@ def parse_args():
                                                  "parcel to the newest compatible version. Will "
                                                  "not upgrade to a new version of Kudu, i.e. the "
                                                  "release version will be the same on the new "
-                                                 "parcel. After this script is successfully run, "
-                                                 "the old parcel will no longer be considered "
-                                                 "activated, but existing KUDU services must be "
-                                                 "restarted to use the new parcel.")
+                                                 "parcel. After a new parcel is successfully "
+                                                 "activated, the existing KUDU service is "
+                                                 "restarted.")
     parser.add_argument("--host", type=str, default="localhost",
                         help="Hostname of the Cloudera Manager server. Default is localhost.")
     parser.add_argument("--user", type=str, default="admin",
@@ -41,6 +40,10 @@ def parse_args():
                         help="Name of an existing cluster on which the Kudu service should be "
                         "upgraded. If not specified, uses the only cluster available or raises an "
                         "exception if multiple or no clusters are found.")
+    parser.add_argument("--kudu_service", type=str,
+                        help="Name of an existing Kudu service to be restarted after the parcel is "
+                        "upgraded. If none specified, uses the only one available or raises an "
+                        "exception if multiple or no Kudu services are found.")
     parser.add_argument("--max_time_per_stage", type=int, default=120,
                         help="Maximum amount of time in seconds allotted to waiting for any single "
                         "stage of parcel distribution (i.e. downloading, distributing, "
@@ -85,8 +88,9 @@ def get_best_upgrade_candidate_parcel(cluster):
                                                                greatest_candidate.stage))
             return greatest_candidate
         else:
-            raise Exception("No upgrade candidates available for parcel version %s-%s." %
-                            (greatest_activated.product, greatest_activated.version))
+            print("No upgrade candidates available for parcel version %s-%s." %
+                  (greatest_activated.product, greatest_activated.version))
+            return None
     raise Exception("No activated KUDU parcels found. Activate one first and then upgrade.")
 
 def wait_for_parcel_stage(cluster, parcel, stage, max_time):
@@ -134,6 +138,19 @@ def find_cluster(api, cluster_name):
     print("Found cluster: %s" % cluster.displayName)
     return cluster
 
+def find_kudu_service(cluster, kudu_service_name):
+    if kudu_service_name:
+        return cluster.get_service(kudu_service_name)
+    all_kudu_services = [s for s in cluster.get_all_services() if s.type == "KUDU"]
+    if len(all_kudu_services) == 0:
+        raise Exception("No Kudu services found on %s." % cluster.displayName)
+    if len(all_kudu_services) > 1:
+        raise Exception("More than one Kudu service found; specify which service to use with "
+                        "--kudu_service.")
+    kudu_service = all_kudu_services[0]
+    print("Found Kudu service: %s" % kudu_service.name)
+    return kudu_service
+
 def main():
     args = parse_args()
     api = ApiResource(args.host,
@@ -146,9 +163,16 @@ def main():
     # that it is lexicographically greater than that ACTIVATED and that it distributes the same
     # release version of Kudu.
     parcel = get_best_upgrade_candidate_parcel(cluster)
+    if parcel is None:
+        print("Cannot upgrade parcel. Exiting early.")
+        return
 
     # Start up the upgrade process and activate the new parcel.
     ensure_parcel_activated(cluster, parcel, args.max_time_per_stage)
+
+    # Restart the Kudu service.
+    kudu_service = find_kudu_service(cluster, args.kudu_service)
+    kudu_service.restart()
 
 if __name__ == "__main__":
     main()
