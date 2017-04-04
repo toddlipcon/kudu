@@ -52,8 +52,8 @@ def parse_args():
 
 def get_best_upgrade_candidate_parcel(cluster):
     # A parcel is an upgrade candidate if 1) it has the same release version as the currently active
-    # parcel, and 2) it is lexicographically greater than the currently active parcel, indicating a
-    # newer patch build. The best candidate will be the greatest lexicographically.
+    # parcel, and 2) it has a greater build number than the currently active parcel. The best
+    # candidate will be the one with the greatest build number.
     activated_parcels = []
     candidate_parcels = []
     for parcel in cluster.get_all_parcels():
@@ -62,6 +62,16 @@ def get_best_upgrade_candidate_parcel(cluster):
                 activated_parcels.append(parcel)
             else:
                 candidate_parcels.append(parcel)
+
+    def get_build_number(parcel):
+        # The following regexp matches the build number at the end of a full parcel version string.
+        # The result is cast to an integer to facilitate build comparison.
+        # E.g. "1.4.0-1.cdh5.12.0.p0.814" will return int(814)
+        full_version = parcel.version
+        match = re.match(".*p\d+\.(\d+)$", full_version)
+        if match is None:
+            raise Exception("Could not get the build number from %s." % full_version)
+        return int(match.group(1))
 
     def release_versions_match(parcel1, parcel2):
         def get_release_version(full_version):
@@ -75,12 +85,12 @@ def get_best_upgrade_candidate_parcel(cluster):
         return get_release_version(parcel1.version) == get_release_version(parcel2.version)
 
     if len(activated_parcels) > 0:
-        greatest_activated = max(activated_parcels, key=lambda p: p.version)
+        greatest_activated = max(activated_parcels, key=get_build_number)
 
         # Filter out parcels that have different release versions or are downgrades.
         candidate_parcels = [parcel for parcel in candidate_parcels
                              if release_versions_match(parcel, greatest_activated) and
-                                parcel.version > greatest_activated.version]
+                                get_build_number(parcel) > get_build_number(greatest_activated)]
         if len(candidate_parcels) > 0:
             greatest_candidate = max(candidate_parcels, key=lambda p: p.version)
             print("Chose the new parcel %s-%s (Stage: %s)." % (greatest_candidate.product,
@@ -139,11 +149,14 @@ def find_cluster(api, cluster_name):
     return cluster
 
 def find_kudu_service(cluster, kudu_service_name):
-    if kudu_service_name:
-        return cluster.get_service(kudu_service_name)
     all_kudu_services = [s for s in cluster.get_all_services() if s.type == "KUDU"]
     if len(all_kudu_services) == 0:
         raise Exception("No Kudu services found on %s." % cluster.displayName)
+    if kudu_service_name:
+        services_with_name = [s for s in all_kudu_services if s.displayName == kudu_service_name]
+        if not len(services_with_name) == 1:
+            raise Exception("Input service name does not uniquely identify a Kudu service.")
+        return services_with_name[0]
     if len(all_kudu_services) > 1:
         raise Exception("More than one Kudu service found; specify which service to use with "
                         "--kudu_service.")
@@ -160,7 +173,7 @@ def main():
     cluster = find_cluster(api, args.cluster)
 
     # Get the parcels available to this cluster. Get the newest one that is not activated, ensuring
-    # that it is lexicographically greater than that ACTIVATED and that it distributes the same
+    # that it has a greater build number than that ACTIVATED and that it distributes the same
     # release version of Kudu.
     parcel = get_best_upgrade_candidate_parcel(cluster)
     if parcel is None:
