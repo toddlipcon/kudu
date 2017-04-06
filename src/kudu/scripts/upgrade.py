@@ -40,14 +40,19 @@ def parse_args():
                         help="Name of an existing cluster on which the Kudu service should be "
                         "upgraded. If not specified, uses the only cluster available or raises an "
                         "exception if multiple or no clusters are found.")
-    parser.add_argument("--kudu_service", type=str,
+    parser.add_argument("--kudu-service", type=str,
                         help="Name of an existing Kudu service to be restarted after the parcel is "
                         "upgraded. If none specified, uses the only one available or raises an "
                         "exception if multiple or no Kudu services are found.")
-    parser.add_argument("--max_time_per_stage", type=int, default=120,
+    parser.add_argument("--max-time-per-stage", type=int, default=120,
                         help="Maximum amount of time in seconds allotted to waiting for any single "
                         "stage of parcel distribution (i.e. downloading, distributing, "
-                        "activating). Default is two minutes.")
+                        "activating) or removal. Default is two minutes.")
+    parser.add_argument("--clear-after-success", type=bool, default=False,
+                        help="Flag indicating whether CM should remove unused Kudu parcels after a "
+                        "successful upgrade. A parcel is deemed unused if its status is not "
+                        "ACTIVATED (i.e. DISTRIBUTED or DOWNLOADED) after the upgrade process is "
+                        "completed.")
     return parser.parse_args()
 
 def get_best_upgrade_candidate_parcel(cluster):
@@ -105,12 +110,14 @@ def get_best_upgrade_candidate_parcel(cluster):
 
 def wait_for_parcel_stage(cluster, parcel, stage, max_time):
     for attempt in xrange(1, max_time + 1):
-        new_parcel = cluster.get_parcel(parcel.product, parcel.version)
-        if new_parcel.stage == stage:
+        target_parcel = cluster.get_parcel(parcel.product, parcel.version)
+        if target_parcel.stage == stage:
             return
-        if new_parcel.state.errors:
-            raise Exception("Fetching parcel resulted in error %s" % str(new_parcel.state.errors))
-        print("progress: %s / %s" % (new_parcel.state.progress, new_parcel.state.totalProgress))
+        if target_parcel.state.errors:
+            raise Exception("Fetching parcel resulted in error %s" %
+                            str(target_parcel.state.errors))
+        print("progress: %s / %s" % (target_parcel.state.progress,
+              target_parcel.state.totalProgress))
         time.sleep(1)
     else:
         raise Exception("Parcel %s-%s did not reach stage %s in %d seconds." %
@@ -164,6 +171,24 @@ def find_kudu_service(cluster, kudu_service_name):
     print("Found Kudu service: %s" % kudu_service.name)
     return kudu_service
 
+def clear_unused_parcels(cluster, max_time_per_stage):
+    def ensure_parcel_removed(cluster, parcel, max_time_per_stage):
+        parcel_stage = parcel.stage
+        if parcel_stage == "DISTRIBUTED":
+            print("Removing parcel distribution: %s-%s" % (parcel.product, parcel.version))
+            parcel.start_removal_of_distribution()
+            wait_for_parcel_stage(cluster, parcel, "DOWNLOADED", max_time_per_stage)
+            parcel_stage = "DOWNLOADED"
+            print("Removed parcel distribution: %s-%s" % (parcel.product, parcel.version))
+        if parcel_stage == "DOWNLOADED":
+            # Don't wait for AVAILABLE_REMOTELY, as the parcel may no longer exist in the repo.
+            # If this is the case, CM will not be able to find the parcel to verify its stage.
+            print("Removing parcel download: %s-%s" % (parcel.product, parcel.version))
+            parcel.remove_download()
+    for parcel in cluster.get_all_parcels():
+        if parcel.product == "KUDU" and not parcel.stage == "ACTIVATED":
+            ensure_parcel_removed(cluster, parcel, max_time_per_stage)
+
 def main():
     args = parse_args()
     api = ApiResource(args.host,
@@ -182,6 +207,10 @@ def main():
 
     # Start up the upgrade process and activate the new parcel.
     ensure_parcel_activated(cluster, parcel, args.max_time_per_stage)
+
+    # Remove unused parcels if needed.
+    if args.clear_after_success:
+        clear_unused_parcels(cluster, args.max_time_per_stage)
 
     # Restart the Kudu service.
     kudu_service = find_kudu_service(cluster, args.kudu_service)
