@@ -208,13 +208,14 @@ def main():
     # Start up the upgrade process and activate the new parcel.
     ensure_parcel_activated(cluster, parcel, args.max_time_per_stage)
 
-    # Remove unused parcels if needed.
-    if args.clear_after_success:
-        clear_unused_parcels(cluster, args.max_time_per_stage)
-
     # Restart the Kudu service.
     kudu_service = find_kudu_service(cluster, args.kudu_service)
     kudu_service.restart()
+
+    # Now that the Kudu service has been restarted, and older, existing parcels are not being used,
+    # clear the unused parcels if needed.
+    if args.clear_after_success:
+        clear_unused_parcels(cluster, args.max_time_per_stage)
 
 if __name__ == "__main__":
     main()
