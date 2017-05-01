@@ -48,6 +48,9 @@ def parse_args():
                         help="Maximum amount of time in seconds allotted to waiting for any single "
                         "stage of parcel distribution (i.e. downloading, distributing, "
                         "activating) or removal. Default is two minutes.")
+    parser.add_argument("--max-time-for-service-stop", type=int, default=120,
+                        help="Maximum amount of time in seconds allotted to stopping a service."
+                        "Default is two minutes.")
     parser.add_argument("--clear-after-success", type=bool, default=False,
                         help="Flag indicating whether CM should remove unused Kudu parcels after a "
                         "successful upgrade. A parcel is deemed unused if its status is not "
@@ -143,6 +146,27 @@ def ensure_parcel_activated(cluster, parcel, max_time_per_stage):
         wait_for_parcel_stage(cluster, parcel, "ACTIVATED", max_time_per_stage)
         print("Activated parcel: %s-%s " % (parcel.product, parcel.version))
 
+def wait_for_service_state(cluster, service, state, max_time):
+    for attempt in xrange(1, max_time + 1):
+        target_service = find_kudu_service(cluster, service.displayName)
+        if target_service.serviceState == state:
+            return
+        time.sleep(1)
+    else:
+        raise Exception("Service %s did not reach state %s in %d seconds." %
+                        (service.displayName, state, max_time))
+
+def restart_service(cluster, service, max_time_for_stop):
+    service_state = service.serviceState
+    if service_state == "STARTED":
+        print("Stopping service: %s" % service.displayName)
+        service.stop()
+        wait_for_service_state(cluster, service, "STOPPED", max_time_for_stop)
+        service_state = "STOPPED"
+    if service_state == "STOPPED":
+        print("Starting service: %s" % service.displayName)
+        service.start()
+
 def find_cluster(api, cluster_name):
     if cluster_name:
         return api.get_cluster(cluster_name)
@@ -168,7 +192,7 @@ def find_kudu_service(cluster, kudu_service_name):
         raise Exception("More than one Kudu service found; specify which service to use with "
                         "--kudu_service.")
     kudu_service = all_kudu_services[0]
-    print("Found Kudu service: %s" % kudu_service.name)
+    print("Found Kudu service: %s" % kudu_service.displayName)
     return kudu_service
 
 def clear_unused_parcels(cluster, max_time_per_stage):
@@ -208,9 +232,10 @@ def main():
     # Start up the upgrade process and activate the new parcel.
     ensure_parcel_activated(cluster, parcel, args.max_time_per_stage)
 
-    # Restart the Kudu service.
+    # Restart the Kudu service, ensuring that the service comes to a stop before continuing.
+    # This ensures that the parcels will not be in-use when they're removed.
     kudu_service = find_kudu_service(cluster, args.kudu_service)
-    kudu_service.restart()
+    restart_service(cluster, kudu_service, args.max_time_for_service_stop)
 
     # Now that the Kudu service has been restarted, and older, existing parcels are not being used,
     # clear the unused parcels if needed.
