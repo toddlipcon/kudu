@@ -1430,7 +1430,7 @@
                     "label": "Block Data Bytes Read"
                 },
                 {
-                    "numeratorUnit": "UNKNOWN UNIT",
+                    "numeratorUnit": "data directories",
                     "description": "Number of data directories whose disks are currently full",
                     "context": "data_dirs_full::value",
                     "name": "kudu_data_dirs_full",
@@ -1458,7 +1458,7 @@
                     "description": "Number of log block containers",
                     "context": "log_block_manager_containers::value",
                     "name": "kudu_log_block_manager_containers",
-                    "counter": true,
+                    "counter": false,
                     "label": "Number of Block Containers"
                 },
                 {
@@ -1466,16 +1466,8 @@
                     "description": "Number of full log block containers",
                     "context": "log_block_manager_full_containers::value",
                     "name": "kudu_log_block_manager_full_containers",
-                    "counter": true,
-                    "label": "Number of Full Block Counters"
-                },
-                {
-                    "numeratorUnit": "log block containers",
-                    "description": "Number of non-full log block containers that are under root paths whose disks are full",
-                    "context": "log_block_manager_unavailable_containers::value",
-                    "name": "kudu_log_block_manager_unavailable_containers",
-                    "counter": true,
-                    "label": "Number of Unavailable Log Block Containers"
+                    "counter": false,
+                    "label": "Number of Full Block Containers"
                 },
                 {
                     "numeratorUnit": "samples",
@@ -2628,7 +2620,7 @@
                     "label": "Block Data Bytes Read"
                 },
                 {
-                    "numeratorUnit": "UNKNOWN UNIT",
+                    "numeratorUnit": "data directories",
                     "description": "Number of data directories whose disks are currently full",
                     "context": "data_dirs_full::value",
                     "name": "kudu_data_dirs_full",
@@ -2656,7 +2648,7 @@
                     "description": "Number of log block containers",
                     "context": "log_block_manager_containers::value",
                     "name": "kudu_log_block_manager_containers",
-                    "counter": true,
+                    "counter": false,
                     "label": "Number of Block Containers"
                 },
                 {
@@ -2664,16 +2656,8 @@
                     "description": "Number of full log block containers",
                     "context": "log_block_manager_full_containers::value",
                     "name": "kudu_log_block_manager_full_containers",
-                    "counter": true,
-                    "label": "Number of Full Block Counters"
-                },
-                {
-                    "numeratorUnit": "log block containers",
-                    "description": "Number of non-full log block containers that are under root paths whose disks are full",
-                    "context": "log_block_manager_unavailable_containers::value",
-                    "name": "kudu_log_block_manager_unavailable_containers",
-                    "counter": true,
-                    "label": "Number of Unavailable Log Block Containers"
+                    "counter": false,
+                    "label": "Number of Full Block Containers"
                 },
                 {
                     "numeratorUnit": "samples",

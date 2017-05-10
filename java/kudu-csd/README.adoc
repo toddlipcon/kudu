@@ -1,0 +1,17 @@
+= Kudu CSD
+
+This directory contains scripts and resources for building the Kudu CSD.
+
+=== Changes to metric definitions
+
+When changing the definitions of existing metrics in the Kudu CSD, it may
+also be necessary to change them in the forked (older) CSDs. This is because
+CM treats multiple instances of a metric with the same name as the same
+logical metric, and expects them to match across all CSDs. If there's any
+difference, CM will throw out the metric from all CSDs.
+
+This requirement applies to _at least_ the following kinds of changes:
+
+1. Conversion from a counter to a gauge (or vice versa).
+2. Change in the metric's label.
+3. Change in the metric's numeratorUnit.
