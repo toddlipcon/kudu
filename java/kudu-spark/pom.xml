@@ -40,6 +40,11 @@
                     <groupId>org.scala-lang</groupId>
                     <artifactId>scalap</artifactId>
                 </exclusion>
+                <exclusion>
+                    <!-- make sure wrong guava version is not pulled in -->
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>guava</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
         <dependency>
@@ -47,6 +52,16 @@
             <artifactId>spark-sql_${scala.binary.version}</artifactId>
             <version>${spark.version}</version>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- Replace the Guava version stripped from Spark with the correct
+             version. This is only needed in tests because Spark is in the
+             provided scope. -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava.version}</version>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
