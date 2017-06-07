@@ -54,6 +54,16 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- For tests, replace the protobuf version on the classpath with the
+             kudu-client version (instead of the older version inherited from
+             hadoop).  -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Replace the Guava version stripped from Spark with the correct
              version. This is only needed in tests because Spark is in the
              provided scope. -->
