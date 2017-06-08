@@ -353,20 +353,23 @@ if [ "$BUILD_JAVA" == "1" ]; then
   pushd $SOURCE_ROOT/java
   export TSAN_OPTIONS="$TSAN_OPTIONS suppressions=$SOURCE_ROOT/build-support/tsan-suppressions.txt history_size=7"
   set -x
-  if ! mvn $MVN_FLAGS -PbuildCSD \
-      -Dsurefire.rerunFailingTestsCount=3 \
-      -Dfailsafe.rerunFailingTestsCount=3 \
-      clean verify ; then
+
+  # Run the full Maven build (with Spark 2.x).
+  MVN_FLAGS="$MVN_FLAGS -B"
+  MVN_FLAGS="$MVN_FLAGS -Dsurefire.rerunFailingTestsCount=3"
+  MVN_FLAGS="$MVN_FLAGS -Dfailsafe.rerunFailingTestsCount=3"
+  MVN_FLAGS="$MVN_FLAGS -Dmaven.javadoc.skip"
+  if ! mvn $MVN_FLAGS -PbuildCSD clean verify ; then
     EXIT_STATUS=1
     FAILURES="$FAILURES"$'Java build/test failed\n'
-  fi
-  # Test kudu-spark with Spark 1.x + Scala 2.10 profile
-  # This won't work if there are ever Spark integration tests!
-  rm -rf kudu-spark/target/
-  if ! mvn $MVN_FLAGS -Pspark_2.10 -Dtest="org.apache.kudu.spark.*.*" test; then
+
+  # If there are no failures, rerun the build with Spark 1.x with Scala 2.10.
+  # Note: this won't work if there are ever Spark integration tests!
+  elif ! mvn $MVN_FLAGS -Dtest="org.apache.kudu.spark.*.*" -Pspark_2.10 clean verify -DskipITs ; then
     EXIT_STATUS=1
-    FAILURES="$FAILURES"$'spark build/test failed\n'
+    FAILURES="$FAILURES"$'Spark 1.x build/test failed\n'
   fi
+
   set +x
   popd
 fi
