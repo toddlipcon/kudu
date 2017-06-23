@@ -41,6 +41,18 @@ class ThreadPool;
 namespace fs {
 class PathInstanceMetadataFile;
 
+// Detected type of filesystem.
+enum class DataDirFsType {
+  // ext2, ext3, or ext4.
+  EXT,
+
+  // SGI xfs.
+  XFS,
+
+  // None of the above.
+  OTHER
+};
+
 struct DataDirMetrics {
   explicit DataDirMetrics(const scoped_refptr<MetricEntity>& entity);
 
@@ -52,6 +64,7 @@ class DataDir {
  public:
   DataDir(Env* env,
           DataDirMetrics* metrics,
+          DataDirFsType fs_type,
           std::string dir,
           std::unique_ptr<PathInstanceMetadataFile> metadata_file,
           std::unique_ptr<ThreadPool> pool);
@@ -85,6 +98,8 @@ class DataDir {
   };
   Status RefreshIsFull(RefreshMode mode);
 
+  DataDirFsType fs_type() const { return fs_type_; }
+
   const std::string& dir() const { return dir_; }
 
   const PathInstanceMetadataFile* instance() const {
@@ -99,6 +114,7 @@ class DataDir {
  private:
   Env* env_;
   DataDirMetrics* metrics_;
+  const DataDirFsType fs_type_;
   const std::string dir_;
   const std::unique_ptr<PathInstanceMetadataFile> metadata_file_;
   const std::unique_ptr<ThreadPool> pool_;
