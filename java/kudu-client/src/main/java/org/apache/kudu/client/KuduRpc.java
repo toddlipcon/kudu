@@ -235,7 +235,11 @@ public abstract class KuduRpc<R> {
     }
     deferred = null;
     attempt = 0;
-    if (isRequestTracked()) {
+    // TODO(todd): it's possible for sequenceId to be NO_SEQ_NO here in the
+    // case of the 'Operation' class, which pretends to be a KuduRpc even
+    // though it is not an RPC when it's part of a Batch. In that case, it
+    // was never added to the request tracker, so we shouldn't unregister it.
+    if (isRequestTracked() && sequenceId != RequestTracker.NO_SEQ_NO) {
       table.getAsyncClient().getRequestTracker().rpcCompleted(sequenceId);
       sequenceId = RequestTracker.NO_SEQ_NO;
     }

@@ -77,8 +77,10 @@ public class RequestTracker {
    * @param sequenceId the sequence id to mark as complete
    */
   public void rpcCompleted(long sequenceId) {
+    assert sequenceId != NO_SEQ_NO;
     synchronized (lock) {
-      incompleteRpcs.remove(sequenceId);
+      boolean removed = incompleteRpcs.remove(sequenceId);
+      assert(removed) : "Could not remove seqid " + sequenceId + " from request tracker";
     }
   }
 
