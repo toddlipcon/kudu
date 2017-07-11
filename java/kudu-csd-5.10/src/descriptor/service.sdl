@@ -242,6 +242,7 @@
           "type" : "memory",
           "unit" : "bytes",
           "min" : 1073741824,
+          "softMin" : 4294967296,
           "default" : 4294967296
         },
         {
