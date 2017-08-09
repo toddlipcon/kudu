@@ -23,7 +23,7 @@
     <parent>
         <groupId>org.apache.kudu</groupId>
         <artifactId>kudu-parent</artifactId>
-        <version>1.4.0-cdh5.12.1-SNAPSHOT</version>
+        <version>1.4.0-cdh5.12.2-SNAPSHOT</version>
     </parent>
 
     <artifactId>kudu-client-tools</artifactId>
