@@ -31,7 +31,7 @@
     "principal": "kudu"
   },
   "parcel" : {
-    "repoUrl" : "http://archive.cloudera.com/kudu/parcels/latest/",
+    "repoUrl" : "http://archive.cloudera.com/kudu/parcels/5.12/",
     "requiredTags" : [ "kudu" ]
   },
   "icon" : "images/icon.png",
