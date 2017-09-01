@@ -14,19 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kudu.spark
 
-package org.apache.kudu.spark.kudu
+import org.apache.spark.sql.{DataFrame, DataFrameReader, DataFrameWriter}
 
-import org.junit.runner.RunWith
-import org.scalatest.junit.JUnitRunner
-import org.scalatest.{BeforeAndAfter, FunSuite}
+package object kudu {
 
-@RunWith(classOf[JUnitRunner])
-class KuduRDDTest extends FunSuite with TestContext with BeforeAndAfter {
+  /**
+   * Adds a method, `kudu`, to DataFrameReader that allows you to read Kudu tables using
+   * the DataFrameReader.
+   */
+  implicit class KuduDataFrameReader(reader: DataFrameReader) {
+    def kudu: DataFrame = reader.format("org.apache.kudu.spark.kudu").load
+  }
 
-  test("collect rows") {
-    insertRows(100)
-    val rdd = kuduContext.kuduRDD(sc, tableName, List("key"))
-    assert(rdd.collect.length == 100)
+  /**
+    * Adds a method, `kudu`, to DataFrameWriter that allows writes to Kudu using
+    * the DataFileWriter
+    */
+  implicit class KuduDataFrameWriter(writer: DataFrameWriter) {
+    def kudu = writer.format("org.apache.kudu.spark.kudu").save
   }
 }

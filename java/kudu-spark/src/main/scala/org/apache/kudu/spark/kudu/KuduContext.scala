@@ -55,7 +55,7 @@ class KuduContext(val kuduMaster: String,
     this(kuduMaster, new SparkContext())
   }
 
-  @transient lazy val syncClient: KuduClient = {
+  @transient lazy val syncClient = {
     val c = KuduConnection.getSyncClient(kuduMaster)
     if (authnCredentials != null) {
       c.importAuthenticationCredentials(authnCredentials)
@@ -63,7 +63,7 @@ class KuduContext(val kuduMaster: String,
     c
   }
 
-  @transient lazy val asyncClient: AsyncKuduClient = {
+  @transient lazy val asyncClient = {
     val c = KuduConnection.getAsyncClient(kuduMaster)
     if (authnCredentials != null) {
       c.importAuthenticationCredentials(authnCredentials)
@@ -325,7 +325,7 @@ private object KuduConnection {
       if (!syncCache.contains(kuduMaster)) {
         val syncClient = new KuduClient.KuduClientBuilder(kuduMaster).build()
         ShutdownHookManager.get().addShutdownHook(new Runnable {
-          override def run(): Unit = syncClient.close()
+          override def run() = syncClient.close()
         }, ShutdownHookPriority)
         syncCache.put(kuduMaster, syncClient)
       }
@@ -339,7 +339,7 @@ private object KuduConnection {
         val asyncClient = new AsyncKuduClient.AsyncKuduClientBuilder(kuduMaster).build()
         ShutdownHookManager.get().addShutdownHook(
           new Runnable {
-            override def run(): Unit = asyncClient.close()
+            override def run() = asyncClient.close()
           }, ShutdownHookPriority)
         asyncCache.put(kuduMaster, asyncClient)
       }

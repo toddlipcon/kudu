@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.IndexedSeq
 
 import com.google.common.collect.ImmutableList
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkContext}
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
 import org.apache.kudu.ColumnSchema.ColumnSchemaBuilder
@@ -30,17 +30,16 @@ import org.apache.kudu.client.KuduClient.KuduClientBuilder
 import org.apache.kudu.client.MiniKuduCluster.MiniKuduClusterBuilder
 import org.apache.kudu.client.{CreateTableOptions, KuduClient, KuduTable, MiniKuduCluster}
 import org.apache.kudu.{Schema, Type}
-import org.apache.spark.sql.SparkSession
 
 trait TestContext extends BeforeAndAfterAll { self: Suite =>
 
-  var ss: SparkSession = _
-  var miniCluster: MiniKuduCluster = _
-  var kuduClient: KuduClient = _
-  var table: KuduTable = _
-  var kuduContext: KuduContext = _
+  var sc: SparkContext = null
+  var miniCluster: MiniKuduCluster = null
+  var kuduClient: KuduClient = null
+  var table: KuduTable = null
+  var kuduContext: KuduContext = null
 
-  val tableName: String = "test"
+  val tableName = "test"
 
   lazy val schema: Schema = {
     val columns = ImmutableList.of(
@@ -58,9 +57,9 @@ trait TestContext extends BeforeAndAfterAll { self: Suite =>
     new Schema(columns)
   }
 
-  val appID: String = new Date().toString + math.floor(math.random * 10E4).toLong.toString
+  val appID = new Date().toString + math.floor(math.random * 10E4).toLong.toString
 
-  val conf: SparkConf = new SparkConf().
+  val conf = new SparkConf().
     setMaster("local[*]").
     setAppName("test").
     set("spark.ui.enabled", "false").
@@ -71,12 +70,13 @@ trait TestContext extends BeforeAndAfterAll { self: Suite =>
       .numMasters(1)
       .numTservers(1)
       .build()
+    val envMap = Map[String,String](("Xmx", "512m"))
 
-    ss = SparkSession.builder().config(conf).getOrCreate()
+    sc = new SparkContext(conf)
 
     kuduClient = new KuduClientBuilder(miniCluster.getMasterAddresses).build()
 
-    kuduContext = new KuduContext(miniCluster.getMasterAddresses, ss.sparkContext)
+    kuduContext = new KuduContext(miniCluster.getMasterAddresses, sc)
 
     val tableOptions = new CreateTableOptions().setRangePartitionColumns(List("key").asJava)
                                                .setNumReplicas(1)
@@ -86,7 +86,7 @@ trait TestContext extends BeforeAndAfterAll { self: Suite =>
   override def afterAll() {
     if (kuduClient != null) kuduClient.shutdown()
     if (miniCluster != null) miniCluster.shutdown()
-    if (ss != null) ss.stop()
+    if (sc != null) sc.stop()
   }
 
   def deleteRow(key: Int): Unit = {
@@ -109,7 +109,7 @@ trait TestContext extends BeforeAndAfterAll { self: Suite =>
       row.addBoolean(5, i%2==1)
       row.addShort(6, i.toShort)
       row.addFloat(7, i.toFloat)
-      row.addBinary(8, s"bytes $i".getBytes())
+      row.addBinary(8, s"bytes ${i}".getBytes())
       val ts = System.currentTimeMillis() * 1000
       row.addLong(9, ts)
       row.addByte(10, i.toByte)
