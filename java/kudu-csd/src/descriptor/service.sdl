@@ -111,6 +111,11 @@
         }
       ],
       "topology" : { "minInstances" : 1 },
+      "healthAggregation" : {
+        "type" : "nonSingleton",
+	"percentGreenForGreen" : 80.1,
+	"percentYellowGreenForYellow" : 60.0
+      },
       "parameters" : [
         {
           "name" : "webserver_port",
@@ -256,6 +261,11 @@
         }
       ],
       "topology" : { "minInstances" : 1 },
+      "healthAggregation" : {
+        "type" : "nonSingleton",
+	"percentGreenForGreen" : 75.0,
+	"percentYellowGreenForYellow" : 50.0
+      },
       "parameters" : [
         {
           "name" : "webserver_interface",
