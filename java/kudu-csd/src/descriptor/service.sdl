@@ -75,6 +75,7 @@
   "rolesWithExternalLinks" : [
     "KUDU_MASTER"
   ],
+  "inExpressWizard" : true,
   "roles" : [
     {
       "name" : "KUDU_MASTER",
