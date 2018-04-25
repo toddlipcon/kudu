@@ -361,6 +361,7 @@ public abstract class KuduRpc<R> {
     this.sequenceId = sequenceId;
   }
 
+  @Override
   public String toString() {
     final StringBuilder buf = new StringBuilder();
     buf.append("KuduRpc(method=");
