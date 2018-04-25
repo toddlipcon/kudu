@@ -20,6 +20,10 @@
 // Plugins and scripts are applied in the natural "build order"
 // they are used to ensure there are no dependency issues.
 
+plugins {
+  id 'net.ltgt.errorprone' version '0.0.13' apply false
+}
+
 // Plugins and scripts applied at the root level only, instead of per module.
 apply plugin: "idea"
 apply plugin: "eclipse"
@@ -41,9 +45,10 @@ allprojects {
 subprojects {
   // These are common to all subprojects. However, subprojects may
   // include their own plugins and scripts as well.
-  apply plugin: "java"
+  apply plugin: 'java'
   apply from: "$rootDir/gradle/scopes.gradle"
   apply from: "$rootDir/gradle/compile.gradle"
+  apply from: "$rootDir/gradle/errorprone.gradle"
   apply from: "$rootDir/gradle/tests.gradle"
   apply from: "$rootDir/gradle/quality.gradle"
   apply from: "$rootDir/gradle/artifacts.gradle"
