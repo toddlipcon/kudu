@@ -37,6 +37,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import com.google.protobuf.Message;
 import com.google.protobuf.UnsafeByteOperations;
@@ -134,7 +135,7 @@ public final class AsyncKuduScanner {
      */
     READ_YOUR_WRITES(Common.ReadMode.READ_YOUR_WRITES);
 
-    private Common.ReadMode pbVersion;
+    private final Common.ReadMode pbVersion;
     ReadMode(Common.ReadMode pbVersion) {
       this.pbVersion = pbVersion;
     }
@@ -620,7 +621,7 @@ public final class AsyncKuduScanner {
               tablet);
         }
         invalidate();
-        scannerId = "client debug closed".getBytes();   // Make debugging easier.
+        scannerId = "client debug closed".getBytes(Charsets.UTF_8);   // Make debugging easier.
         return response == null ? null : response.data;
       }
 

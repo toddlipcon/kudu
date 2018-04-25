@@ -30,6 +30,8 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Charsets;
+
 /**
  * Tests for non-trivial helper methods in TestUtils.
  */
@@ -90,7 +92,7 @@ public class TestTestUtils {
     public void run() {
       BufferedReader in = null;
       try {
-        in = new BufferedReader(new InputStreamReader(is));
+        in = new BufferedReader(new InputStreamReader(is, Charsets.UTF_8));
         while (in.readLine() != null) {
           counter.incrementAndGet();
         }

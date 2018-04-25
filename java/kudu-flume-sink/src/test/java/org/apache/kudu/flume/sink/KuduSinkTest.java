@@ -199,7 +199,8 @@ public class KuduSinkTest extends BaseKuduTest {
     tx.begin();
 
     for (int i = 0; i < eventCount; i++) {
-      Event e = EventBuilder.withBody(String.format("payload body %s", i).getBytes());
+      Event e = EventBuilder.withBody(String.format("payload body %s", i)
+          .getBytes(Charsets.UTF_8));
       channel.put(e);
     }
 

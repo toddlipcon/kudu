@@ -1120,6 +1120,7 @@ public class PartialRow {
         ColumnTypeAttributes typeAttributes = column.getTypeAttributes();
         addDecimal(index,
             DecimalUtil.minValue(typeAttributes.getPrecision(), typeAttributes.getScale()));
+        break; // TODO(KUDU-2416) we are missing test coverage here!
       case STRING:
         addStringUtf8(index, AsyncKuduClient.EMPTY_ARRAY);
         break;

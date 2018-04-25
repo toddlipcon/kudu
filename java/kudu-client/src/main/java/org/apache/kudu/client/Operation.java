@@ -77,7 +77,7 @@ public abstract class Operation extends KuduRpc<OperationResponse> {
     }
 
     /** The byte used to encode this in a RowOperationsPB */
-    private byte encodedByte;
+    private final byte encodedByte;
   }
 
   static final String METHOD = "Write";
@@ -133,8 +133,8 @@ public abstract class Operation extends KuduRpc<OperationResponse> {
   Message createRequestPB() {
     final Tserver.WriteRequestPB.Builder builder =
         createAndFillWriteRequestPB(ImmutableList.of(this));
-    this.rowOperationSizeBytes = builder.getRowOperations().getRows().size() +
-        builder.getRowOperations().getIndirectData().size();
+    this.rowOperationSizeBytes = (long)builder.getRowOperations().getRows().size() +
+        (long)builder.getRowOperations().getIndirectData().size();
     builder.setTabletId(UnsafeByteOperations.unsafeWrap(getTablet().getTabletIdAsBytes()));
     builder.setExternalConsistencyMode(this.externalConsistencyMode.pbVersion());
     if (this.propagatedTimestamp != AsyncKuduClient.NO_TIMESTAMP) {

@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 
+import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.collect.ComparisonChain;
@@ -234,7 +235,7 @@ class RemoteTablet implements Comparable<RemoteTablet> {
   }
 
   byte[] getTabletIdAsBytes() {
-    return tabletId.getBytes();
+    return tabletId.getBytes(Charsets.UTF_8);
   }
 
   @Override

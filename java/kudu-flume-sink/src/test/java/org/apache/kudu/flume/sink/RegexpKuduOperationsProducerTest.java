@@ -32,6 +32,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
+import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import org.apache.flume.Channel;
 import org.apache.flume.Context;
@@ -134,7 +135,7 @@ public class RegexpKuduOperationsProducerTest extends BaseKuduTest {
         String row = String.format(baseRow, i, j);
         payload.append(row);
       }
-      Event e = EventBuilder.withBody(payload.toString().getBytes());
+      Event e = EventBuilder.withBody(payload.toString().getBytes(Charsets.UTF_8));
       channel.put(e);
     }
 
@@ -148,7 +149,7 @@ public class RegexpKuduOperationsProducerTest extends BaseKuduTest {
               "string,false,%1$d.%1$d,%1$d.%1$d,%1$d.%1$d,%1$d|", 1, 0, j);
           upserts.append(row);
         }
-        Event e = EventBuilder.withBody(upserts.toString().getBytes());
+        Event e = EventBuilder.withBody(upserts.toString().getBytes(Charsets.UTF_8));
         channel.put(e);
       }
 
@@ -157,7 +158,7 @@ public class RegexpKuduOperationsProducerTest extends BaseKuduTest {
       String emptyString = "";
       String[] testCases = {mismatchInInt, emptyString};
       for (String testCase : testCases) {
-        Event e = EventBuilder.withBody(testCase.getBytes());
+        Event e = EventBuilder.withBody(testCase.getBytes(Charsets.UTF_8));
         channel.put(e);
       }
     }

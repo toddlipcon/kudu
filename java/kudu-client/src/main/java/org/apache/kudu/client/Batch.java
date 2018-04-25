@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.protobuf.Message;
 import com.google.protobuf.UnsafeByteOperations;
@@ -91,8 +92,8 @@ class Batch extends KuduRpc<BatchResponse> {
   Message createRequestPB() {
     final Tserver.WriteRequestPB.Builder builder =
         Operation.createAndFillWriteRequestPB(operations);
-    rowOperationsSizeBytes = builder.getRowOperations().getRows().size() +
-                             builder.getRowOperations().getIndirectData().size();
+    rowOperationsSizeBytes = (long)builder.getRowOperations().getRows().size() +
+                             (long)builder.getRowOperations().getIndirectData().size();
     builder.setTabletId(UnsafeByteOperations.unsafeWrap(getTablet().getTabletIdAsBytes()));
     builder.setExternalConsistencyMode(externalConsistencyMode.pbVersion());
     return builder.build();
@@ -197,7 +198,7 @@ class Batch extends KuduRpc<BatchResponse> {
    * @param latencyMs blocks response handling thread for some time to simulate
    * write latency
    */
-  @InterfaceAudience.LimitedPrivate("Test")
+  @VisibleForTesting
   static void injectTabletServerErrorAndLatency(TabletServerErrorPB error, int latencyMs) {
     injectedError = error;
     injectedlatencyMs = latencyMs;

@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -71,7 +72,7 @@ public class MiniKuduCluster implements AutoCloseable {
   // Thread that reads and logs stderr from the control shell.
   private Thread miniClusterErrorPrinter;
 
-  private class DaemonInfo {
+  private static class DaemonInfo {
     DaemonIdentifierPB id;
     boolean isRunning;
   }
@@ -462,7 +463,8 @@ public class MiniKuduCluster implements AutoCloseable {
     public void run() {
       try {
         String line;
-        BufferedReader in = new BufferedReader(new InputStreamReader(is));
+        BufferedReader in = new BufferedReader(
+            new InputStreamReader(is, Charsets.UTF_8));
         while ((line = in.readLine()) != null) {
           LOG.info(line);
         }

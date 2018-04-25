@@ -36,6 +36,8 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.google.common.base.Charsets;
+
 /**
  * This file was forked from hbase/branches/master@4ce6f48.
  */
@@ -82,7 +84,7 @@ public class TestJarFinder {
     os.close();
 
     File propsFile = new File(dir, "props.properties");
-    Writer writer = new FileWriter(propsFile);
+    Writer writer = Files.newBufferedWriter(propsFile.toPath(), Charsets.UTF_8);
     new Properties().store(writer, "");
     writer.close();
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -100,7 +102,7 @@ public class TestJarFinder {
       TestJarFinder.class.getName() + "-testNoManifest");
     dir.mkdirs();
     File propsFile = new File(dir, "props.properties");
-    Writer writer = new FileWriter(propsFile);
+    Writer writer = Files.newBufferedWriter(propsFile.toPath(), Charsets.UTF_8);
     new Properties().store(writer, "");
     writer.close();
     ByteArrayOutputStream baos = new ByteArrayOutputStream();

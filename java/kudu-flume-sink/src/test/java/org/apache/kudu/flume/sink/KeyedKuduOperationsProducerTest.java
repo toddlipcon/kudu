@@ -147,7 +147,7 @@ public class KeyedKuduOperationsProducerTest extends BaseKuduTest {
     Transaction utx = channel.getTransaction();
     utx.begin();
 
-    Event dup = EventBuilder.withBody("payload body upserted".getBytes());
+    Event dup = EventBuilder.withBody("payload body upserted".getBytes(Charsets.UTF_8));
     dup.setHeaders(ImmutableMap.of("key", String.format("key %s", 0)));
     channel.put(dup);
 
@@ -185,7 +185,8 @@ public class KeyedKuduOperationsProducerTest extends BaseKuduTest {
     tx.begin();
 
     for (int i = 0; i < eventCount; i++) {
-      Event e = EventBuilder.withBody(String.format("payload body %s", i).getBytes());
+      Event e = EventBuilder.withBody(String.format("payload body %s", i)
+          .getBytes(Charsets.UTF_8));
       e.setHeaders(ImmutableMap.of("key", String.format("key %s", i)));
       channel.put(e);
     }

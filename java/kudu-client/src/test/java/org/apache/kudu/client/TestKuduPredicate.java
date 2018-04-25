@@ -27,6 +27,7 @@ import static org.apache.kudu.client.KuduPredicate.PredicateType.RANGE;
 import java.math.BigDecimal;
 import java.util.Arrays;
 
+import static com.google.common.base.Charsets.UTF_8;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import org.junit.Assert;
@@ -929,9 +930,13 @@ public class TestKuduPredicate {
                                 new byte[] { 0, 1, 2, 3, 4, 5, 6 },
                                 new byte[] { 10 }));
 
-    testMerge(KuduPredicate.newInListPredicate(binaryCol, ImmutableList.of("a".getBytes(), "b".getBytes(), "c".getBytes(), "d".getBytes())),
-              KuduPredicate.newInListPredicate(binaryCol, ImmutableList.of("b".getBytes(), "d".getBytes(), "e".getBytes())),
-              KuduPredicate.newInListPredicate(binaryCol, ImmutableList.of("b".getBytes(), "d".getBytes())));
+    byte[] bA = "a".getBytes(UTF_8);
+    byte[] bB = "b".getBytes(UTF_8);
+    byte[] bC = "c".getBytes(UTF_8);
+    byte[] bD = "d".getBytes(UTF_8);
+    testMerge(KuduPredicate.newInListPredicate(binaryCol, ImmutableList.of(bA, bB, bC, bD)),
+              KuduPredicate.newInListPredicate(binaryCol, ImmutableList.of(bB, bD)),
+              KuduPredicate.newInListPredicate(binaryCol, ImmutableList.of(bB, bD)));
   }
 
   @Test

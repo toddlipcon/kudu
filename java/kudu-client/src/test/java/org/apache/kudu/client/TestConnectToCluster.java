@@ -37,7 +37,7 @@ import org.hamcrest.CoreMatchers;
 
 public class TestConnectToCluster {
 
-  private static final List<HostAndPort> MASTERS = ImmutableList.of(
+  private static final ImmutableList<HostAndPort> MASTERS = ImmutableList.of(
       HostAndPort.fromParts("0", 9000),
       HostAndPort.fromParts("1", 9000),
       HostAndPort.fromParts("2", 9000));
@@ -83,7 +83,7 @@ public class TestConnectToCluster {
         .build();
     int successes = 0;
     try {
-      String[] masterAddrs = cluster.getMasterAddresses().split(",");
+      String[] masterAddrs = cluster.getMasterAddresses().split(",", -1);
       assertEquals(3, masterAddrs.length);
       for (String masterAddr : masterAddrs) {
         KuduClient c = null;

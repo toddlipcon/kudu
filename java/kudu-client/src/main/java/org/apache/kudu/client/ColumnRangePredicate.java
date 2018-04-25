@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import com.google.common.base.Charsets;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.UnsafeByteOperations;
 import org.apache.yetus.audience.InterfaceAudience;
@@ -184,7 +185,7 @@ public class ColumnRangePredicate {
    */
   public void setLowerBound(String lowerBound) {
     checkColumn(Type.STRING);
-    setLowerBoundInternal(lowerBound.getBytes());
+    setLowerBoundInternal(lowerBound.getBytes(Charsets.UTF_8));
   }
 
   /**
@@ -281,7 +282,7 @@ public class ColumnRangePredicate {
    */
   public void setUpperBound(String upperBound) {
     checkColumn(Type.STRING);
-    setUpperBoundInternal(upperBound.getBytes());
+    setUpperBoundInternal(upperBound.getBytes(Charsets.UTF_8));
   }
 
   /**

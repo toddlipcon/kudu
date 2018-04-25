@@ -42,6 +42,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 import com.stumbleupon.async.Deferred;
@@ -187,6 +188,7 @@ public class TestKuduClient extends BaseKuduTest {
     Schema schema = new Schema(cols);
     try {
       syncClient.createTable(tableName, schema, getBasicCreateTableOptions());
+      fail();
     } catch (NonRecoverableException nre) {
       assertThat(nre.toString(), containsString(
           "number of columns 1001 is greater than the permitted maximum"));
@@ -246,7 +248,7 @@ public class TestKuduClient extends BaseKuduTest {
         "STRING key=r3, STRING c1=NULL, STRING c2=def, STRING c3=c, STRING c4=def");
     for (String row : rows) {
       try {
-        String[] fields = row.split(",");
+        String[] fields = row.split(",", -1);
         Insert insert = table.newInsert();
         for (int i = 0; i < fields.length; i++) {
           if (fields[i].equals("-")) { // leave unset
@@ -371,7 +373,7 @@ public class TestKuduClient extends BaseKuduTest {
     for (int i = 0; i < 100; i++) {
       Insert insert = table.newInsert();
       PartialRow row = insert.getRow();
-      row.addBinary("key", String.format("key_%02d", i).getBytes());
+      row.addBinary("key", String.format("key_%02d", i).getBytes(Charsets.UTF_8));
       row.addString("c1", "✁✂✃✄✆");
       row.addDouble("c2", i);
       if (i % 2 == 1) {
@@ -454,8 +456,6 @@ public class TestKuduClient extends BaseKuduTest {
   public void testDecimalColumns() throws Exception {
     Schema schema = createSchemaWithDecimalColumns();
     syncClient.createTable(tableName, schema, createTableOptions());
-
-    List<Long> timestamps = new ArrayList<>();
 
     KuduSession session = syncClient.newSession();
     KuduTable table = syncClient.openTable(tableName);
@@ -967,6 +967,7 @@ public class TestKuduClient extends BaseKuduTest {
       try (KuduClient localClient = new KuduClient.KuduClientBuilder(masterAddresses).build()) {
         // Force the client to connect to the masters.
         localClient.exportAuthenticationCredentials();
+        fail("Should have failed to connect.");
       } catch (NoLeaderFoundException e) {
         assertTrue("Bad exception string: " + e.getMessage(),
             e.getMessage().matches(".*Master config .+ has no leader. " +
@@ -1200,7 +1201,7 @@ public class TestKuduClient extends BaseKuduTest {
                               client.getLastPropagatedTimestamp());
 
               long row_count = countRowsInScan(syncScanner);
-              long expected_count = 100 * (i + 1);
+              long expected_count = 100L * (i + 1);
               assertTrue(expected_count <= row_count);
 
               // After the scan, verify that the chosen snapshot timestamp is

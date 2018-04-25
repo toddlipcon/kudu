@@ -50,7 +50,7 @@ public abstract class SecurityUtil {
    * Map from the names of digest algorithms used in X509 certificates to
    * the appropriate MessageDigest implementation to use for channel-bindings.
    */
-  private static final Map<String, String> CERT_DIGEST_TO_MESSAGE_DIGEST =
+  private static final ImmutableMap<String, String> CERT_DIGEST_TO_MESSAGE_DIGEST =
       ImmutableMap.<String, String>builder()
       // RFC 5929: if the certificate's signatureAlgorithm uses a single hash
       // function, and that hash function is either MD5 [RFC1321] or SHA-1
@@ -143,7 +143,7 @@ public abstract class SecurityUtil {
     // The signature algorithm name is a string like 'SHA256withRSA'.
     // There's no API available to actually find just the digest algorithm,
     // so we resort to some hackery.
-    String[] components = sigAlg.split("with");
+    String[] components = sigAlg.split("with", 2);
     String digestAlg = CERT_DIGEST_TO_MESSAGE_DIGEST.get(components[0].toUpperCase());
     if (digestAlg == null) {
       // RFC 5929: if the certificate's signatureAlgorithm uses no hash functions or

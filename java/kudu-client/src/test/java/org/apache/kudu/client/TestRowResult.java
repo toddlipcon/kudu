@@ -26,6 +26,8 @@ import java.nio.ByteBuffer;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static com.google.common.base.Charsets.UTF_8;
+
 import org.apache.kudu.Type;
 
 public class TestRowResult extends BaseKuduTest {
@@ -56,8 +58,8 @@ public class TestRowResult extends BaseKuduTest {
     row.addFloat(5, 5.6f);
     row.addDouble(6, 7.8);
     row.addString(7, "string-value");
-    row.addBinary(8, "binary-array".getBytes());
-    ByteBuffer bb = ByteBuffer.wrap("binary-bytebuffer".getBytes());
+    row.addBinary(8, "binary-array".getBytes(UTF_8));
+    ByteBuffer bb = ByteBuffer.wrap("binary-bytebuffer".getBytes(UTF_8));
     bb.position(7); // We're only inserting the bytebuffer part of the original array.
     row.addBinary(9, bb);
     row.setNull(10);
@@ -97,17 +99,17 @@ public class TestRowResult extends BaseKuduTest {
       assertEquals("string-value", rr.getString(7));
       assertEquals("string-value", rr.getString(allTypesSchema.getColumnByIndex(7).getName()));
 
-      assertArrayEquals("binary-array".getBytes(), rr.getBinaryCopy(8));
-      assertArrayEquals("binary-array".getBytes(),
+      assertArrayEquals("binary-array".getBytes(UTF_8), rr.getBinaryCopy(8));
+      assertArrayEquals("binary-array".getBytes(UTF_8),
           rr.getBinaryCopy(allTypesSchema.getColumnByIndex(8).getName()));
 
       ByteBuffer buffer = rr.getBinary(8);
       assertEquals(buffer, rr.getBinary(allTypesSchema.getColumnByIndex(8).getName()));
       byte[] binaryValue = new byte[buffer.remaining()];
       buffer.get(binaryValue);
-      assertArrayEquals("binary-array".getBytes(), binaryValue);
+      assertArrayEquals("binary-array".getBytes(UTF_8), binaryValue);
 
-      assertArrayEquals("bytebuffer".getBytes(), rr.getBinaryCopy(9));
+      assertArrayEquals("bytebuffer".getBytes(UTF_8), rr.getBinaryCopy(9));
 
       assertEquals(true, rr.isNull(10));
       assertEquals(true, rr.isNull(allTypesSchema.getColumnByIndex(10).getName()));
