@@ -214,7 +214,7 @@ Status TSDescriptor::Register(const NodeInstancePB& instance,
                               const ServerRegistrationPB& registration) {
   // Do basic registration work under the lock.
   {
-    std::lock_guard<simple_spinlock> l(lock_);
+    std::lock_guard<RWMutex> l(lock_);
     RETURN_NOT_OK(RegisterUnlocked(instance, registration));
   }
 
@@ -238,7 +238,7 @@ Status TSDescriptor::Register(const NodeInstancePB& instance,
     // Assign the location under the lock if location resolution succeeds. If
     // it fails, log the error.
     if (s.ok()) {
-      std::lock_guard<simple_spinlock> l(lock_);
+      std::lock_guard<RWMutex> l(lock_);
       location_.emplace(std::move(location));
     } else {
       KLOG_EVERY_N_SECS(ERROR, 60) << Substitute(
@@ -252,13 +252,13 @@ Status TSDescriptor::Register(const NodeInstancePB& instance,
 }
 
 void TSDescriptor::UpdateHeartbeatTime() {
-  std::lock_guard<simple_spinlock> l(lock_);
+  std::lock_guard<RWMutex> l(lock_);
   last_heartbeat_ = MonoTime::Now();
 }
 
 MonoDelta TSDescriptor::TimeSinceHeartbeat() const {
   MonoTime now(MonoTime::Now());
-  std::lock_guard<simple_spinlock> l(lock_);
+  shared_lock<RWMutex> l(lock_);
   return now - last_heartbeat_;
 }
 
@@ -267,7 +267,7 @@ bool TSDescriptor::PresumedDead() const {
 }
 
 int64_t TSDescriptor::latest_seqno() const {
-  std::lock_guard<simple_spinlock> l(lock_);
+  shared_lock<RWMutex> l(lock_);
   return latest_seqno_;
 }
 
@@ -289,25 +289,26 @@ void TSDescriptor::DecayRecentReplicaCreationsUnlocked() {
 }
 
 void TSDescriptor::IncrementRecentReplicaCreations() {
-  std::lock_guard<simple_spinlock> l(lock_);
+  std::lock_guard<RWMutex> l(lock_);
   DecayRecentReplicaCreationsUnlocked();
   recent_replica_creations_ += 1;
 }
 
 double TSDescriptor::RecentReplicaCreations() {
-  std::lock_guard<simple_spinlock> l(lock_);
+  // NOTE: not a shared lock because of the "Decay" side effect.
+  std::lock_guard<RWMutex> l(lock_);
   DecayRecentReplicaCreationsUnlocked();
   return recent_replica_creations_;
 }
 
 void TSDescriptor::GetRegistration(ServerRegistrationPB* reg) const {
-  std::lock_guard<simple_spinlock> l(lock_);
+  shared_lock<RWMutex> l(lock_);
   CHECK(registration_) << "No registration";
   CHECK_NOTNULL(reg)->CopyFrom(*registration_);
 }
 
 void TSDescriptor::GetNodeInstancePB(NodeInstancePB* instance_pb) const {
-  std::lock_guard<simple_spinlock> l(lock_);
+  shared_lock<RWMutex> l(lock_);
   instance_pb->set_permanent_uuid(permanent_uuid_);
   instance_pb->set_instance_seqno(latest_seqno_);
 }
@@ -315,7 +316,7 @@ void TSDescriptor::GetNodeInstancePB(NodeInstancePB* instance_pb) const {
 Status TSDescriptor::ResolveSockaddr(Sockaddr* addr, string* host) const {
   vector<HostPort> hostports;
   {
-    std::lock_guard<simple_spinlock> l(lock_);
+    shared_lock<RWMutex> l(lock_);
     for (const HostPortPB& addr : registration_->rpc_addresses()) {
       hostports.emplace_back(addr.host(), addr.port());
     }
@@ -350,7 +351,7 @@ Status TSDescriptor::ResolveSockaddr(Sockaddr* addr, string* host) const {
 Status TSDescriptor::GetTSAdminProxy(const shared_ptr<rpc::Messenger>& messenger,
                                      shared_ptr<tserver::TabletServerAdminServiceProxy>* proxy) {
   {
-    std::lock_guard<simple_spinlock> l(lock_);
+    shared_lock<RWMutex> l(lock_);
     if (ts_admin_proxy_) {
       *proxy = ts_admin_proxy_;
       return Status::OK();
@@ -361,7 +362,7 @@ Status TSDescriptor::GetTSAdminProxy(const shared_ptr<rpc::Messenger>& messenger
   string host;
   RETURN_NOT_OK(ResolveSockaddr(&addr, &host));
 
-  std::lock_guard<simple_spinlock> l(lock_);
+  std::lock_guard<RWMutex> l(lock_);
   if (!ts_admin_proxy_) {
     ts_admin_proxy_.reset(new tserver::TabletServerAdminServiceProxy(
         messenger, addr, std::move(host)));
@@ -373,7 +374,7 @@ Status TSDescriptor::GetTSAdminProxy(const shared_ptr<rpc::Messenger>& messenger
 Status TSDescriptor::GetConsensusProxy(const shared_ptr<rpc::Messenger>& messenger,
                                        shared_ptr<consensus::ConsensusServiceProxy>* proxy) {
   {
-    std::lock_guard<simple_spinlock> l(lock_);
+    shared_lock<RWMutex> l(lock_);
     if (consensus_proxy_) {
       *proxy = consensus_proxy_;
       return Status::OK();
@@ -384,7 +385,7 @@ Status TSDescriptor::GetConsensusProxy(const shared_ptr<rpc::Messenger>& messeng
   string host;
   RETURN_NOT_OK(ResolveSockaddr(&addr, &host));
 
-  std::lock_guard<simple_spinlock> l(lock_);
+  std::lock_guard<RWMutex> l(lock_);
   if (!consensus_proxy_) {
     consensus_proxy_.reset(new consensus::ConsensusServiceProxy(
         messenger, addr, std::move(host)));
@@ -394,7 +395,7 @@ Status TSDescriptor::GetConsensusProxy(const shared_ptr<rpc::Messenger>& messeng
 }
 
 string TSDescriptor::ToString() const {
-  std::lock_guard<simple_spinlock> l(lock_);
+  shared_lock<RWMutex> l(lock_);
   const auto& addr = registration_->rpc_addresses(0);
   return Substitute("$0 ($1:$2)", permanent_uuid_, addr.host(), addr.port());
 }
