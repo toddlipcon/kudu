@@ -341,10 +341,8 @@ Status TableScanner::Run() {
   RETURN_NOT_OK(builder.SetReadMode(KuduScanner::READ_LATEST));
   RETURN_NOT_OK(builder.SetTimeoutMillis(30000));
 
-  if (FLAGS_columns != "*") {
-    vector<string> projected_column_names = Split(FLAGS_columns, ",", strings::SkipEmpty());
-    RETURN_NOT_OK(builder.SetProjectedColumnNames(projected_column_names));
-  }
+  vector<string> projected_column_names = Split(FLAGS_columns, ",", strings::SkipEmpty());
+  RETURN_NOT_OK(builder.SetProjectedColumnNames(projected_column_names));
   RETURN_NOT_OK(AddPredicates(table, builder));
 
   vector<KuduScanToken*> tokens;
