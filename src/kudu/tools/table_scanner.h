@@ -57,11 +57,13 @@ private:
   void ScannerTask(const vector<KuduScanToken *>& tokens);
   void MonitorTask();
 
-private:
   AtomicInt<uint64_t> total_count_;
   client::sp::shared_ptr<KuduClient> client_;
   std::string table_name_;
   gscoped_ptr<ThreadPool> thread_pool_;
+
+  // Protects output to stdout so that rows don't get interleaved.
+  Mutex output_lock_;
 };
 } // namespace tools
 } // namespace kudu

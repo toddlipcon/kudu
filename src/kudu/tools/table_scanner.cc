@@ -303,6 +303,7 @@ void TableScanner::ScannerTask(const vector<KuduScanToken *>& tokens) {
       count += batch.NumRows();
       total_count_.IncrementBy(batch.NumRows());
       if (FLAGS_show_value) {
+        MutexLock l(output_lock_);
         for (const auto& row : batch) {
           cout << row.ToString() << endl;
         }
@@ -311,8 +312,11 @@ void TableScanner::ScannerTask(const vector<KuduScanToken *>& tokens) {
     delete scanner;
 
     sw.stop();
-    cout << "T " << token->tablet().id() << " scanned count " << count
-        << " cost " << sw.elapsed().wall_seconds() << " seconds" << endl;
+    {
+      MutexLock l(output_lock_);
+      cout << "T " << token->tablet().id() << " scanned count " << count
+           << " cost " << sw.elapsed().wall_seconds() << " seconds" << endl;
+    }
   }
 }
 
@@ -337,8 +341,10 @@ Status TableScanner::Run() {
   RETURN_NOT_OK(builder.SetReadMode(KuduScanner::READ_LATEST));
   RETURN_NOT_OK(builder.SetTimeoutMillis(30000));
 
-  vector<string> projected_column_names = Split(FLAGS_columns, ",", strings::SkipEmpty());
-  RETURN_NOT_OK(builder.SetProjectedColumnNames(projected_column_names));
+  if (FLAGS_columns != "*") {
+    vector<string> projected_column_names = Split(FLAGS_columns, ",", strings::SkipEmpty());
+    RETURN_NOT_OK(builder.SetProjectedColumnNames(projected_column_names));
+  }
   RETURN_NOT_OK(AddPredicates(table, builder));
 
   vector<KuduScanToken*> tokens;
