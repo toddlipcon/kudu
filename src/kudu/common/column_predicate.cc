@@ -770,14 +770,25 @@ void ColumnPredicate::EvaluateForPhysicalType(const ColumnBlock& block,
       return;
     }
     case PredicateType::InList: {
-      ApplyPredicate<PhysicalType>(block, sel, [this] (const void* cell) {
-        return std::binary_search(values_.begin(), values_.end(), cell,
-                                  [] (const void* lhs, const void* rhs) {
-                                    return DataTypeTraits<PhysicalType>::Compare(lhs, rhs) < 0;
-                                  });
-      });
+      bool is_primitive = std::is_fundamental<DataTypeTraits<PhysicalType>>::value;
+      if (is_primitive && values_.size() <= 16) {
+        ApplyPredicate<PhysicalType>(block, sel, [this] (const void* cell) {
+          bool b = false;
+          for (int i = 0; i < values_.size(); i++) {
+            b |= DataTypeTraits<PhysicalType>::Compare(values_[i], cell) == 0;
+          }
+          return b;
+        });
+      } else {
+        ApplyPredicate<PhysicalType>(block, sel, [this] (const void* cell) {
+          return std::binary_search(values_.begin(), values_.end(), cell,
+                                      [] (const void* lhs, const void* rhs) {
+                                        return DataTypeTraits<PhysicalType>::Compare(lhs, rhs) < 0;
+                                      });
+        });
+      }
       return;
-    };
+    }
     case PredicateType::None: LOG(FATAL) << "NONE predicate evaluation";
     case PredicateType::InBloomFilter: {
       ApplyPredicate<PhysicalType>(block, sel, [this] (const void* cell) {

@@ -1584,6 +1584,25 @@ TYPED_TEST(RangePredicateBenchmark, TestRange) {
       [&](const ColumnSchema& cs) { return ColumnPredicate::Range(cs, &lower, &upper); });
 }
 
+TYPED_TEST(RangePredicateBenchmark, TestInList) {
+  using T = typename TypeParam::cpp_type;
+
+  for (int in_list_size : { 1, 2, 5, 10, 30 }) {
+    vector<T> in_list;
+    for (int i = 0; i < in_list_size; i++) {
+      in_list.emplace_back(i);
+    }
+
+    vector<const void*> in_list_ptrs;
+    for (int i = 0; i < in_list.size(); i++) {
+      in_list_ptrs.emplace_back(&in_list[i]);
+    }
+
+    RangePredicateBenchmark<TypeParam>::DoTest(
+        [&](const ColumnSchema& cs) { return ColumnPredicate::InList(cs, &in_list_ptrs); });
+  }
+}
+
 // IS NULL and IS NOT NULL predicates don't look at the data itself, so no need
 // to type-parameterize them.
 class NullPredicateBenchmark : public ColumnPredicateBenchmark<DataTypeTraits<INT32>> {};
