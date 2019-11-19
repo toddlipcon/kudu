@@ -425,8 +425,7 @@ class NodeBase {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NodeBase);
-} PACKED;
-
+};
 
 
 // Wrapper around a void pointer, which encodes the type

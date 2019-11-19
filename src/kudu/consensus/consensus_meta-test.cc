@@ -49,8 +49,10 @@ using std::string;
 using std::unique_ptr;
 using std::vector;
 
+namespace {
 const char* kTabletId = "test-consensus-metadata";
 const int64_t kInitialTerm = 3;
+} // anonymous namespace
 
 class ConsensusMetadataTest : public KuduTest {
  public:

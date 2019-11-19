@@ -28,6 +28,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <gflags/gflags.h>
 
 #include "kudu/gutil/port.h"
 #include "kudu/util/monotime.h"
@@ -44,9 +45,6 @@
   NO_PENDING_FATALS(); \
 } while (0)
 
-namespace google {
-class FlagSaver;
-} // namespace google
 
 namespace kudu {
 

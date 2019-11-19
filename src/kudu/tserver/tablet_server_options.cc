@@ -23,7 +23,6 @@
 #include <glog/logging.h>
 
 #include "kudu/gutil/macros.h"
-#include "kudu/master/master.h"
 #include "kudu/server/rpc_server.h"
 #include "kudu/tserver/tablet_server.h"
 #include "kudu/util/flag_tags.h"
@@ -43,7 +42,8 @@ TabletServerOptions::TabletServerOptions() {
   rpc_opts.default_port = TabletServer::kDefaultPort;
 
   Status s = HostPort::ParseStrings(FLAGS_tserver_master_addrs,
-                                    master::Master::kDefaultPort,
+                                    8051, // TODO(todd) figure out circular dependency
+                                    // master::Master::kDefaultPort,
                                     &master_addresses);
   if (!s.ok()) {
     LOG(FATAL) << "Couldn't parse tablet_server_master_addrs flag: " << s.ToString();

@@ -33,7 +33,9 @@
 #include "kudu/clock/clock.h"
 #include "kudu/clock/hybrid_clock.h"
 #include "kudu/clock/logical_clock.h"
+#ifndef DISABLE_CODEGEN
 #include "kudu/codegen/compilation_manager.h"
+#endif
 #include "kudu/common/common.pb.h"
 #include "kudu/common/timestamp.h"
 #include "kudu/common/wire_protocol.h"
@@ -434,8 +436,10 @@ ServerBase::ServerBase(string name, const ServerBaseOptions& options,
   }
 
   CHECK_OK(StartThreadInstrumentation(metric_entity_, web_server_.get()));
+#ifndef DISABLE_CODEGEN
   CHECK_OK(codegen::CompilationManager::GetSingleton()->StartInstrumentation(
                metric_entity_));
+#endif
 }
 
 ServerBase::~ServerBase() {

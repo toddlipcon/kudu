@@ -30,7 +30,7 @@
 
 #include "kudu/common/column_predicate.h"
 #include "kudu/common/encoded_key.h"
-#include "kudu/common/key_util.h"
+#include "kudu/common/key_predicates.h"
 #include "kudu/common/row.h"
 #include "kudu/common/schema.h"
 #include "kudu/common/types.h"

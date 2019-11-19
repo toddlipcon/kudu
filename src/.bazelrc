@@ -1,0 +1,5 @@
+build --cxxopt=--std=c++11 --cxxopt=-msse4.2
+build --per_file_copt=external/com_google_(absl|tcmalloc)/.*\.cc@--std=c++17
+build:clang --crosstool_top=@llvm_toolchain//:toolchain
+build:asan -c dbg --copt=-fsanitize=address --linkopt=-fsanitize=address --define=tcmalloc=disabled
+# TODO: seems that tcmalloc odens't work with gcc-7

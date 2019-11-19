@@ -25,8 +25,10 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#ifndef DISABLE_CODEGEN
 #include "kudu/codegen/compilation_manager.h"
 #include "kudu/codegen/row_projector.h"
+#endif
 #include "kudu/common/columnblock.h"
 #include "kudu/common/encoded_key.h"
 #include "kudu/common/row.h"
@@ -46,9 +48,11 @@
 #include "kudu/util/mem_tracker.h"
 #include "kudu/util/memory/memory.h"
 
+#ifndef DISABLE_CODEGEN
 DEFINE_bool(mrs_use_codegen, true, "whether the memrowset should use code "
             "generation for iteration");
 TAG_FLAG(mrs_use_codegen, hidden);
+#endif
 
 using std::shared_ptr;
 using std::string;
@@ -367,6 +371,7 @@ class MRSRowProjectorImpl : public MRSRowProjector {
 // otherwise makes a regular one.
 unique_ptr<MRSRowProjector> GenerateAppropriateProjector(
   const Schema* base, const Schema* projection) {
+#ifndef DISABLE_CODEGEN
   // Attempt code-generated implementation
   if (FLAGS_mrs_use_codegen) {
     unique_ptr<codegen::RowProjector> actual;
@@ -376,7 +381,7 @@ unique_ptr<MRSRowProjector> GenerateAppropriateProjector(
         new MRSRowProjectorImpl<codegen::RowProjector>(std::move(actual)));
     }
   }
-
+#endif
   // Proceed with default implementation
   unique_ptr<RowProjector> actual(new RowProjector(base, projection));
   return unique_ptr<MRSRowProjector>(

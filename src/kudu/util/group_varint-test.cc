@@ -117,7 +117,7 @@ TEST(TestGroupVarInt, TestGroupVarInt) {
   // Mixed 1-byte and 2-byte
   AppendGroupVarInt32(&buf, 256, 2, 3, 65535);
   ASSERT_EQ(7UL, buf.size());
-  ASSERT_EQ(BOOST_BINARY(01 00 00 01), buf.at(0));
+  ASSERT_EQ(0x41, buf.at(0));
   ASSERT_EQ(256, *reinterpret_cast<const uint16_t *>(&buf[1]));
   ASSERT_EQ(2, *reinterpret_cast<const uint8_t *>(&buf[3]));
   ASSERT_EQ(3, *reinterpret_cast<const uint8_t *>(&buf[4]));

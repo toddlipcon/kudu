@@ -35,6 +35,7 @@
 #include "kudu/common/encoded_key.h"
 #include "kudu/common/key_encoder.h"
 #include "kudu/common/key_util.h"
+#include "kudu/common/key_predicates.h"
 #include "kudu/common/partition.h"
 #include "kudu/common/row.h"
 #include "kudu/common/scan_spec.h"

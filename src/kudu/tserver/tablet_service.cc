@@ -1439,7 +1439,7 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
           Status::NotAuthorized("not authorized to write"));
       return;
     }
-    authz_context = { privileges, /*requested_op_types=*/{} };
+    authz_context = WriteAuthorizationContext{ privileges, /*requested_op_types=*/{} };
   }
 
   shared_ptr<Tablet> tablet;

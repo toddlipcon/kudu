@@ -8,9 +8,10 @@
  */
 
 // The following is ported from the OpenSSL-1.1.0b library.
+#pragma once
 
-#ifndef X509_CHECK_HOST_H
-#define X509_CHECK_HOST_H
+#include <openssl/opensslv.h>
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 
 #include <stdlib.h>
 // IWYU pragma: no_include <openssl/x509.h>
@@ -47,4 +48,4 @@ typedef struct x509_st X509;
 int X509_check_host(X509 *x, const char *chk, size_t chklen,
                     unsigned int flags, char **peername);
 
-#endif // X509_CHECK_HOST_H
+#endif // OPENSSL_VERSION_NUMBER

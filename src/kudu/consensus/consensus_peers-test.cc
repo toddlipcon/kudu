@@ -66,9 +66,11 @@ using std::unique_ptr;
 namespace kudu {
 namespace consensus {
 
+namespace {
 const char* kTabletId = "test-peers-tablet";
 const char* kLeaderUuid = "peer-0";
 const char* kFollowerUuid = "peer-1";
+} // anonymous namespace
 
 class ConsensusPeersTest : public KuduTest {
  public:

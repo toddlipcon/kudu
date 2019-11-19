@@ -28,7 +28,9 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
+#ifndef DISABLE_CODEGEN
 #include "kudu/codegen/compilation_manager.h"
+#endif
 #include "kudu/common/columnblock.h"
 #include "kudu/common/common.pb.h"
 #include "kudu/common/iterator.h"
@@ -102,17 +104,19 @@ class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
   virtual void SetUp() {
     superclass::SetUp();
 
+    const Schema* schema = tablet()->schema();
+    ColumnSchema valcol = schema->column(schema->find_column("val"));
+    valcol_projection_ = Schema({ valcol }, 0);
+
+#ifndef DISABLE_CODEGEN
     // Warm up code cache with all the projections we'll be using.
     unique_ptr<RowwiseIterator> iter;
     CHECK_OK(tablet()->NewRowIterator(client_schema_, &iter));
     uint64_t count;
     CHECK_OK(tablet()->CountRows(&count));
-    const Schema* schema = tablet()->schema();
-    ColumnSchema valcol = schema->column(schema->find_column("val"));
-    valcol_projection_ = Schema({ valcol }, 0);
     CHECK_OK(tablet()->NewRowIterator(valcol_projection_, &iter));
     codegen::CompilationManager::GetSingleton()->Wait();
-
+#endif
     ts_collector_.StartDumperThread();
   }
 

@@ -11,7 +11,10 @@
 // of the functions are for the most part the same except where mentioned in special
 // comments. Explicit casts were also added to bypass compilation errors.
 
+
 #include "kudu/security/x509_check_host.h"
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 
 #include <openssl/asn1.h>
 #include <openssl/crypto.h>
@@ -439,3 +442,5 @@ int X509_check_host(X509 *x, const char *chk, size_t chklen,
         --chklen;
     return do_x509_check(x, chk, chklen, flags, GEN_DNS, peername);
 }
+
+#endif // OPENSSL_VERSION_NUMBER

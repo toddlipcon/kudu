@@ -36,7 +36,7 @@
 #include "kudu/cfile/bitshuffle_arch_wrapper.h"
 #include "kudu/cfile/block_handle.h"
 #include "kudu/cfile/block_encodings.h"
-#include "kudu/cfile/cfile_util.h"
+#include "kudu/cfile/cfile_options.h"
 #include "kudu/common/columnblock.h"
 #include "kudu/common/common.pb.h"
 #include "kudu/common/rowid.h"

@@ -25,7 +25,7 @@
 #include <glog/logging.h>
 
 #include "kudu/cfile/block_handle.h"
-#include "kudu/cfile/cfile_util.h"
+#include "kudu/cfile/cfile_options.h"
 #include "kudu/common/column_materialization_context.h"
 #include "kudu/common/column_predicate.h"
 #include "kudu/common/columnblock.h"

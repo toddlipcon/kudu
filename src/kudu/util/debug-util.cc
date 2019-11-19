@@ -110,9 +110,6 @@ extern int GetStackTrace(void** result, int max_depth, int skip_count);
 // returns false.
 bool Symbolize(void *pc, char *out, int out_size);
 
-namespace glog_internal_namespace_ {
-extern void DumpStackTraceToString(string *s);
-} // namespace glog_internal_namespace_
 } // namespace google
 
 // The %p field width for printf() functions is two characters per byte.
@@ -547,9 +544,9 @@ Status ListThreads(vector<pid_t> *tids) {
 }
 
 string GetStackTrace() {
-  string s;
-  google::glog_internal_namespace_::DumpStackTraceToString(&s);
-  return s;
+  StackTrace trace;
+  trace.Collect(1);
+  return trace.Symbolize();
 }
 
 string GetStackTraceHex() {
