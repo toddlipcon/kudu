@@ -21,7 +21,7 @@
 #include <string>
 
 #include "kudu/cfile/block_encodings.h"
-#include "kudu/cfile/cfile_util.h"
+#include "kudu/cfile/cfile_options.h"
 #include "kudu/common/columnblock.h"
 #include "kudu/gutil/port.h"
 #include "kudu/util/coding-inl.h"

@@ -36,7 +36,6 @@
 #include "kudu/cfile/binary_prefix_block.h"
 #include "kudu/cfile/block_encodings.h"
 #include "kudu/cfile/bshuf_block.h"
-#include "kudu/cfile/cfile_util.h"
 #include "kudu/cfile/plain_bitmap_block.h"
 #include "kudu/cfile/plain_block.h"
 #include "kudu/cfile/rle_block.h"

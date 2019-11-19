@@ -31,7 +31,6 @@
 #include "kudu/common/types.h"
 #include "kudu/gutil/port.h"
 #include "kudu/util/bitmap.h"
-#include "kudu/util/mem_tracker.h"
 #include "kudu/util/memory/arena.h"
 
 namespace kudu {
@@ -40,15 +39,6 @@ namespace cfile {
 using std::string;
 
 static const int kBufSize = 1024*1024;
-
-WriterOptions::WriterOptions()
-  : index_block_size(32*1024),
-    block_restart_interval(16),
-    write_posidx(false),
-    write_validx(false),
-    optimize_index_keys(true),
-    validx_key_encoder(boost::none) {
-}
 
 Status DumpIterator(const CFileReader& reader,
                     CFileIterator* it,
@@ -100,10 +90,6 @@ Status DumpIterator(const CFileReader& reader,
   VLOG(1) << "Dumped " << count << " rows";
 
   return Status::OK();
-}
-
-ReaderOptions::ReaderOptions()
-  : parent_mem_tracker(MemTracker::GetRootTracker()) {
 }
 
 size_t CommonPrefixLength(const Slice& slice_a, const Slice& slice_b) {

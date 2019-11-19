@@ -29,7 +29,6 @@
 namespace kudu {
 
 class Arena;
-class ColumnPredicate;
 class ColumnSchema;
 class ContiguousRow;
 
@@ -67,40 +66,6 @@ bool IncrementCell(const ColumnSchema& col, void* cell_ptr, Arena* arena);
 
 // Decrements the provided cell. If fail, the result will not be updated.
 bool TryDecrementCell(const ColumnSchema &col, void *cell_ptr);
-
-// Pushes lower bound key predicates into the row. Returns the number of pushed
-// predicates. Unpushed predicate columns will be set to the minimum value
-// (unless no predicates are pushed at all).
-int PushLowerBoundKeyPredicates(
-    const std::vector<int32_t>& col_idxs,
-    const std::unordered_map<std::string, ColumnPredicate>& predicates,
-    ContiguousRow* row,
-    Arena* arena);
-
-// Pushes upper bound key predicates into the row. Returns the number of pushed
-// predicates. Unpushed predicate columns will be set to the minimum value
-// (unless no predicates are pushed at all).
-int PushUpperBoundKeyPredicates(
-    const std::vector<int32_t>& col_idxs,
-    const std::unordered_map<std::string, ColumnPredicate>& predicates,
-    ContiguousRow* row,
-    Arena* arena);
-
-// Pushes lower bound key predicates into the row. Returns the number of pushed
-// predicates. Unpushed predicate columns will be set to the minimum value
-// (unless no predicates are pushed at all).
-int PushLowerBoundPrimaryKeyPredicates(
-    const std::unordered_map<std::string, ColumnPredicate>& predicates,
-    ContiguousRow* row,
-    Arena* arena);
-
-// Pushes upper bound key predicates into the row. Returns the number of pushed
-// predicates. Unpushed predicate columns will be set to the minimum value
-// (unless no predicates are pushed at all).
-int PushUpperBoundPrimaryKeyPredicates(
-    const std::unordered_map<std::string, ColumnPredicate>& predicates,
-    ContiguousRow* row,
-    Arena* arena);
 
 // Appends the encoded key into the buffer.
 void EncodeKey(const std::vector<int32_t>& col_idxs,

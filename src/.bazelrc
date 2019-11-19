@@ -1,0 +1,1 @@
+build --crosstool_top=@llvm_toolchain//:toolchain --cxxopt=--std=c++14

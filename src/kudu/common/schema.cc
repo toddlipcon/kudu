@@ -569,6 +569,8 @@ size_t Schema::memory_footprint_including_this() const {
 // Explicit specialization for callers outside this compilation unit.
 template
 Status Schema::DecodeRowKey(Slice encoded_key, RowBlockRow* row, Arena* arena) const;
+template
+Status Schema::DecodeRowKey(Slice encoded_key, ContiguousRow* row, Arena* arena) const;
 
 // ============================================================================
 //  Schema Builder

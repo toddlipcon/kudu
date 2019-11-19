@@ -27,10 +27,14 @@
 #include <ostream>
 #include <string>
 
-#if defined(__linux__)
+#if !defined(DISABLE_BREAKPAD) && defined(__linux__)
+#define ENABLE_BREAKPAD
+#endif
+
+#ifdef ENABLE_BREAKPAD
 #include <breakpad/client/linux/handler/exception_handler.h>
 #include <breakpad/common/linux/linux_libc_support.h>
-#endif // defined(__linux__)
+#endif // ENABLE_BREAKPAD
 
 #include <gflags/gflags.h>
 #include <gflags/gflags_declare.h>
@@ -50,11 +54,11 @@
 using kudu::env_util::CreateDirIfMissing;
 using std::string;
 
-#if defined(__linux__)
+#ifdef ENABLE_BREAKPAD
 static constexpr bool kMinidumpPlatformSupported = true;
 #else
 static constexpr bool kMinidumpPlatformSupported = false;
-#endif // defined(__linux__)
+#endif // ENABLE_BREAKPAD
 
 DECLARE_string(log_dir);
 
@@ -96,7 +100,7 @@ DEFINE_int32(minidump_size_limit_hint_kb, 20480, "Size limit hint for minidump f
 TAG_FLAG(minidump_size_limit_hint_kb, advanced);
 TAG_FLAG(minidump_size_limit_hint_kb, evolving);
 
-#if !defined(__linux__)
+#if !defined(ENABLE_BREAKPAD)
 namespace google_breakpad {
 // Define this as an empty class to avoid an undefined symbol error on Mac.
 class ExceptionHandler {
@@ -105,7 +109,7 @@ class ExceptionHandler {
   ~ExceptionHandler() {}
 };
 } // namespace google_breakpad
-#endif // !defined(__linux__)
+#endif // !defined(ENABLE_BREAKPAD)
 
 namespace kudu {
 
@@ -116,7 +120,7 @@ static sigset_t GetSigset(int signo) {
   return signals;
 }
 
-#if defined(__linux__)
+#if defined(ENABLE_BREAKPAD)
 
 // Called by the exception handler before minidump is produced.
 // Minidump is only written if this returns true.
@@ -306,7 +310,7 @@ void MinidumpExceptionHandler::RunUserSignalHandlerThread() {
   }
 }
 
-#else // defined(__linux__)
+#else // defined(ENABLE_BREAKPAD)
 
 // At the time of writing, we don't support breakpad on Mac so we just stub out
 // all the methods defined in the header file.
@@ -337,7 +341,7 @@ void MinidumpExceptionHandler::StopUserSignalHandlerThread() {
 void MinidumpExceptionHandler::RunUserSignalHandlerThread() {
 }
 
-#endif // defined(__linux__)
+#endif // defined(ENABLE_BREAKPAD)
 
 std::atomic<int> MinidumpExceptionHandler::current_num_instances_;
 

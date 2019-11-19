@@ -25,7 +25,8 @@
 
 #include <glog/logging.h>
 
-#include "kudu/cfile/cfile_util.h"
+#include "kudu/cfile/cfile_options.h"
+#include "kudu/cfile/prefix_key.h"
 #include "kudu/common/columnblock.h"
 #include "kudu/common/common.pb.h"
 #include "kudu/common/schema.h"

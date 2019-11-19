@@ -21,11 +21,10 @@
 #include <string>
 #include <unordered_map>
 
+#include <gflags/gflags.h>
+
 #include "kudu/util/status.h"
 
-namespace google {
-  struct CommandLineFlagInfo;
-}
 
 namespace kudu {
 

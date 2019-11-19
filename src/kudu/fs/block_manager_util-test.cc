@@ -86,14 +86,14 @@ TEST_F(KuduTest, Locking) {
   ASSERT_OK(first.LoadFromDisk());
   ASSERT_OK(first.Lock());
 
-  ASSERT_DEATH({
+  ASSERT_DEATH(({
     PathInstanceMetadataFile second(env_, kType, kFileName);
     CHECK_OK(second.LoadFromDisk());
     CHECK_OK(second.Lock());
-  }, "Could not lock");
+  }), "Could not lock");
 
   ASSERT_OK(first.Unlock());
-  ASSERT_DEATH({
+  ASSERT_DEATH(({
     PathInstanceMetadataFile second(env_, kType, kFileName);
     CHECK_OK(second.LoadFromDisk());
     Status s = second.Lock();
@@ -102,7 +102,7 @@ TEST_F(KuduTest, Locking) {
     } else {
       LOG(FATAL) << "Could not lock: " << s.ToString();
     }
-  }, "Lock successfully acquired");
+  }), "Lock successfully acquired");
 }
 
 static void RunCheckIntegrityTest(Env* env,

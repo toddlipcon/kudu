@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "kudu/cfile/cfile_options.h"
 #include "kudu/cfile/cfile_util.h"
 #include "kudu/common/rowid.h"
 #include "kudu/fs/block_id.h"

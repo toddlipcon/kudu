@@ -24,7 +24,8 @@
 #include <gtest/gtest.h>
 
 #include "kudu/cfile/block_pointer.h"
-#include "kudu/cfile/cfile_util.h"
+#include "kudu/cfile/cfile_options.h"
+#include "kudu/cfile/prefix_key.h"
 #include "kudu/cfile/index_block.h"
 #include "kudu/common/common.pb.h"
 #include "kudu/common/key_encoder.h"
