@@ -41,6 +41,14 @@ def _rules_proto():
         ],
     )
 
+    git_sha = "65b3876bf833fe72049217312727fd04e04e6a1e"
+    http_archive(
+        name = "rules_proto_grpc",
+        urls = ["https://github.com/rules-proto-grpc/rules_proto_grpc/archive/" + git_sha + ".tar.gz"],
+        sha256 = "8324b5270585584096016de258f1ea9f55a7b19ab7b952f10dd1f1344620ca94",
+        strip_prefix = "rules_proto_grpc-" + git_sha,
+    )
+
 def thirdparty_dependencies():
     _rules_cc()
     _rules_proto()

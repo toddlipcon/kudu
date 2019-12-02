@@ -3,8 +3,8 @@ package(default_visibility = ["//visibility:public"])
 load("//:setup.bzl", "kudu_cc_library", "kudu_cc_test", "kudu_proto_library")
 
 kudu_proto_library(
-    "token",
-    proto_deps = ["//kudu/util:pb_util_proto"],
+    name="token_proto",
+    deps = ["//kudu/util:pb_util_proto"],
 )
 
 kudu_cc_library(
@@ -78,7 +78,7 @@ kudu_cc_library(
 )
 
 kudu_cc_library(
-    name = "security_test_util",
+    name = "test_util",
     srcs = glob(
         ["test/*.cc"],
         exclude = ["**/*-test.cc"],
@@ -86,7 +86,6 @@ kudu_cc_library(
         "security-test-util.cc",
     ],
     hdrs = glob(["test/*.h"]) + ["security-test-util.h"],
-    visibility = ["//visibility:private"],
     deps = [
         ":security",
         "//kudu/util",
@@ -100,7 +99,7 @@ kudu_cc_library(
         srcs = [path],
         deps = [
             ":security",
-            ":security_test_util",
+            ":test_util",
             "//kudu/util:pb_util",
         ],
     )

@@ -4,31 +4,31 @@ package(default_visibility = ["//visibility:public"])
 
 KUDU_VERSION = "1.20.0"
 
-kudu_proto_library("hash")
+kudu_proto_library("hash_proto")
 
-kudu_proto_library("histogram")
+kudu_proto_library("histogram_proto")
 
-kudu_proto_library("maintenance_manager")
+kudu_proto_library("maintenance_manager_proto")
 
-kudu_proto_library("mem_tracker")
+kudu_proto_library("mem_tracker_proto")
 
-kudu_proto_library("version_info")
+kudu_proto_library("version_info_proto")
 
 # pb_util stuff
 
 kudu_proto_library(
-    "pb_util",
-    proto_deps = ["@com_google_protobuf//:descriptor_proto"],
+    "pb_util_proto",
+    deps = ["@com_google_protobuf//:descriptor_proto"],
 )
 
 kudu_proto_library(
-    "jsonwriter_test",
-    proto_deps = ["pb_util_proto"],
+    "jsonwriter_test_proto",
+    deps = ["pb_util_proto"],
 )
 
 kudu_proto_library(
     "pb_util_test",
-    proto_deps = ["pb_util_proto"],
+    deps = ["pb_util_proto"],
 )
 
 cc_proto_library(
