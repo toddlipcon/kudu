@@ -2,7 +2,10 @@ package(default_visibility = ["//visibility:public"])
 
 load("//:setup.bzl", "kudu_cc_library", "kudu_proto_library")
 
-kudu_proto_library("compression")
+kudu_proto_library(
+    name = "compression_proto",
+    srcs = ["compression.proto"],
+)
 
 kudu_cc_library(
     name = "compression",

@@ -1,24 +1,30 @@
 load("//:setup.bzl", "kudu_cc_library", "kudu_cc_test", "kudu_proto_library")
+load("@com_google_protobuf//:protobuf.bzl", "proto_library")
 
 package(default_visibility = ["//visibility:public"])
 
 KUDU_VERSION = "1.20.0"
 
-kudu_proto_library("hash")
-
-kudu_proto_library("histogram")
-
-kudu_proto_library("maintenance_manager")
-
-kudu_proto_library("mem_tracker")
-
-kudu_proto_library("version_info")
+[
+    kudu_proto_library(
+        name = "{}_proto".format(n),
+        srcs = ["{}.proto".format(n)],
+    )
+    for n in [
+        "hash",
+        "histogram",
+        "maintenance_manager",
+        "mem_tracker",
+        "version_info",
+    ]
+]
 
 # pb_util stuff
 
 kudu_proto_library(
-    "pb_util",
-    proto_deps = ["@com_google_protobuf//:descriptor_proto"],
+    name="pb_util_proto",
+    srcs=["pb_util.proto"],
+    proto_deps = ["@com_google_protobuf//:cc_wkt_protos"],
 )
 
 kudu_proto_library(
@@ -39,7 +45,7 @@ cc_proto_library(
 proto_library(
     name = "proto_container_test_proto",
     srcs = glob(["proto_container_test*.proto"]),
-    deps = ["pb_util_proto"],
+    deps = ["pb_util_proto_genproto"],
 )
 
 kudu_cc_library(

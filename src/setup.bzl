@@ -1,5 +1,6 @@
-load("@rules_proto//proto:defs.bzl", "proto_library")
-load("@rules_cc//cc:defs.bzl", "cc_proto_library")
+# load("@rules_proto//proto:defs.bzl", "proto_library")
+load("@com_google_protobuf//:protobuf.bzl", "cc_proto_library")
+#load("@rules_cc//cc:defs.bzl", pb_cc_proto_library="cc_proto_library")
 
 def kudu_copts(is_external = False):
     return [
@@ -23,7 +24,7 @@ def kudu_cc_library(copts = None, is_external = False, **kwargs):
         **kwargs
     )
 
-def kudu_cc_test(name, srcs=None,copts = None, deps = None, **kwargs):
+def kudu_cc_test(name, srcs = None, copts = None, deps = None, **kwargs):
     """Generate a cc_test with platform copts
     Args:
     - copts: copts always passed to the cc_test.
@@ -41,22 +42,18 @@ def kudu_cc_test(name, srcs=None,copts = None, deps = None, **kwargs):
         "//kudu/util:test_util",
     ]
     native.cc_test(
-      name = name,
-      srcs = srcs,
+        name = name,
+        srcs = srcs,
         copts = copts + kudu_copts(),
         deps = deps,
         **kwargs
     )
 
-def kudu_proto_library(short_name, cc_deps = [], proto_deps = [], srcs = None):
+def kudu_proto_library(name, cc_deps = [], proto_deps = [], srcs = None):
     if not srcs:
-        srcs = [short_name + ".proto"]
+        srcs = [name + ".proto"]
     cc_proto_library(
-        name = short_name + "_cc_proto",
-        deps = [":" + short_name + "_proto"] + cc_deps,
-    )
-    proto_library(
-        name = short_name + "_proto",
+        name = name,
         srcs = srcs,
         deps = proto_deps,
     )
