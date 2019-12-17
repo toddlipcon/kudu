@@ -241,6 +241,8 @@ class KUDU_EXPORT KuduColumnSchema {
   /// @return Operation result status.
   static Status StringToDataType(const std::string& type_str, DataType* type);
 
+ KuduColumnSchema();
+
   /// Construct KuduColumnSchema object as a copy of another object.
   ///
   /// @param [in] other
@@ -303,7 +305,6 @@ class KUDU_EXPORT KuduColumnSchema {
   FRIEND_TEST(KuduColumnSchemaTest, TestEquals);
 #endif
 
-  KuduColumnSchema();
 
 #if defined(__clang__) || \
   (defined(__GNUC__) && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100) >= 40600)

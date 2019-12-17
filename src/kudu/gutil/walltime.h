@@ -36,6 +36,8 @@
 
 #include "kudu/gutil/integral_types.h"
 
+time_t mkgmtime(const struct tm *tm);
+
 typedef double WallTime;
 
 // Append result to a supplied string.

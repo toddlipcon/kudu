@@ -559,7 +559,10 @@ struct DataTypeTraits<UNIXTIME_MICROS> : public DerivedTypeTraits<INT64>{
   }
 
   static void AppendDebugStringForValue(const void* val, std::string* str) {
-    int64_t timestamp_micros = *reinterpret_cast<const int64_t *>(val);
+    AppendDebugString(UnalignedLoad<int64_t>(val), true, str);
+  }
+
+  static void AppendDebugString(int64_t timestamp_micros, bool include_micros, std::string* str) {
     time_t secs_since_epoch = timestamp_micros / kMicrosInSecond;
     // If the time is negative we need to take into account that any microseconds
     // will actually decrease the time in seconds by one.
@@ -572,20 +575,26 @@ struct DataTypeTraits<UNIXTIME_MICROS> : public DerivedTypeTraits<INT64>{
     char* dst = FastTimeToBufferISO8601Left(secs_since_epoch, time);
     // If the time was from a year not representable in four digits, the
     // result will be an error string without the trailing Z.
-    if (dst[-1] == 'Z') dst--;
-    
-    char micros[kFastToBufferSize];
-    char* m = FastInt32ToBufferLeft(remaining_micros, micros);
-    int micros_len = m - micros;
+    if (dst[-1] != 'Z') {
+      dst[0] = '\0';
+      str->append(time);
+      return;
+    }
+    if (include_micros) {
+      dst--;
+      char micros[kFastToBufferSize];
+      char* m = FastInt32ToBufferLeft(remaining_micros, micros);
+      int micros_len = m - micros;
 
-    *dst++ = '.';
-    for (int i = 0; i < 6 - micros_len; i++) {
-      *dst++ = '0';
+      *dst++ = '.';
+      for (int i = 0; i < 6 - micros_len; i++) {
+        *dst++ = '0';
+      }
+      for (int i = 0; i < micros_len; i++) {
+        *dst++ = micros[i];
+      }
+      *dst++ = 'Z';
     }
-    for (int i = 0; i < micros_len; i++) {
-      *dst++ = micros[i];
-    }
-    *dst++ = 'Z';
     *dst++ = '\0';
     str->append(time);
   }

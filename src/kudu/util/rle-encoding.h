@@ -113,6 +113,7 @@ class RleDecoder {
 
  private:
   bool ReadHeader();
+  bool ReadHeaderInternal();
 
   enum RewindState {
     REWIND_LITERAL,
@@ -225,26 +226,34 @@ template<typename T>
 inline bool RleDecoder<T>::ReadHeader() {
   DCHECK(bit_reader_.is_initialized());
   if (PREDICT_FALSE(literal_count_ == 0 && repeat_count_ == 0)) {
-    // Read the next run's indicator int, it could be a literal or repeated run
-    // The int is encoded as a vlq-encoded value.
-    int32_t indicator_value = 0;
-    bool result = bit_reader_.GetVlqInt(&indicator_value);
-    if (PREDICT_FALSE(!result)) {
-      return false;
-    }
+    return ReadHeaderInternal();
+  }
+  return true;
+}
 
-    // lsb indicates if it is a literal run or repeated run
-    bool is_literal = indicator_value & 1;
-    if (is_literal) {
-      literal_count_ = (indicator_value >> 1) * 8;
-      DCHECK_GT(literal_count_, 0);
-    } else {
-      repeat_count_ = indicator_value >> 1;
-      DCHECK_GT(repeat_count_, 0);
-      bool result = bit_reader_.GetAligned<T>(
-          BitUtil::Ceil(bit_width_, 8), reinterpret_cast<T*>(&current_value_));
-      DCHECK(result);
-    }
+template<typename T>
+inline bool RleDecoder<T>::ReadHeaderInternal() {
+  DCHECK(bit_reader_.is_initialized());
+  DCHECK(literal_count_ == 0 && repeat_count_ == 0);
+  // Read the next run's indicator int, it could be a literal or repeated run
+  // The int is encoded as a vlq-encoded value.
+  int32_t indicator_value = 0;
+  bool result = bit_reader_.GetVlqInt(&indicator_value);
+  if (PREDICT_FALSE(!result)) {
+    return false;
+  }
+
+  // lsb indicates if it is a literal run or repeated run
+  bool is_literal = indicator_value & 1;
+  if (is_literal) {
+    literal_count_ = (indicator_value >> 1) * 8;
+    DCHECK_GT(literal_count_, 0);
+  } else {
+    repeat_count_ = indicator_value >> 1;
+    DCHECK_GT(repeat_count_, 0);
+    bool result = bit_reader_.GetAligned<T>(
+        BitUtil::Ceil(bit_width_, 8), reinterpret_cast<T*>(&current_value_));
+    DCHECK(result);
   }
   return true;
 }

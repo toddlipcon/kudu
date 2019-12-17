@@ -64,6 +64,7 @@ class KUDU_EXPORT MonoDelta {
   ///   the specified parameter.
   ///
   ///@{
+  static MonoDelta FromHours(double hours);
   static MonoDelta FromSeconds(double seconds);
   static MonoDelta FromMilliseconds(int64_t ms);
   static MonoDelta FromMicroseconds(int64_t us);

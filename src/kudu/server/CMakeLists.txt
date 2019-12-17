@@ -34,6 +34,22 @@ target_link_libraries(server_base_proto
   version_info_proto
   wire_protocol_proto)
 
+
+add_library(webserver
+  pprof_path_handlers.cc
+  webserver.cc
+  webserver_options.cc
+  )
+
+target_link_libraries(webserver
+  kudu_util
+  mustache
+  squeasel
+  security)
+if(${KUDU_TCMALLOC_AVAILABLE})
+  target_link_libraries(webserver tcmalloc profiler)
+endif()
+
 #########################################
 # server_process
 #########################################
@@ -43,15 +59,12 @@ set(SERVER_PROCESS_SRCS
   diagnostics_log.cc
   generic_service.cc
   glog_metrics.cc
-  pprof_path_handlers.cc
   rpcz-path-handler.cc
   rpc_server.cc
   server_base.cc
   server_base_options.cc
   tcmalloc_metrics.cc
   tracing_path_handlers.cc
-  webserver.cc
-  webserver_options.cc
   webui_util.cc
 )
 
@@ -64,9 +77,8 @@ target_link_libraries(server_process
   kudu_common
   kudu_fs
   kudu_util
-  mustache
   server_base_proto
-  squeasel)
+  webserver)
 
 # This module depends on tcmalloc and profiler directly, so need to make
 # sure that they get linked in the right order.

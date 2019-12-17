@@ -102,6 +102,8 @@ string HttpStatusCodeToString(kudu::HttpStatusCode code) {
   switch (code) {
     case kudu::HttpStatusCode::Ok:
       return "200 OK";
+    case kudu::HttpStatusCode::NoContent:
+      return "204 No Content";
     case kudu::HttpStatusCode::BadRequest:
       return "400 Bad Request";
     case kudu::HttpStatusCode::AuthenticationRequired:

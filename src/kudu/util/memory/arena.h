@@ -491,6 +491,8 @@ inline bool ArenaBase<THREADSAFE>::RelocateStringPiece(const StringPiece& src, S
 template<bool THREADSAFE>
 template<class T, class ... Args>
 inline T *ArenaBase<THREADSAFE>::NewObject(Args&&... args) {
+  // TODO(todd): static_assert(std::is_trivially_destructible<T>::value,
+  // "must not have a non-trivial destructor");
   void *mem = AllocateBytesAligned(sizeof(T), alignof(T));
   if (mem == NULL) throw std::bad_alloc();
   return new (mem) T(std::forward<Args>(args)...);

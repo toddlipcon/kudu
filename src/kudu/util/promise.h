@@ -63,12 +63,12 @@ class Promise {
 
   // Set the value of this promise.
   // This may be called at most once.
-  void Set(const T& val) {
+  void Set(T val) {
     DCHECK_EQ(latch_.count(), 1) << "Already set!";
-    val_ = val;
+    val_ = std::move(val);
     latch_.CountDown();
   }
-
+  
  private:
   CountDownLatch latch_;
   T val_;

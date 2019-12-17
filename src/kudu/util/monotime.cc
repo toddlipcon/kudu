@@ -50,6 +50,10 @@ MonoDelta MonoDelta::FromSeconds(double seconds) {
   return MonoDelta(delta);
 }
 
+MonoDelta MonoDelta::FromHours(double hours) {
+  return FromSeconds(hours * 60 * 60);
+}
+
 MonoDelta MonoDelta::FromMilliseconds(int64_t ms) {
   return MonoDelta(ms * MonoTime::kNanosecondsPerMillisecond);
 }
