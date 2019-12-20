@@ -229,18 +229,21 @@ Status KuduScanBatch::RowPtr::Get(const Slice& col_name, typename T::cpp_type* v
   return Get<T>(col_idx, val);
 }
 
+Status BadTypeStatus(const char* provided_type_name, const ColumnSchema& col) {
+  return Status::InvalidArgument(
+      Substitute("invalid type $0 provided for column '$1' (expected $2)",
+                 provided_type_name, col.name(), col.type_info()->name()));
+}
+
 template<typename T>
 Status KuduScanBatch::RowPtr::Get(int col_idx, typename T::cpp_type* val) const {
   const ColumnSchema& col = schema_->column(col_idx);
   if (PREDICT_FALSE(col.type_info()->type() != T::type)) {
-    // TODO: at some point we could allow type coercion here.
-    return Status::InvalidArgument(
-        Substitute("invalid type $0 provided for column '$1' (expected $2)",
-                   T::name(),
-                   col.name(), col.type_info()->name()));
+  // TODO: at some point we could allow type coercion here.
+    return BadTypeStatus(T::name(), col);
   }
 
-  if (col.is_nullable() && IsNull(col_idx)) {
+  if (PREDICT_FALSE(col.is_nullable() && IsNull(col_idx))) {
     return Status::NotFound("column is NULL");
   }
 
