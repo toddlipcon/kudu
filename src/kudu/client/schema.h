@@ -133,10 +133,11 @@ class KUDU_EXPORT KuduColumnStorageAttributes {
     RLE = 4,
     DICT_ENCODING = 5,
     BIT_SHUFFLE = 6,
+    BP128 = 7,
 
     /// @deprecated GROUP_VARINT is not supported for valid types, and
     /// will fall back to another encoding on the server side.
-    GROUP_VARINT = 3
+    GROUP_VARINT = 3,
   };
 
   /// @brief Column compression types.
