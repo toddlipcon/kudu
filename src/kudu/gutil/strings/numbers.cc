@@ -1106,6 +1106,7 @@ int HexDigitsPrefix(const char* buf, int num_digits) {
   return 1;
 }
 
+
 // ----------------------------------------------------------------------
 // AutoDigitStrCmp
 // AutoDigitLessThan

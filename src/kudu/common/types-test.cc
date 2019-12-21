@@ -76,7 +76,7 @@ TEST_F(TestTypes, TestTimestampPrinting) {
   info->CopyMinValue(&time);
   string result;
   info->AppendDebugStringForValue(&time, &result);
-  ASSERT_EQ("-290308-12-21T19:59:05.224192Z", result);
+  ASSERT_EQ("Invalid:-9223372036855.224192Z", result);
   result = "";
 
   // Test a regular negative timestamp.
@@ -102,7 +102,7 @@ TEST_F(TestTypes, TestTimestampPrinting) {
   // Test the maximum value.
   time = MathLimits<int64_t>::kMax;
   info->AppendDebugStringForValue(&time, &result);
-  ASSERT_EQ("294247-01-10T04:00:54.775807Z", result);
+  ASSERT_EQ("Invalid:9223372036854.775807Z", result);
   result = "";
 
   {

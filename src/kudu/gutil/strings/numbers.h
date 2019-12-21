@@ -120,6 +120,7 @@ inline uint64 atoi_kmgt(const std::string& s) { return atoi_kmgt(s.c_str()); }
 //     Int32, UInt32:        12 bytes
 //     Int64, UInt64, Hex:   22 bytes
 //     Time:                 30 bytes
+//     TimeISO8601:          21 bytes
 //     Hex32:                 9 bytes
 //     Hex64:                17 bytes
 // Use kFastToBufferSize rather than hardcoding constants.
@@ -133,6 +134,10 @@ char* FastHexToBuffer(int i, char* buffer) MUST_USE_RESULT;
 char* FastTimeToBuffer(time_t t, char* buffer);
 char* FastHex64ToBuffer(uint64 i, char* buffer);
 char* FastHex32ToBuffer(uint32 i, char* buffer);
+
+// Formatted like 2019-12-20T23:15:31Z.
+// Returns a pointer to the end of the string (the null terminator)
+char* FastTimeToBufferISO8601Left(time_t t, char* buffer);
 
 // at least 22 bytes long
 inline char* FastIntToBuffer(int i, char* buffer) {

@@ -568,12 +568,25 @@ struct DataTypeTraits<UNIXTIME_MICROS> : public DerivedTypeTraits<INT64>{
       secs_since_epoch--;
       remaining_micros = kMicrosInSecond - std::abs(remaining_micros);
     }
-    struct tm tm_info;
-    gmtime_r(&secs_since_epoch, &tm_info);
-    char time_up_to_secs[24];
-    strftime(time_up_to_secs, sizeof(time_up_to_secs), kDateFormat, &tm_info);
     char time[34];
-    snprintf(time, sizeof(time), kDateMicrosAndTzFormat, time_up_to_secs, remaining_micros);
+    char* dst = FastTimeToBufferISO8601Left(secs_since_epoch, time);
+    // If the time was from a year not representable in four digits, the
+    // result will be an error string without the trailing Z.
+    if (dst[-1] == 'Z') dst--;
+    
+    char micros[kFastToBufferSize];
+    char* m = FastInt32ToBufferLeft(remaining_micros, micros);
+    int micros_len = m - micros;
+
+    *dst++ = '.';
+    for (int i = 0; i < 6 - micros_len; i++) {
+      *dst++ = '0';
+    }
+    for (int i = 0; i < micros_len; i++) {
+      *dst++ = micros[i];
+    }
+    *dst++ = 'Z';
+    *dst++ = '\0';
     str->append(time);
   }
 };

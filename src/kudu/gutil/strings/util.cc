@@ -663,6 +663,47 @@ char* FastTimeToBuffer(time_t s, char* buffer) {
   return buffer;
 }
 
+//
+// This is similar to the FastTimeToBuffer implementation, that is oddly
+// in util.cc instead of numbers.cc.
+char* FastTimeToBufferISO8601Left(time_t s, char* buffer) {
+  struct tm tm;
+  if (PortableSafeGmtime(&s, &tm) == nullptr) {
+    // Error message must fit in 30-char buffer.
+    memcpy(buffer, "Invalid:", sizeof("Invalid:"));
+    return FastInt64ToBufferLeft(s, buffer+strlen(buffer));
+  }
+
+  // Formatted like 2019-12-20T23:15:31Z
+  int32 year = tm.tm_year + 1900;
+  if (year < 0 || year > 9999) {
+    memcpy(buffer, "Invalid:", sizeof("Invalid:"));
+    return FastInt64ToBufferLeft(s, buffer+strlen(buffer));
+  }
+
+  PutTwoDigits(year/100, buffer);
+  PutTwoDigits(year%100, buffer+2);
+  buffer[4] = '-';
+  
+  PutTwoDigits(tm.tm_mon + 1, buffer+5);
+  buffer[7] = '-';
+
+  PutTwoDigits(tm.tm_mday, buffer+8);
+  buffer[10] = 'T';
+
+  PutTwoDigits(tm.tm_hour, buffer+11);
+  buffer[13] = ':';
+
+  PutTwoDigits(tm.tm_min, buffer+14);
+  buffer[16] = ':';
+
+  PutTwoDigits(tm.tm_sec, buffer+17);
+  buffer[19] = 'Z';
+  buffer[20] = '\0';
+  return &buffer[20];
+}
+
+
 // ----------------------------------------------------------------------
 // strdup_with_new()
 // strndup_with_new()

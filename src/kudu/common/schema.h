@@ -399,9 +399,9 @@ class ColumnSchema {
   template<class CellType>
   void DebugCellAppend(const CellType& cell, std::string* ret) const {
     ret->append(type_info_->name());
-    ret->append(" ");
+    ret->push_back(' ');
     ret->append(name_);
-    ret->append("=");
+    ret->push_back('=');
     if (is_nullable_ && cell.is_null()) {
       ret->append("NULL");
     } else {
