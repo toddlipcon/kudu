@@ -433,7 +433,7 @@ class TestEncoding : public KuduTest {
   }
 
   template <DataType Type, class BlockBuilder, class BlockDecoder>
-  void TestEncodeDecodeTemplateBlockEncoder(typename TypeTraits<Type>::cpp_type* src,
+  void TestEncodeDecodeTemplateBlockEncoder(const typename TypeTraits<Type>::cpp_type* src,
                                             uint32_t size) {
     typedef typename TypeTraits<Type>::cpp_type CppType;
     const uint32_t kOrdinalPosBase = 12345;
@@ -714,41 +714,55 @@ TEST_F(TestEncoding, TestPlainBlockEncoder) {
                                     PlainBlockDecoder<INT32> >(ints.get(), kSize);
 }
 
+template<typename INT>
+static vector<INT> RandInts(int count, INT min_val, INT max_val) {
+  Random rng(SeedRandom());
+  vector<INT> ints(count);
+  for (auto& v : ints) {
+    v = min_val + rng.Uniform64(max_val - min_val);
+  }
+  return ints;
+}
+
 // Test for bitshuffle block, for INT32, INT64, INT128, FLOAT, DOUBLE
 TEST_F(TestEncoding, TestBShufInt32BlockEncoder) {
-  const uint32_t kSize = 10000;
-
-  gscoped_ptr<int32_t[]> ints(new int32_t[kSize]);
-  for (int i = 0; i < kSize; i++) {
-    ints.get()[i] = random();
+  using limits = std::numeric_limits<int32_t>;
+  auto sequences = {
+    RandInts<int32_t>(10000, 1000, 2000),
+    RandInts<int32_t>(10000, 0, limits::max()),
+    RandInts<int32_t>(10000, limits::min(), limits::max())
+  };
+  for (const auto& ints : sequences) {
+    TestEncodeDecodeTemplateBlockEncoder<INT32, BShufBlockBuilder<INT32>,
+                                         BShufBlockDecoder<INT32> >(ints.data(), ints.size());
   }
-
-  TestEncodeDecodeTemplateBlockEncoder<INT32, BShufBlockBuilder<INT32>,
-                                    BShufBlockDecoder<INT32> >(ints.get(), kSize);
 }
 
 TEST_F(TestEncoding, TestBShufInt64BlockEncoder) {
-  const uint32_t kSize = 10000;
-
-  gscoped_ptr<int64_t[]> ints(new int64_t[kSize]);
-  for (int i = 0; i < kSize; i++) {
-    ints.get()[i] = random();
+  using limits = std::numeric_limits<int64_t>;
+  auto sequences = {
+    RandInts<int64_t>(10000, 1000, 2000),
+    RandInts<int64_t>(10000, 0, limits::max()),
+    RandInts<int64_t>(10000, limits::min(), limits::max())
+  };
+  for (const auto& ints : sequences) {
+    TestEncodeDecodeTemplateBlockEncoder<INT64, BShufBlockBuilder<INT64>,
+                                         BShufBlockDecoder<INT64> >(ints.data(), ints.size());
   }
-
-  TestEncodeDecodeTemplateBlockEncoder<INT64, BShufBlockBuilder<INT64>,
-      BShufBlockDecoder<INT64> >(ints.get(), kSize);
 }
 
 TEST_F(TestEncoding, TestBShufInt128BlockEncoder) {
-  const uint32_t kSize = 10000;
-
-  gscoped_ptr<int128_t[]> ints(new int128_t[kSize]);
-  for (int i = 0; i < kSize; i++) {
-    ints.get()[i] = random();
+  using limits = std::numeric_limits<int128_t>;
+  auto sequences = {
+    RandInts<int128_t>(10000, 1000, 2000),
+    // RNG doesn't support full 128-bit range, so just generate some low and high numbers.
+    RandInts<int128_t>(10000, limits::max() - 10000, limits::max()),
+    RandInts<int128_t>(10000, limits::min(), limits::min() + 10000)
+  };
+  for (const auto& ints : sequences) {
+    TestEncodeDecodeTemplateBlockEncoder<INT128, BShufBlockBuilder<INT128>,
+                                         BShufBlockDecoder<INT128> >(ints.data(), ints.size());
   }
-
-  TestEncodeDecodeTemplateBlockEncoder<INT128, BShufBlockBuilder<INT128>,
-      BShufBlockDecoder<INT128> >(ints.get(), kSize);
 }
 
 TEST_F(TestEncoding, TestBShufFloatBlockEncoder) {
