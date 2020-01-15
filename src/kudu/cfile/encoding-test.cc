@@ -93,9 +93,9 @@ class TestEncoding : public KuduTest {
   //
   // The strings are generated using the provided 'formatter' function.
   template<class BuilderType>
-  static Slice CreateBinaryBlock(BuilderType *sbb,
-                                 int num_items,
-                                 const std::function<string(int)>& formatter) {
+  Slice CreateBinaryBlock(BuilderType *sbb,
+                          int num_items,
+                          const std::function<string(int)>& formatter) {
     vector<string> to_insert(num_items);
     vector<Slice> slices;
     for (int i = 0; i < num_items; i++) {
@@ -114,7 +114,29 @@ class TestEncoding : public KuduTest {
     }
 
     CHECK_EQ(slices.size(), sbb->Count());
-    return sbb->Finish(12345L);
+    return FinishAndMakeContiguous(sbb, 12345L);
+  }
+
+  // Concatenate the given slices into 'contiguous_buf_' and return a new slice.
+  Slice MakeContiguous(const vector<Slice>& slices) {
+    if (slices.size() == 1) {
+      return slices[0];
+    }
+    // Concat the slices into a local buffer, since the block decoders and
+    // tests expect contiguous data.
+    contiguous_buf_.clear();
+    for (const auto& s : slices) {
+      contiguous_buf_.append(s.data(), s.size());
+    }
+
+    return Slice(contiguous_buf_);
+  }
+
+  template<class BuilderType>
+  Slice FinishAndMakeContiguous(BuilderType* b, int ord_val) {
+    vector<Slice> slices;
+    b->Finish(ord_val, &slices);
+    return MakeContiguous(slices);
   }
 
   WriterOptions* NewWriterOptions() {
@@ -352,7 +374,7 @@ class TestEncoding : public KuduTest {
 
     CHECK_EQ(num_ints, ibb->Add(reinterpret_cast<uint8_t *>(&data[0]),
                                num_ints));
-    Slice s = ibb->Finish(0);
+    Slice s = FinishAndMakeContiguous(ibb, 0);
     LOG(INFO) << "Created " << TypeTraits<IntType>::name() << " block with " << num_ints << " ints"
               << " (" << s.size() << " bytes)";
     BlockDecoderType ibd(s);
@@ -400,7 +422,7 @@ class TestEncoding : public KuduTest {
   void TestEmptyBlockEncodeDecode() {
     gscoped_ptr<WriterOptions> opts(NewWriterOptions());
     BlockBuilderType bb(opts.get());
-    Slice s = bb.Finish(0);
+    Slice s = FinishAndMakeContiguous(&bb, 0);
     ASSERT_GT(s.size(), 0);
     LOG(INFO) << "Encoded size for 0 items: " << s.size();
 
@@ -419,7 +441,7 @@ class TestEncoding : public KuduTest {
     BlockBuilder pbb(opts.get());
 
     pbb.Add(reinterpret_cast<const uint8_t *>(src), size);
-    Slice s = pbb.Finish(kOrdinalPosBase);
+    Slice s = FinishAndMakeContiguous(&pbb, kOrdinalPosBase);
 
     LOG(INFO)<< "Encoded size for 10k elems: " << s.size();
 
@@ -531,7 +553,7 @@ class TestEncoding : public KuduTest {
 
     ibb->Add(reinterpret_cast<const uint8_t *>(&to_insert[0]),
              to_insert.size());
-    Slice s = ibb->Finish(kOrdinalPosBase);
+    Slice s = FinishAndMakeContiguous(ibb, kOrdinalPosBase);
 
     // Check GetFirstKey() and GetLastKey().
     CppType key;
@@ -625,7 +647,7 @@ class TestEncoding : public KuduTest {
     BuilderType bb(opts.get());
     bb.Add(reinterpret_cast<const uint8_t *>(&to_insert[0]),
            to_insert.size());
-    Slice s = bb.Finish(kOrdinalPosBase);
+    Slice s = FinishAndMakeContiguous(&bb, kOrdinalPosBase);
 
     DecoderType bd(s);
     ASSERT_OK(bd.ParseHeader());
@@ -677,6 +699,7 @@ class TestEncoding : public KuduTest {
   }
 
   Arena arena_;
+  faststring contiguous_buf_;
 };
 
 TEST_F(TestEncoding, TestPlainBlockEncoder) {
@@ -761,7 +784,7 @@ TEST_F(TestEncoding, TestRleIntBlockEncoder) {
   }
   ibb.Add(reinterpret_cast<const uint8_t *>(ints.get()), 10000);
 
-  Slice s = ibb.Finish(12345);
+  Slice s = FinishAndMakeContiguous(&ibb, 12345);
   LOG(INFO) << "RLE Encoded size for 10k ints: " << s.size();
 
   ibb.Reset();
@@ -770,7 +793,7 @@ TEST_F(TestEncoding, TestRleIntBlockEncoder) {
     ints[i] = 0;
   }
   ibb.Add(reinterpret_cast<const uint8_t *>(ints.get()), 100);
-  s = ibb.Finish(12345);
+  s = FinishAndMakeContiguous(&ibb, 12345);
   ASSERT_EQ(14UL, s.size());
 }
 

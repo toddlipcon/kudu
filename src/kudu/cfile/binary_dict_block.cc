@@ -46,6 +46,8 @@
 #include "kudu/util/coding-inl.h"
 #include "kudu/util/memory/arena.h"
 
+using std::vector;
+
 namespace kudu {
 namespace cfile {
 
@@ -63,10 +65,6 @@ BinaryDictBlockBuilder::BinaryDictBlockBuilder(const WriterOptions* options)
 }
 
 void BinaryDictBlockBuilder::Reset() {
-  buffer_.clear();
-  buffer_.resize(kMaxHeaderSize);
-  buffer_.reserve(options_->storage_attributes.cfile_block_size);
-
   if (mode_ == kCodeWordMode &&
       dict_block_.IsBlockFull()) {
     mode_ = kPlainBinaryMode;
@@ -78,17 +76,16 @@ void BinaryDictBlockBuilder::Reset() {
   finished_ = false;
 }
 
-Slice BinaryDictBlockBuilder::Finish(rowid_t ordinal_pos) {
+void BinaryDictBlockBuilder::Finish(rowid_t ordinal_pos, vector<Slice>* slices) {
   finished_ = true;
 
-  InlineEncodeFixed32(&buffer_[0], mode_);
+  header_buffer_.resize(sizeof(int32_t));
+  InlineEncodeFixed32(&header_buffer_[0], mode_);
 
-  // TODO: if we could modify the the Finish() API a little bit, we can
-  // avoid an extra memory copy (buffer_.append(..))
-  Slice data_slice = data_builder_->Finish(ordinal_pos);
-  buffer_.append(data_slice.data(), data_slice.size());
-
-  return Slice(buffer_);
+  vector<Slice> data_slices;
+  data_builder_->Finish(ordinal_pos, &data_slices);
+  data_slices.insert(data_slices.begin(), Slice(header_buffer_));
+  *slices = std::move(data_slices);
 }
 
 // The current block is considered full when the the size of data block
@@ -154,10 +151,9 @@ int BinaryDictBlockBuilder::Add(const uint8_t* vals, size_t count) {
 }
 
 Status BinaryDictBlockBuilder::AppendExtraInfo(CFileWriter* c_writer, CFileFooterPB* footer) {
-  Slice dict_slice = dict_block_.Finish(0);
+  vector<Slice> dict_v;
+  dict_block_.Finish(0, &dict_v);
 
-  std::vector<Slice> dict_v;
-  dict_v.push_back(dict_slice);
 
   BlockPointer ptr;
   Status s = c_writer->AppendDictBlock(dict_v, &ptr, "Append dictionary block");

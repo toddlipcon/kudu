@@ -17,6 +17,7 @@
 
 #include "kudu/cfile/cfile_writer.h"
 
+#include <algorithm>
 #include <functional>
 #include <numeric>
 #include <ostream>
@@ -373,8 +374,8 @@ Status CFileWriter::FinishCurDataBlock() {
 
   // The current data block is full, need to push it
   // into the file, and add to index
-  Slice data = data_block_->Finish(first_elem_ord);
-  VLOG(2) << " actual size=" << data.size();
+  vector<Slice> data_slices;
+  data_block_->Finish(first_elem_ord, &data_slices);
 
   uint8_t key_tmp_space[typeinfo_->size()];
   if (validx_builder_ != nullptr) {
@@ -394,7 +395,7 @@ Status CFileWriter::FinishCurDataBlock() {
     v.emplace_back(null_headers.data(), null_headers.size());
     v.push_back(null_bitmap);
   }
-  v.push_back(data);
+  std::move(data_slices.begin(), data_slices.end(), std::back_inserter(v));
   Status s = AppendRawBlock(v, first_elem_ord,
                             reinterpret_cast<const void *>(key_tmp_space),
                             Slice(last_key_),
