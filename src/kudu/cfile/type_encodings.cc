@@ -26,6 +26,7 @@
 #include "kudu/cfile/binary_plain_block.h"
 #include "kudu/cfile/binary_prefix_block.h"
 #include "kudu/cfile/block_encodings.h"
+#include "kudu/cfile/bp128_block.h"
 #include "kudu/cfile/bshuf_block.h"
 #include "kudu/cfile/plain_bitmap_block.h"
 #include "kudu/cfile/plain_block.h"
@@ -47,6 +48,22 @@ namespace cfile {
 template<DataType Type, EncodingType Encoding>
 struct DataTypeEncodingTraits {};
 
+
+template<class Builder, class Decoder>
+struct SimpleEncodingTraits {
+  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
+    bb->reset(new Builder(options));
+    return Status::OK();
+  }
+
+  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
+                                   CFileIterator* /*iter*/) {
+    bd->reset(new Decoder(slice));
+    return Status::OK();
+  }
+};
+
+
 // Instantiate this template to get static access to the type traits.
 template<DataType Type, EncodingType Encoding> struct TypeEncodingTraits
   : public DataTypeEncodingTraits<Type, Encoding> {
@@ -57,113 +74,44 @@ template<DataType Type, EncodingType Encoding> struct TypeEncodingTraits
 // Generic, fallback, partial specialization that should work for all
 // fixed size types.
 template<DataType Type>
-struct DataTypeEncodingTraits<Type, PLAIN_ENCODING> {
+struct DataTypeEncodingTraits<Type, PLAIN_ENCODING>
+    : public SimpleEncodingTraits<PlainBlockBuilder<Type>, PlainBlockDecoder<Type>> {};
 
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new PlainBlockBuilder<Type>(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new PlainBlockDecoder<Type>(slice));
-    return Status::OK();
-  }
-};
-
-// Generic, fallback, partial specialization that should work for all
-// fixed size types.
 template<DataType Type>
-struct DataTypeEncodingTraits<Type, BIT_SHUFFLE> {
+struct DataTypeEncodingTraits<Type, BIT_SHUFFLE>
+    : public SimpleEncodingTraits<BShufBlockBuilder<Type>, BShufBlockDecoder<Type>> {};
+template<DataType Type>
+struct DataTypeEncodingTraits<Type, BP128>
+    : public SimpleEncodingTraits<BP128BlockBuilder<Type>, BP128BlockDecoder<Type>> {};
 
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new BShufBlockBuilder<Type>(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new BShufBlockDecoder<Type>(slice));
-    return Status::OK();
-  }
-};
 
 // Template specialization for plain encoded string as they require a
 // specific encoder/decoder.
 template<>
-struct DataTypeEncodingTraits<BINARY, PLAIN_ENCODING> {
-
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new BinaryPlainBlockBuilder(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new BinaryPlainBlockDecoder(slice));
-    return Status::OK();
-  }
-};
+struct DataTypeEncodingTraits<BINARY, PLAIN_ENCODING>
+    : public SimpleEncodingTraits<BinaryPlainBlockBuilder, BinaryPlainBlockDecoder> {};
 
 // Template specialization for packed bitmaps
 template<>
-struct DataTypeEncodingTraits<BOOL, PLAIN_ENCODING> {
-
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new PlainBitMapBlockBuilder(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new PlainBitMapBlockDecoder(slice));
-    return Status::OK();
-  }
-};
+struct DataTypeEncodingTraits<BOOL, PLAIN_ENCODING>
+    : public SimpleEncodingTraits<PlainBitMapBlockBuilder, PlainBitMapBlockDecoder> {};
 
 
 // Template specialization for RLE encoded bitmaps
 template<>
-struct DataTypeEncodingTraits<BOOL, RLE> {
-
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new RleBitMapBlockBuilder(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new RleBitMapBlockDecoder(slice));
-    return Status::OK();
-  }
-};
+struct DataTypeEncodingTraits<BOOL, RLE>
+    : public SimpleEncodingTraits<RleBitMapBlockBuilder, RleBitMapBlockDecoder> {};
 
 // Template specialization for plain encoded string as they require a
 // specific encoder \/decoder.
 template<>
-struct DataTypeEncodingTraits<BINARY, PREFIX_ENCODING> {
-
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new BinaryPrefixBlockBuilder(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new BinaryPrefixBlockDecoder(slice));
-    return Status::OK();
-  }
-};
+struct DataTypeEncodingTraits<BINARY, PREFIX_ENCODING>
+    : public SimpleEncodingTraits<BinaryPrefixBlockBuilder, BinaryPrefixBlockDecoder> {};
 
 // Template for dictionary encoding
 template<>
-struct DataTypeEncodingTraits<BINARY, DICT_ENCODING> {
-
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new BinaryDictBlockBuilder(options));
-    return Status::OK();
-  }
-
+struct DataTypeEncodingTraits<BINARY, DICT_ENCODING>
+    : public SimpleEncodingTraits<BinaryDictBlockBuilder, BinaryDictBlockDecoder> {
   static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
                                    CFileIterator* iter) {
     bd->reset(new BinaryDictBlockDecoder(slice, iter));
@@ -172,20 +120,9 @@ struct DataTypeEncodingTraits<BINARY, DICT_ENCODING> {
 };
 
 template<DataType IntType>
-struct DataTypeEncodingTraits<IntType, RLE> {
-
-  static Status CreateBlockBuilder(unique_ptr<BlockBuilder>* bb, const WriterOptions* options) {
-    bb->reset(new RleIntBlockBuilder<IntType>(options));
-    return Status::OK();
-  }
-
-  static Status CreateBlockDecoder(unique_ptr<BlockDecoder>* bd, const Slice& slice,
-                                   CFileIterator* /*iter*/) {
-    bd->reset(new RleIntBlockDecoder<IntType>(slice));
-    return Status::OK();
-  }
-};
-
+struct DataTypeEncodingTraits<IntType, RLE>
+    : public SimpleEncodingTraits<RleIntBlockBuilder<IntType>,
+                                  RleIntBlockDecoder<IntType>> {};
 
 template<typename TypeEncodingTraitsClass>
 TypeEncodingInfo::TypeEncodingInfo(TypeEncodingTraitsClass t)
@@ -244,27 +181,35 @@ class TypeEncodingResolver {
     AddMapping<UINT8, BIT_SHUFFLE>();
     AddMapping<UINT8, PLAIN_ENCODING>();
     AddMapping<UINT8, RLE>();
+    AddMapping<UINT8, BP128>();
     AddMapping<INT8, BIT_SHUFFLE>();
     AddMapping<INT8, PLAIN_ENCODING>();
     AddMapping<INT8, RLE>();
+    AddMapping<INT8, BP128>();
     AddMapping<UINT16, BIT_SHUFFLE>();
     AddMapping<UINT16, PLAIN_ENCODING>();
     AddMapping<UINT16, RLE>();
+    AddMapping<UINT16, BP128>();
     AddMapping<INT16, BIT_SHUFFLE>();
     AddMapping<INT16, PLAIN_ENCODING>();
     AddMapping<INT16, RLE>();
+    AddMapping<INT16, BP128>();
     AddMapping<UINT32, BIT_SHUFFLE>();
     AddMapping<UINT32, RLE>();
     AddMapping<UINT32, PLAIN_ENCODING>();
+    AddMapping<UINT32, BP128>();
     AddMapping<INT32, BIT_SHUFFLE>();
     AddMapping<INT32, PLAIN_ENCODING>();
     AddMapping<INT32, RLE>();
+    AddMapping<INT32, BP128>();
     AddMapping<UINT64, BIT_SHUFFLE>();
     AddMapping<UINT64, PLAIN_ENCODING>();
     AddMapping<UINT64, RLE>();
+    AddMapping<UINT64, BP128>();
     AddMapping<INT64, BIT_SHUFFLE>();
     AddMapping<INT64, PLAIN_ENCODING>();
     AddMapping<INT64, RLE>();
+    AddMapping<INT64, BP128>();
     AddMapping<FLOAT, BIT_SHUFFLE>();
     AddMapping<FLOAT, PLAIN_ENCODING>();
     AddMapping<DOUBLE, BIT_SHUFFLE>();

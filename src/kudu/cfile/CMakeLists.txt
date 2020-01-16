@@ -29,7 +29,15 @@ ADD_EXPORTABLE_LIBRARY(cfile_proto
   DEPS ${CFILE_PROTO_LIBS}
   NONLINK_DEPS ${CFILE_PROTO_TGTS})
 
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/simd_bitpacking.cc
+  DEPENDS gen_bitpacking.py
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/gen_bitpacking.py ${CMAKE_CURRENT_BINARY_DIR}/simd_bitpacking.cc)
+
 add_library(cfile
+  bitpacking-internal.cc
+  ${CMAKE_CURRENT_BINARY_DIR}/simd_bitpacking.cc
+  
   binary_dict_block.cc
   binary_plain_block.cc
   binary_prefix_block.cc
@@ -37,6 +45,7 @@ add_library(cfile
   block_cache.cc
   block_compression.cc
   bloomfile.cc
+  bp128_block.cc
   bshuf_block.cc
   cfile_reader.cc
   cfile_util.cc
@@ -65,3 +74,4 @@ ADD_KUDU_TEST(encoding-test LABELS no_tsan)
 ADD_KUDU_TEST(bloomfile-test)
 ADD_KUDU_TEST(mt-bloomfile-test RUN_SERIAL true)
 ADD_KUDU_TEST(block_cache-test)
+ADD_KUDU_TEST(bitpacking-test)

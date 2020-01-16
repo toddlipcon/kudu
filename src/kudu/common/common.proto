@@ -70,6 +70,7 @@ enum EncodingType {
   RLE = 4;
   DICT_ENCODING = 5;
   BIT_SHUFFLE = 6;
+  BP128 = 7;
 }
 
 // Enums that specify the HMS-related configurations for a Kudu mini-cluster.

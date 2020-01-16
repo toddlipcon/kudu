@@ -536,7 +536,7 @@ class TestEncoding : public KuduTest {
 
     vector<CppType> to_insert;
     Random rd(SeedRandom());
-    for (int i = 0; i < 10003; i++) {
+    for (int i = 0; i < 2; i++) {
       int64_t val = rd.Next64() % std::numeric_limits<CppType>::max();
 
       // For signed types, randomly use both negative and positive values.
@@ -594,12 +594,7 @@ class TestEncoding : public KuduTest {
     ASSERT_EQ(dec_count, dst_block.nrows())
         << "Should have decoded all rows to fill the buffer";
 
-    for (uint i = 0; i < to_insert.size(); i++) {
-      if (to_insert[i] != decoded[i]) {
-        FAIL() << "Fail at index " << i <<
-            " inserted=" << to_insert[i] << " got=" << decoded[i];
-      }
-    }
+    ASSERT_THAT(decoded, testing::ElementsAreArray(to_insert));
 
     // Test Seek within block by ordinal
     for (int i = 0; i < 100; i++) {
@@ -725,32 +720,36 @@ static vector<INT> RandInts(int count, INT min_val, INT max_val) {
   return ints;
 }
 
-// Test for bitshuffle block, for INT32, INT64, INT128, FLOAT, DOUBLE
-TEST_F(TestEncoding, TestBShufInt32BlockEncoder) {
+// Test for bitshuffle/bp128 blocks, for INT32, INT64, INT128, FLOAT, DOUBLE
+TEST_F(TestEncoding, TestInt32BlockEncoders) {
   using limits = std::numeric_limits<int32_t>;
   auto sequences = {
     RandInts<int32_t>(10000, 1000, 2000),
     RandInts<int32_t>(10000, 0, limits::max()),
     RandInts<int32_t>(10000, limits::min(), limits::max())
   };
-  for (const auto& ints : sequences) {
-    TestEncodeDecodeTemplateBlockEncoder<INT32>(ints.data(), ints.size(), BIT_SHUFFLE);
+  for (auto encoding : {BIT_SHUFFLE, BP128}) {
+    for (const auto& ints : sequences) {
+      TestEncodeDecodeTemplateBlockEncoder<INT32>(ints.data(), ints.size(), BIT_SHUFFLE);
+    }
   }
 }
 
-TEST_F(TestEncoding, TestBShufInt64BlockEncoder) {
+TEST_F(TestEncoding, TestInt64BlockEncoders) {
   using limits = std::numeric_limits<int64_t>;
   auto sequences = {
     RandInts<int64_t>(10000, 1000, 2000),
     RandInts<int64_t>(10000, 0, limits::max()),
     RandInts<int64_t>(10000, limits::min(), limits::max())
   };
-  for (const auto& ints : sequences) {
-    TestEncodeDecodeTemplateBlockEncoder<INT64>(ints.data(), ints.size(), BIT_SHUFFLE);
+  for (auto encoding : {BIT_SHUFFLE, BP128}) {
+    for (const auto& ints : sequences) {
+      TestEncodeDecodeTemplateBlockEncoder<INT64>(ints.data(), ints.size(), BIT_SHUFFLE);
+    }
   }
 }
 
-TEST_F(TestEncoding, TestBShufInt128BlockEncoder) {
+TEST_F(TestEncoding, TestInt128BlockEncoders) {
   using limits = std::numeric_limits<int128_t>;
   auto sequences = {
     RandInts<int128_t>(10000, 1000, 2000),
@@ -758,8 +757,10 @@ TEST_F(TestEncoding, TestBShufInt128BlockEncoder) {
     RandInts<int128_t>(10000, limits::max() - 10000, limits::max()),
     RandInts<int128_t>(10000, limits::min(), limits::min() + 10000)
   };
-  for (const auto& ints : sequences) {
-    TestEncodeDecodeTemplateBlockEncoder<INT128>(ints.data(), ints.size(), BIT_SHUFFLE);
+  for (auto encoding : {BIT_SHUFFLE, BP128}) {
+    for (const auto& ints : sequences) {
+      TestEncodeDecodeTemplateBlockEncoder<INT128>(ints.data(), ints.size(), BIT_SHUFFLE);
+    }
   }
 }
 
@@ -881,7 +882,7 @@ class IntEncodingTest : public TestEncoding, public ::testing::WithParamInterfac
   }
 };
 INSTANTIATE_TEST_CASE_P(Encodings, IntEncodingTest,
-                        ::testing::Values(RLE, PLAIN_ENCODING, BIT_SHUFFLE));
+                        ::testing::Values(RLE, PLAIN_ENCODING, BIT_SHUFFLE, BP128));
 
 TEST_P(IntEncodingTest, TestSeekAllTypes) {
   this->template DoIntSeekTest<UINT8>(100, 1000, true);
