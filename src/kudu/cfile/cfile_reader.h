@@ -409,7 +409,7 @@ class CFileIterator : public ColumnIterator {
   struct PreparedBlock {
     BlockPointer dblk_ptr_;
     BlockHandle dblk_data_;
-    gscoped_ptr<BlockDecoder> dblk_;
+    std::unique_ptr<BlockDecoder> dblk_;
 
     // The rowid of the first row in this block.
     rowid_t first_row_idx() const {

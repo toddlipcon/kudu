@@ -234,7 +234,7 @@ class CFileWriter {
   // Metadata which has been added to the writer but not yet flushed.
   std::vector<std::pair<std::string, std::string> > unflushed_metadata_;
 
-  gscoped_ptr<BlockBuilder> data_block_;
+  std::unique_ptr<BlockBuilder> data_block_;
   gscoped_ptr<IndexTreeBuilder> posidx_builder_;
   gscoped_ptr<IndexTreeBuilder> validx_builder_;
   gscoped_ptr<NullBitmapBuilder> null_bitmap_builder_;

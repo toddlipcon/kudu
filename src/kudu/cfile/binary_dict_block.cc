@@ -20,22 +20,21 @@
 #include <limits>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <glog/logging.h>
 
 #include "kudu/cfile/block_pointer.h"
+#include "kudu/cfile/bshuf_block.h"
 #include "kudu/cfile/cfile.pb.h"
 #include "kudu/cfile/cfile_reader.h"
-#include "kudu/cfile/cfile_util.h"
 #include "kudu/cfile/cfile_writer.h"
-#include "kudu/cfile/bshuf_block.h"
 #include "kudu/common/column_materialization_context.h"
 #include "kudu/common/column_predicate.h"
 #include "kudu/common/columnblock.h"
 #include "kudu/common/common.pb.h"
 #include "kudu/common/rowblock.h"
-#include "kudu/common/schema.h"
 #include "kudu/common/types.h"
 #include "kudu/gutil/casts.h"
 #include "kudu/gutil/map-util.h"
