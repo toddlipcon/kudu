@@ -693,13 +693,12 @@ static int Main(int argc, char** argv) {
 
   FLAGS_webserver_port = 4242;
 
-  GFlagsMap default_flags = GetFlagsMap();
   ParseCommandLineFlags(&argc, &argv, true);
   if (argc != 1) {
     std::cerr << "usage: " << argv[0] << std::endl;
     return 1;
   }
-  std::string nondefault_flags = GetNonDefaultFlags(default_flags);
+  std::string nondefault_flags = GetNonDefaultFlags();
   InitGoogleLoggingSafe(argv[0]);
 
   LOG(INFO) << "TSDBD non-default flags:\n"
