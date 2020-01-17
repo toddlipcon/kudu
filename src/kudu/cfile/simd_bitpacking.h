@@ -50,32 +50,6 @@ void simd_fastpackwithoutmask(
     __m128i* __restrict__ out,
     int num_bits);
 
-// Pack 32 unsigned integers in the scalar layout. The integers should already have been
-// verified to fit within the given number of bits.
-//
-// 'in' should have 32 values.
-// 'out' should have room for 32*num_bits bits = 4*num_bits bytes
-void fastpackwithoutmask(
-    const uint64_t* __restrict__ in,
-    uint32_t* __restrict__ out,
-    int num_bits);
-
-void fastpackwithoutmask(
-    const uint32_t* __restrict__ in,
-    uint32_t* __restrict__ out,
-    int num_bits);
-
-void fastpackwithoutmask(
-    const uint16_t* __restrict__ in,
-    uint32_t* __restrict__ out,
-    int num_bits);
-
-void fastpackwithoutmask(
-    const uint8_t* __restrict__ in,
-    uint32_t* __restrict__ out,
-    int num_bits);
-
-
 
 
 // Unpack 128 unsigned integers.
