@@ -22,13 +22,19 @@
 #include <memory>
 #include <vector>
 #include <cstdlib>
-
+#include <sparsehash/dense_hash_set>
+#include <any>
+#define PEGLIB_USE_STD_ANY 1
+#define PEGLIB_NO_CONSTEXPR_SUPPORT
 #include "peglib.h"
 #include <glog/logging.h>
 
 #include "kudu/tsdb/ql/expr.h"
 #include "kudu/tsdb/ql/qcontext.h"
+#include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/substitute.h"
+#include "kudu/util/array_view.h"
+#include "kudu/util/scoped_cleanup.h"
 #include "kudu/util/status.h"
 #include "kudu/util/memory/arena.h"
 
@@ -116,6 +122,77 @@ Star <- '*'
 %whitespace <- [ \t\r\n]*
 )";
 
+static __thread Arena* tls_arena_;
+
+struct AstOptimizer {
+  AstOptimizer() {
+    no_opt.set_empty_key("");
+    for (auto s : {"Fields", "FromClause", "WhereClause", "FuncArgs",
+            "GroupByClause", "Dimensions"}) {
+      no_opt.emplace(s);
+    }
+  }
+
+  bool ShouldEliminateSingleChild(const string& name) {
+    return !ContainsKey(no_opt, name);
+  }
+
+  google::dense_hash_set<string> no_opt;
+};
+
+static AstOptimizer opt;
+
+struct RawAst {
+  static RawAst* NewNodeInTLSArena(peg::SemanticValues& sv) {
+    auto ast = tls_arena_->NewObject<RawAst>();
+    ast->is_token = false;
+    if (sv.size() == 1 && opt.ShouldEliminateSingleChild(sv.name())) {
+      return peg::any_cast<RawAst*>(sv[0]);
+    }
+
+    RawAst** child_storage = static_cast<RawAst**>(
+        tls_arena_->AllocateBytesAligned(sizeof(RawAst*) * sv.size(),
+                                         alignof(RawAst*)));
+    RawAst** dst = child_storage;
+    for (const auto& child : sv) {
+      *dst++ = peg::any_cast<RawAst*>(child);
+    }
+    ast->nodes = {child_storage, sv.size()};
+    tls_arena_->RelocateStringPiece(sv.name(), &ast->name);
+    return ast;
+  }
+  static RawAst* NewTokenInTLSArena(peg::SemanticValues& sv) {
+    auto ast = tls_arena_->NewObject<RawAst>();
+    ast->is_token = true;
+    tls_arena_->RelocateStringPiece(sv.name(), &ast->name);
+    ast->token = {sv.tokens[0].first, (int)sv.tokens[0].second};
+    return ast;
+  }
+
+  // TODO(todd) implement
+  int line() const { return -1; }
+  int column() const { return -1; }
+
+  bool is_token;
+  StringPiece name;
+
+  // TODO(todd) implement parsed exprs using stringpiece to avoid calling as_string()
+  // on this
+  StringPiece token;
+  ArrayView<RawAst*> nodes;
+};
+
+void EnableAstRules(peg::parser* parser) {
+  for (const auto& name : parser->get_rule_names()) {
+    auto& rule = (*parser)[name.c_str()];
+    // how to handle getting arena at runtime? parer needs a context passed
+    if (rule.is_token()) {
+      rule.action = RawAst::NewTokenInTLSArena;
+    } else {
+      rule.action = &RawAst::NewNodeInTLSArena;
+    }
+  }
+}
 
 // Converts a peglib AST into our own parse tree
 class AstConverter {
@@ -124,20 +201,16 @@ class AstConverter {
       : ctx_(ctx) {
   }
 
-  Status ConvertSelect(const std::shared_ptr<Ast>& ast,
+  Status ConvertSelect(const RawAst* ast,
                        SelectStmt** sel) {
-    const auto& opt = peg::AstOptimizer(
-        true, {"Fields", "FromClause", "WhereClause", "FuncArgs",
-               "GroupByClause", "Dimensions"}).optimize(ast);
-    VLOG(2) << peg::ast_to_s(opt);
     *sel = ctx_->Alloc<SelectStmt>();
-    return ParseSelect(opt, *sel);
+    return ParseSelect(ast, *sel);
   }
 
  private:
   QContext* ctx_;
 
-  static Status CheckAstName(const shared_ptr<Ast>& ast, const string& expected) {
+  static Status CheckAstName(const RawAst* ast, const string& expected) {
     if (ast->name != expected) {
       return ParseError(ast, Substitute("unexpected ast node $0, expected $1",
                                         ast->name, expected));
@@ -145,7 +218,7 @@ class AstConverter {
     return Status::OK();
   }
 
-  static Status CheckNodeCount(const shared_ptr<Ast>& ast, int n) {
+  static Status CheckNodeCount(const RawAst* ast, int n) {
     if (ast->nodes.size() != n) {
       return ParseError(ast, Substitute("expected $0 children of node $1",
                                         n, ast->name));
@@ -153,7 +226,7 @@ class AstConverter {
     return Status::OK();
   }
 
-  Status ParseFields(const shared_ptr<Ast>& ast, vector<Expr*>* fields) {
+  Status ParseFields(const RawAst* ast, vector<Expr*>* fields) {
     RETURN_NOT_OK(CheckAstName(ast, "Fields"));
     if (ast->nodes.empty()) {
       return ParseError(ast, "expected at least one field");
@@ -161,7 +234,7 @@ class AstConverter {
     return ParseChildrenAsExprs(ast, fields);
   }
 
-  Status ParseChildrenAsExprs(const shared_ptr<Ast>& parent,
+  Status ParseChildrenAsExprs(const RawAst* parent,
                               vector<Expr*>* exprs) {
     exprs->clear();
     for (const auto& n : parent->nodes) {
@@ -172,12 +245,12 @@ class AstConverter {
     return Status::OK();
   }
 
-  Status ParseExpr(const shared_ptr<Ast>& ast, Expr** expr) {
+  Status ParseExpr(const RawAst* ast, Expr** expr) {
     // ============================================================
     // Identifier.
     // ============================================================
     if (ast->name == "UnquotedIdentifier") {
-      *expr = ctx_->Alloc<FieldRefExpr>(ast->token);
+      *expr = ctx_->Alloc<FieldRefExpr>(ast->token.as_string());
       return Status::OK();
     }
 
@@ -192,7 +265,7 @@ class AstConverter {
     if (ast->name == "FuncCall") {
       vector<Expr*> exprs;
       RETURN_NOT_OK(ParseChildrenAsExprs(ast->nodes[1], &exprs));
-      *expr = ctx_->Alloc<CallExpr>(ast->nodes[0]->token, std::move(exprs));
+      *expr = ctx_->Alloc<CallExpr>(ast->nodes[0]->token.as_string(), std::move(exprs));
       return Status::OK();
     }
 
@@ -207,7 +280,7 @@ class AstConverter {
       Expr* r;
       RETURN_NOT_OK(ParseExpr(ast->nodes[0], &l));
       RETURN_NOT_OK(ParseExpr(ast->nodes[2], &r));
-      *expr = ctx_->Alloc<BinaryExpr>(l, r, ast->nodes[1]->token);
+      *expr = ctx_->Alloc<BinaryExpr>(l, r, ast->nodes[1]->token.as_string());
       return Status::OK();
     }
 
@@ -243,7 +316,7 @@ class AstConverter {
     // ============================================================
     if (ast->name == "IntLiteral") {
       int64_t val;
-      if (!safe_strto64(ast->token, &val)) {
+      if (!safe_strto64(ast->token.data(), ast->token.size(), &val)) {
         return ParseError(ast, "bad int literal");
       }
       *expr = ctx_->Alloc<IntLiteralExpr>(val);
@@ -252,7 +325,7 @@ class AstConverter {
 
     if (ast->name == "DoubleLiteral") {
       double val;
-      if (!safe_strtod(ast->token, &val)) {
+      if (!safe_strtod(ast->token.as_string(), &val)) {
         return ParseError(ast, "bad int literal");
       }
       *expr = ctx_->Alloc<DoubleLiteralExpr>(val);
@@ -264,30 +337,30 @@ class AstConverter {
       RETURN_NOT_OK(CheckAstName(ast->nodes[0], "IntLiteral"));
       RETURN_NOT_OK(CheckAstName(ast->nodes[1], "DurationUnit"));
       int64_t val;
-      if (!safe_strto64(ast->nodes[0]->token, &val)) {
+      if (!safe_strto64(ast->nodes[0]->token.data(), ast->nodes[0]->token.size(), &val)) {
         return ParseError(ast, "bad int literal");
       }
-      *expr = ctx_->Alloc<DurationLiteralExpr>(val, ast->nodes[1]->token);
+      *expr = ctx_->Alloc<DurationLiteralExpr>(val, ast->nodes[1]->token.as_string());
       return Status::OK();
     }
 
     if (ast->name == "StringLiteral") {
-      *expr = ctx_->Alloc<StringLiteralExpr>(ast->token);
+      *expr = ctx_->Alloc<StringLiteralExpr>(ast->token.as_string());
       return Status::OK();
     }
 
     return ParseError(ast, Substitute("unexpected expression AST node $0", ast->name));
   }
 
-  Status ParseFrom(const shared_ptr<Ast>& ast, FromClause* ret) {
+  Status ParseFrom(const RawAst* ast, FromClause* ret) {
     RETURN_NOT_OK(CheckNodeCount(ast, 1));
     const auto& expr = ast->nodes[0];
     RETURN_NOT_OK(CheckAstName(expr, "UnquotedIdentifier"));
-    ret->measurement = expr->token;
+    ret->measurement = expr->token.as_string();
     return Status::OK();
   }
 
-  Status ParseSelect(const shared_ptr<Ast>& ast, SelectStmt* ret) {
+  Status ParseSelect(const RawAst* ast, SelectStmt* ret) {
     for (const auto& n : ast->nodes) {
       if (n->name == "Fields") {
         RETURN_NOT_OK(ParseFields(n, &ret->select_exprs_));
@@ -306,10 +379,10 @@ class AstConverter {
     return Status::OK();
   }
 
-  static Status ParseError(const shared_ptr<Ast>& ast, const string& str) {
+  static Status ParseError(const RawAst* ast, const string& str) {
     return Status::InvalidArgument(Substitute(
         "parse error at $0:$1 (token '$2'): $3",
-        ast->line, ast->column, ast->token, str));
+        ast->line(), ast->column(), ast->token, str));
   }
 };
 
@@ -320,7 +393,7 @@ peg::parser* GetParser() {
   std::call_once(once, []() {
                          parser = new peg::parser();
                          CHECK(parser->load_grammar(kGrammar));
-                         parser->enable_ast();
+                         EnableAstRules(parser);
                        });
   return parser;
 }
@@ -333,13 +406,18 @@ Parser::Parser(QContext* ctx)
   parser_->log = [](size_t line, size_t col, const string& msg) {
                    LOG(WARNING) << line << ":" << col << ": " << msg;
                  };
+  /*  parser_->enable_trace([](const char* name, const char* s, size_t n, const peg::SemanticValues& sv, const peg::Context& c, const peg::any& dt) {
+                          LOG(INFO) << "trace: " << name << string(s, std::min<size_t>(n, 10));
+                          });*/
 }
 
 Parser::~Parser() {
 }
 
 Status Parser::ParseSelectStatement(const string& q, SelectStmt** sel) {
-  std::shared_ptr<Ast> ast;
+  tls_arena_ = ctx_->arena();
+  SCOPED_CLEANUP({ tls_arena_ = nullptr; });
+  RawAst* ast;
   if (!parser_->parse(q.c_str(), ast)) {
     return Status::InvalidArgument("failed to parse");
   }

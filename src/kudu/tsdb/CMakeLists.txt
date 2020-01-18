@@ -48,6 +48,8 @@ add_library(kudu_influxql
   ql/expr.cc
   ql/influxql.cc
   ql/planner.cc )
+set_source_files_properties(ql/influxql.cc
+  PROPERTIES COMPILE_FLAGS --std=c++17)
 
 target_link_libraries(kudu_influxql
   gutil
