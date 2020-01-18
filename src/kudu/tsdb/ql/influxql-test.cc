@@ -404,6 +404,21 @@ TEST_F(InfluxQLTest, TestPlanAgg) {
   }
 }
 
+TEST_F(InfluxQLTest, ParseBenchmark) {
+  const vector<string> queries = {
+    "SELECT max(usage_user), max(usage_system), max(usage_idle), max(usage_nice), "
+    "max(usage_iowait) from cpu where (hostname = 'host_803') and "
+    "time >= '2019-04-01T23:16:50Z' and time < '2019-04-02T00:16:50Z' group by time(1m)"
+  };
+  for (volatile int i = 0; i < 10000; i++) {
+    for (const auto& q : queries) {
+      ctx_.Reset();
+      AnalyzedSelectStmt* sel;
+      ASSERT_OK_FAST(ParseAndAnalyze(q, &sel));
+    }
+  }
+}
+
 } // namespace influxql
 } // namespace tsdb
 } // namespace kudu

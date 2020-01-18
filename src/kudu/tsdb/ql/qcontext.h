@@ -58,6 +58,13 @@ class QContext {
     return column_source_;
   }
 
+  Arena* arena() { return &arena_; }
+
+  void Reset() {
+    ClearDestructors();
+    arena_.Reset();
+  }
+
  private:
   Arena arena_;
   DtorNodeBase* dtor_head_ = nullptr;
@@ -78,6 +85,8 @@ class QContext {
 
     T* obj_;
   };
+
+  void ClearDestructors();
 };
 
 
@@ -96,6 +105,10 @@ inline T* QContext::Alloc(Args&&... args) {
 }
 
 inline QContext::~QContext() {
+  ClearDestructors();
+}
+
+inline void QContext::ClearDestructors() {
   while (dtor_head_) {
     dtor_head_->destruct();
     dtor_head_ = dtor_head_->next;
