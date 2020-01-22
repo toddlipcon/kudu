@@ -55,8 +55,7 @@ namespace tsdb {
 using influxql::Predicate;
 
 namespace {
-
-template<typename T>
+template<class T>
 void ResizeForAppend(vector<T>* v, int n) {
   int needed = v->size() + n;
   if (v->capacity() < needed) {
@@ -64,6 +63,7 @@ void ResizeForAppend(vector<T>* v, int n) {
   }
   v->resize(needed);
 }
+
 } // anonymous namespace
 
 MetricsStore::~MetricsStore() = default;
@@ -272,69 +272,72 @@ Status MetricsStore::Read(StringPiece metric_name,
           table->NewComparisonPredicate(
               p.field, op, std::move(pval))));
   }
-  
+
   vector<string> proj;
   proj.emplace_back("timestamp");
 
   result_times->clear();
-  result_vals->clear();
-  vector<KuduColumnSchema::DataType> col_types;
 
   const int n_sel = project.size();
+  result_vals->clear();
+  result_vals->resize(n_sel);
+
+  struct ColDesc {
+    KuduColumnSchema::DataType type;
+    int proj_idx;
+    int data_offset;
+    bool nullable;
+    InfluxVec* vec;
+  };
+  vector<ColDesc> int64_cols;
+  vector<ColDesc> double_cols;
+  int offset = 0;
+  int ts_offset = 0;
   bool has_nullables = false;
+  offset += sizeof(int64_t);
+  int i = 0;
   for (const auto& sel_col_name : project) {
     string sel_col_name_str = sel_col_name.as_string();
     KuduColumnSchema cs;
     if (!table->schema().HasColumn(sel_col_name_str, &cs)) {
       return Status::InvalidArgument("column not found", sel_col_name);
     }
-    col_types.push_back(cs.type());
+    ColDesc desc;
+    desc.type = cs.type();
+    desc.proj_idx = i + 1;
+    desc.data_offset = offset;
+    desc.nullable = cs.is_nullable();
+    desc.vec = &(*result_vals)[i];
+
     switch (cs.type()) {
       case KuduColumnSchema::INT64:
-        result_vals->emplace_back(vector<int64_t>());
+        (*result_vals)[i] = InfluxVec::WithNoNulls<int64_t>({});
+        int64_cols.emplace_back(std::move(desc));
+        offset += sizeof(int64_t);
         break;
       case KuduColumnSchema::DOUBLE:
-        result_vals->emplace_back(vector<double>());
+        (*result_vals)[i] = InfluxVec::WithNoNulls<double>({});
+        double_cols.emplace_back(std::move(desc));
+        offset += sizeof(double);
         break;
       default:
         LOG(FATAL) << "bad column type for " << cs.name();
         break;
     }
-    has_nullables |= cs.is_nullable();
+    has_nullables |= desc.nullable;
     proj.emplace_back(std::move(sel_col_name_str));
+    i++;
   }
-  
+
+  int bitmap_offset = offset;
+  offset += has_nullables ? BitmapSize(proj.size()) : 0;
+  int row_stride = offset;
+
   KUDU_RETURN_NOT_OK(scanner.SetProjectedColumnNames(proj));
   // TODO(todd): currently the aggregation doesn't rely on order.
   // If we switch that, we need to turn on FaultTolerant.
   // KUDU_RETURN_NOT_OK(scanner.SetFaultTolerant());
   KUDU_RETURN_NOT_OK(scanner.Open());
-
-  vector<pair<int, vector<int64_t>*>> int64_cols;
-  vector<pair<int, vector<double>*>> double_cols;
-
-  int offset = 0;
-  int ts_offset = 0;
-  offset += sizeof(int64_t);
-  for (int i = 0; i < n_sel; i++) {
-    switch (col_types[i]) {
-      case KuduColumnSchema::INT64: {
-        int64_cols.emplace_back(offset, &boost::get<vector<int64_t>>((*result_vals)[i]));
-        offset += sizeof(int64_t);
-        break;
-      }
-      case KuduColumnSchema::DOUBLE: {
-        double_cols.emplace_back(offset, &boost::get<vector<double>>((*result_vals)[i]));
-        offset += sizeof(double);
-        break;
-      }
-      default:
-        LOG(FATAL) << "x";
-    }
-  }
-  int bitmap_offset = offset;
-  offset += has_nullables ? BitmapSize(proj.size()) : 0;
-  int row_stride = offset;
 
 
   KuduScanBatch batch;
@@ -349,22 +352,34 @@ Status MetricsStore::Read(StringPiece metric_name,
     const uint8_t* row_base = batch.direct_data().data();
 
     for (auto& p : int64_cols) {
-      ResizeForAppend(p.second, n);
+      auto* v = p.vec->data_as<int64_t>();
+      ResizeForAppend(v, n);
+      ResizeForAppend(&p.vec->nulls, n);
     }
     for (auto& p : double_cols) {
-      ResizeForAppend(p.second, n);
+      auto* v = p.vec->data_as<double>();
+      ResizeForAppend(v, n);
+      ResizeForAppend(&p.vec->nulls, n);
     }
     ResizeForAppend(result_times, n);
 
     for (int i = 0; i < n; i++) {
       // TODO(todd) check NULLs.
       for (const auto& p : int64_cols) {
-        int64_t val = UnalignedLoad<int64_t>(row_base + p.first);
-        (*p.second)[dst_idx] = val;
+        if (p.nullable && BitmapTest(row_base + bitmap_offset, p.proj_idx)) {
+          p.vec->set(dst_idx, nullptr);
+        } else {
+          int64_t val = UnalignedLoad<int64_t>(row_base + p.data_offset);
+          p.vec->set(dst_idx, val);
+        }
       }
       for (const auto& p : double_cols) {
-        double val = UnalignedLoad<double>(row_base + p.first);
-        (*p.second)[dst_idx] = val;
+        if (p.nullable && BitmapTest(row_base + bitmap_offset, p.proj_idx)) {
+          p.vec->set(dst_idx, nullptr);
+        } else {
+          double val = UnalignedLoad<double>(row_base + p.data_offset);
+          p.vec->set(dst_idx, val);
+        }
       }
 
       int64_t ts = UnalignedLoad<int64_t>(row_base + ts_offset);

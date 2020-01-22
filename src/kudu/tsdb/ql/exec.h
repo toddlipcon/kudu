@@ -22,12 +22,64 @@
 
 #include <glog/logging.h>
 
+#include "kudu/gutil/bits.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
 namespace tsdb {
 
-using InfluxVec = boost::variant<std::vector<double>, std::vector<int64_t>>;
+struct InfluxVec {
+  bool has_nulls = false;
+  boost::variant<std::vector<double>, std::vector<int64_t>> data;
+  std::vector<bool> nulls;
+
+  InfluxVec() {}
+
+  template<class T>
+  InfluxVec(std::vector<T> cells, std::vector<bool> nulls)
+      : data(std::move(cells)),
+        nulls(std::move(nulls)) {
+    CHECK_EQ(cells.size(), nulls.size());
+    has_nulls = false;
+    for (auto b : nulls) {
+      has_nulls |= b;
+    }
+  }
+
+  template<class T>
+  static InfluxVec WithNoNulls(std::vector<T> cells) {
+    InfluxVec ret;
+    ret.nulls.assign(cells.size(), false);
+    ret.has_nulls = false;
+    ret.data = std::move(cells);
+    return ret;
+  }
+
+  template<class T>
+  const std::vector<T>* data_as() const {
+    return boost::get<std::vector<T>>(&data);
+  }
+
+  template<class T>
+  std::vector<T>* data_as() {
+    return boost::get<std::vector<T>>(&data);
+  }
+
+  bool null_at_index(int i) const {
+    return has_nulls && nulls[i];
+  }
+
+  template<class T>
+  void set(int i, T val) {
+    (*data_as<T>())[i] = val;
+    nulls[i] = false;
+  }
+
+  void set(int i, std::nullptr_t val) {
+    nulls[i] = true;
+    has_nulls = true;
+  }
+};
 
 namespace influxql {
 

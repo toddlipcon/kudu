@@ -25,6 +25,7 @@
 #include <glog/logging.h>
 #include <libdivide.h>
 
+#include "kudu/client/schema.h"
 #include "kudu/tsdb/ql/exec.h"
 #include "kudu/util/status.h"
 
@@ -82,10 +83,14 @@ class Bucketer {
   std::vector<int64_t> bucket_times_;
 };
 
+struct AggSpec {
+  std::string func_name;
+  std::string col_name;
+  client::KuduColumnSchema::DataType col_type;
+};
 
-// aggs: pairs like: {"max", "col_name"} for each aggregation.
 Status CreateMultiAggExpressionEvaluator(
-    const std::vector<std::pair<std::string, std::string>>& aggs,
+    const std::vector<AggSpec>& aggs,
     Bucketer bucketer,
     TSBlockConsumer* downstream,
     std::unique_ptr<TSBlockConsumer>* eval);

@@ -263,7 +263,7 @@ class Server {
     TSBlock block;
     block.times = timestamps;
     for (int i = 0; i < metrics.size(); i++) {
-      block.AddColumn(metrics[i].ToString(), std::move(results[i]));
+      block.AddColumn(metrics[i].ToString(), InfluxVec::WithNoNulls(std::move(results[i])));
     }
     WriteResponseSeries("cpu", tags, {std::move(block)}, TimestampFormat::RFC3339, jw);
   }
@@ -320,9 +320,11 @@ class Server {
         }
 
         for (const auto& col : block.columns) {
-          if (auto* v = boost::get<vector<int64_t>>(&col)) {
+          if (col.null_at_index(i)) {
+            jw->Null();
+          } else if (auto* v = col.data_as<int64_t>()) {
             jw->Int64((*v)[i]);
-          } else if (auto* v = boost::get<vector<double>>(&col)) {
+          } else if (auto* v = col.data_as<double>()) {
             jw->Double((*v)[i]);
           } else {
             LOG(FATAL);
@@ -367,7 +369,7 @@ class Server {
             {
               MutexLock l(agg_lock);
               for (int col = 0; col < vals.size(); col++) {
-                agg.MergeAgg(times, boost::get<vector<int64_t>>(vals[col]), &agg_results[col]);
+                agg.MergeAgg(times, *vals[col].data_as<int64_t>(), &agg_results[col]);
               }
             }
           }
@@ -439,7 +441,7 @@ class Server {
                                              &times, &vals));
           CHECK_EQ(vals.size(), agg_results->size());
           for (int col = 0; col < vals.size(); col++) {
-            agg.MergeAgg(times, boost::get<vector<int64_t>>(vals[col]), &(*agg_results)[col]);
+            agg.MergeAgg(times, *vals[col].data_as<int64_t>(), &(*agg_results)[col]);
           }
           return Status::OK();
         }));

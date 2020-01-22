@@ -1,3 +1,4 @@
+
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -17,6 +18,7 @@
 
 #include "kudu/tsdb/ql/agg.h"
 
+#include <map>
 #include <memory>
 #include <utility>
 #include <string>
@@ -38,14 +40,15 @@ namespace kudu {
 namespace tsdb {
 namespace influxql {
 
+template<typename ValueType>
 struct MaxTraits {
-  using IntermediateType = int64_t;
-  using InputType = int64_t;
-  using OutputType = int64_t;
+  using IntermediateType = ValueType;
+  using InputType = ValueType;
+  using OutputType = ValueType;
   static constexpr const char* const name = "max";
 
   static void Combine(IntermediateType* old_val, InputType new_val) {
-    *old_val = std::max(*old_val, new_val);
+    *old_val = std::max<ValueType>(*old_val, new_val);
   }
 
   static vector<OutputType> Finish(vector<IntermediateType> intermediate) {
@@ -53,12 +56,13 @@ struct MaxTraits {
   }
 };
 
+template<typename ValueType>
 struct MeanTraits {
   struct IntermediateType {
-    int64_t total = 0;
+    ValueType total = 0;
     int64_t count = 0;
   };
-  using InputType = int64_t;
+  using InputType = ValueType;
   using OutputType = double;
   static constexpr const char* const name = "mean";
 
@@ -88,6 +92,10 @@ class Aggregator {
 template<class Traits>
 class AggregatorImpl : public Aggregator {
  public:
+  static unique_ptr<Aggregator> Create(string col_name, const Bucketer& bucketer) {
+    return unique_ptr<Aggregator>(new AggregatorImpl(std::move(col_name), bucketer));
+  }
+
   AggregatorImpl(string col_name, const Bucketer& bucketer)
       : col_name_(std::move(col_name)),
         intermediate_vals_(bucketer.num_buckets()) {
@@ -104,7 +112,7 @@ class AggregatorImpl : public Aggregator {
     if (!vec) {
       return Status::RuntimeError("missing column", col_name_);
     }
-    const vector<int64_t>* src_vals = boost::get<vector<int64_t>>(vec);
+    const auto* src_vals = vec->data_as<typename Traits::InputType>();
     if (!src_vals) {
       return Status::RuntimeError("wrong column type", col_name_);
     }
@@ -112,24 +120,39 @@ class AggregatorImpl : public Aggregator {
     int n = block.times.size();
     DCHECK_EQ(src_vals->size(), n);
     DCHECK_EQ(bucket_indexes.size(), n);
-    DoMergeAgg(bucket_indexes.data(), src_vals->data(), intermediate_vals_.data(), n);
+    if (vec->has_nulls) {
+      DCHECK_EQ(vec->nulls.size(), n);
+      DoMergeAgg<typename Traits::InputType, true>(
+          bucket_indexes.data(),
+          src_vals->data(),
+          vec->nulls,
+          intermediate_vals_.data(), n);
+    } else {
+      DoMergeAgg<typename Traits::InputType, false>(
+          bucket_indexes.data(),
+          src_vals->data(),
+          vec->nulls,
+          intermediate_vals_.data(), n);
+    }
     return Status::OK();
   }
 
   InfluxVec TakeResults() override {
     CHECK(!done_);
     done_ = true;
-    return Traits::Finish(std::move(intermediate_vals_));
+    return InfluxVec::WithNoNulls(Traits::Finish(std::move(intermediate_vals_)));
   }
 
  private:
-  template<class T>
+  template<class T, bool HAS_NULLS>
   void DoMergeAgg(const int* __restrict__ bucket_indexes,
                   const T* __restrict__ src_vals,
+                  const vector<bool>& nulls,
                   typename Traits::IntermediateType* __restrict__ intermediate_vals,
                   int n) {
 #pragma unroll(4)
     for (int i = 0; i < n; i++) {
+      if (HAS_NULLS && nulls[i]) continue;
       int bucket = *bucket_indexes++;
       Traits::Combine(&intermediate_vals[bucket], src_vals[i]);
     }
@@ -142,25 +165,47 @@ class AggregatorImpl : public Aggregator {
   bool done_ = false;
 };
 
+class AggFactory {
+ public:
+  AggFactory() {
+    aggs_.emplace(MapKey{"max", client::KuduColumnSchema::DataType::INT64},
+                  AggregatorImpl<MaxTraits<int64_t>>::Create);
+    aggs_.emplace(MapKey{"max", client::KuduColumnSchema::DataType::DOUBLE},
+                  AggregatorImpl<MaxTraits<double>>::Create);
+
+    aggs_.emplace(MapKey{"mean", client::KuduColumnSchema::DataType::INT64},
+                  AggregatorImpl<MeanTraits<int64_t>>::Create);
+    aggs_.emplace(MapKey{"mean", client::KuduColumnSchema::DataType::DOUBLE},
+                  AggregatorImpl<MeanTraits<double>>::Create);
+  }
+
+  unique_ptr<Aggregator> CreateAgg(
+      const string& agg_name, client::KuduColumnSchema::DataType type,
+      string col_name, const Bucketer& bucketer) {
+    FactoryFunc* func = FindOrNull(aggs_, {agg_name, type});
+    if (!func) return nullptr;
+    return (*func)(col_name, bucketer);
+  }
+ private:
+  using MapKey = pair<string, client::KuduColumnSchema::DataType>;
+  using FactoryFunc = std::function<unique_ptr<Aggregator>(string col_name, const Bucketer& bucketer)>;
+  std::map<MapKey, FactoryFunc> aggs_;
+};
+
 class MultiAggExpressionEvaluator : public TSBlockConsumer {
  public:
-  MultiAggExpressionEvaluator(const vector<std::pair<string, string>>& agg_and_field,
+  MultiAggExpressionEvaluator(const vector<AggSpec>& agg_specs,
                               Bucketer bucketer,
                               TSBlockConsumer* downstream )
       : bucketer_(std::move(bucketer)),
         downstream_(CHECK_NOTNULL(downstream)) {
-    for (const auto& p : agg_and_field) {
-      const auto& agg_name = p.first;
-      const auto& col_name = p.second;
-
-      // TODO(todd) implement mean
-      if (agg_name == "max") {
-        aggs_.emplace_back(col_name, new AggregatorImpl<MaxTraits>(col_name, bucketer_));
-      } else if (agg_name == "mean") {
-        aggs_.emplace_back(col_name, new AggregatorImpl<MeanTraits>(col_name, bucketer_));
-      } else {
-        LOG(FATAL) << "unknown agg: " << agg_name; // TODO move to Init()
+    static AggFactory* agg_factory = new AggFactory();
+    for (const auto& spec : agg_specs) {
+      auto agg = agg_factory->CreateAgg(spec.func_name, spec.col_type, spec.col_name, bucketer_);
+      if (!agg) {
+        LOG(FATAL) << "unknown agg: " << spec.func_name << "(type " << spec.col_type << ")"; // TODO move to Init()
       }
+      aggs_.emplace_back(spec.col_name, std::move(agg));
     }
   }
 
@@ -205,7 +250,7 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
 };
 
 Status CreateMultiAggExpressionEvaluator(
-    const std::vector<std::pair<string, string>>& aggs,
+    const vector<AggSpec>& aggs,
     Bucketer bucketer,
     TSBlockConsumer* downstream,
     std::unique_ptr<TSBlockConsumer>* eval) {

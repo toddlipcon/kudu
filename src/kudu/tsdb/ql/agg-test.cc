@@ -52,12 +52,13 @@ TEST_F(AggTest, TestMaxAgg) {
   const int kMaxTs = 199;
 
   TSBlock block;
-  block.AddColumn("usage", vector<int64_t>());
-  auto& col = boost::get<vector<int64_t>>(block.column("usage"));
+  vector<int64_t> cells;
   for (int ts = kMinTs; ts <= kMaxTs; ts++) {
     block.times.emplace_back(ts);
-    col.emplace_back(ts % 10);
+    cells.emplace_back(ts % 10);
   }
+  block.AddColumn("usage", InfluxVec::WithNoNulls(std::move(cells)));
+
   BlockBuffer result_consumer;
 
   unique_ptr<TSBlockConsumer> agg;
@@ -72,13 +73,13 @@ TEST_F(AggTest, TestMaxAgg) {
 
   TSBlock result_block = result_consumer.TakeSingleResult();
   LOG(INFO) << result_block.times;
-  LOG(INFO) << result_block.column("max_usage");
-  LOG(INFO) << result_block.column("mean_usage");
+  LOG(INFO) << *result_block.column("max_usage").data_as<int64_t>();
+  LOG(INFO) << *result_block.column("mean_usage").data_as<double>();
   ASSERT_THAT(result_block.times, testing::ElementsAre(
       100, 110, 120, 130, 140, 150, 160, 170, 180, 190));
-  ASSERT_THAT(boost::get<vector<int64_t>>(result_block.column("max_usage")),
+  ASSERT_THAT(*result_block.column("max_usage").data_as<int64_t>(),
               testing::ElementsAre(9, 9, 9, 9, 9, 9, 9, 9, 9, 9));
-  ASSERT_THAT(boost::get<vector<double>>(result_block.column("mean_usage")),
+  ASSERT_THAT(*result_block.column("mean_usage").data_as<double>(),
               testing::ElementsAre(4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5));
 
 }

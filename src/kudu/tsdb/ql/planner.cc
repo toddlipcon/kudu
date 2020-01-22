@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/tsdb/series_id.h"
@@ -256,7 +257,7 @@ Status Planner::PlanSelectAggregate(const AnalyzedSelectStmt* asel,
                                     TSBlockConsumerFactory* factory) {
   CHECK(asel->is_aggregate);
 
-  vector<pair<string, string>> aggs_and_fields;
+  vector<AggSpec> aggs;
   for (const Expr* expr : *asel->select_exprs) {
     auto* func = expr->As<CallExpr>();
     if (!func || !func->analysis->is_aggregate_function) {
@@ -270,7 +271,8 @@ Status Planner::PlanSelectAggregate(const AnalyzedSelectStmt* asel,
     if (!fieldref){
       return Status::NotSupported("can only plan aggregates over simple fields", expr->ToQL());
     }
-    aggs_and_fields.emplace_back(func->func_, fieldref->field_);
+    auto type = FindOrDie(asel->from_clause->column_types, fieldref->field_);
+    aggs.emplace_back(AggSpec{func->func_, fieldref->field_, type});
   }
 
 
@@ -279,7 +281,7 @@ Status Planner::PlanSelectAggregate(const AnalyzedSelectStmt* asel,
                     asel->dimensions->time_granularity_us.value_or(std::numeric_limits<int64_t>::max()));
 
   *factory = [=](TSBlockConsumer* downstream, unique_ptr<TSBlockConsumer>* eval) {
-               return CreateMultiAggExpressionEvaluator(aggs_and_fields, bucketer, downstream, eval);
+               return CreateMultiAggExpressionEvaluator(aggs, bucketer, downstream, eval);
              };
   return Status::OK();
 }
