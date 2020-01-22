@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <memory>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -22,6 +23,11 @@
 #include "kudu/util/test_macros.h"
 #include <gtest/gtest.h>
 
+#include <tao/pegtl.hpp>
+#include <tao/pegtl/analyze.hpp>
+#include <tao/pegtl/contrib/parse_tree.hpp>
+
+
 using kudu::client::KuduColumnSchema;
 using std::string;
 using std::pair;
@@ -30,6 +36,96 @@ using std::unordered_map;
 using std::unordered_set;
 using strings::Substitute;
 
+/*
+namespace pegtl = tao::pegtl;
+namespace tao {
+namespace TAO_PEGTL_NAMESPACE {
+namespace influxql {
+
+enum class NodeType {
+  NUMERAL,
+  STRING_LITERAL,
+  IDENTIFIER,
+  DURATION_UNIT,
+  TOK_NOT,
+  COMPARISON_OP,
+  FIELDS,
+  WHERE_CLAUSE,
+  FUNC_ARGS,
+  GROUP_BY_CLAUSE,
+  DURATION_LITERAL,
+  SELECT_STMT,
+  MAYBE_NEGATION,
+  FROM_CLAUSE,
+  EXPR,
+  DISJUNCTION,
+  CONJUNCTION,
+  COMPARISON,
+  FUNC_CALL,
+};
+
+struct RawAst {
+  RawAst(NodeType type, std::string token) : type_(type), tok_(std::move(token)) {}
+  RawAst(NodeType type,  vector<unique_ptr<RawAst>> children)
+      : type_(type),
+        children_(std::move(children)) {
+  }
+
+
+  NodeType type_;
+  std::string tok_;
+  vector<unique_ptr<RawAst>> children_;
+};
+
+struct State {
+  void PushToken(NodeType type, std::string token) {
+    LOG(INFO) << "push token " << token;
+    pending_.emplace_back(new RawAst(type, std::move(token)));
+  }
+  static bool ShouldOptimize(NodeType type) {
+    switch (type) {
+      case NodeType::FIELDS:
+      case NodeType::FROM_CLAUSE:
+      case NodeType::WHERE_CLAUSE:
+      case NodeType::FUNC_ARGS:
+      case NodeType::GROUP_BY_CLAUSE:
+        return false;
+      default:
+        return true;
+    }
+  }
+  void PushNode(NodeType type) {
+    if (pending_.size() == 1 && ShouldOptimize(type)) {
+      LOG(INFO) << "(replaced prior)";
+      pending_[0]->type_ = type;
+      return;
+    }
+    unique_ptr<RawAst> ret(new RawAst(type, std::move(pending_)));
+    pending_.emplace_back(std::move(ret));
+  }
+
+  vector<unique_ptr<RawAst>> pending_;
+};
+
+
+template<NodeType TYPE>
+struct CreateToken {
+  template< typename Input >
+  static void apply( const Input& in, State* state) {
+    state->PushToken(TYPE, in.string());
+  }
+};
+
+template<NodeType TYPE>
+struct CreateNode {
+  template< typename Input >
+  static void apply(const Input& in, State* state) {
+    LOG(INFO) << "push node for " << in.string();
+    state->PushNode(TYPE);
+  }
+};
+
+*/
 namespace kudu {
 namespace tsdb {
 namespace influxql {
@@ -152,6 +248,7 @@ class InfluxQLTest : public KuduTest {
 TEST_F(InfluxQLTest, TestParser) {
   SelectStmt* sel;
   ASSERT_OK(parser_.ParseSelectStatement("select foo + bar - baz from cpu where time < 100 and time > 10;", &sel));
+  ASSERT_OK(parser_.ParseSelectStatement("select 1 from cpu where time < 100 or time > 10;", &sel));
   ASSERT_OK(parser_.ParseSelectStatement(
       "select max(usage_user),max(usage_system) from cpu "
       "where (hostname = 'host_9') and "
@@ -416,6 +513,33 @@ TEST_F(InfluxQLTest, ParseBenchmark) {
       AnalyzedSelectStmt* sel;
       ASSERT_OK_FAST(ParseAndAnalyze(q, &sel));
     }
+  }
+}
+
+TEST_F(InfluxQLTest, Multithreaded) {
+  const vector<string> queries = {
+    "SELECT max(usage_user), max(usage_system), max(usage_idle), max(usage_nice), "
+    "max(usage_iowait) from cpu where (hostname = 'host_803') and "
+    "time >= '2019-04-01T23:16:50Z' and time < '2019-04-02T00:16:50Z' group by time(1m)"
+  };
+  vector<std::thread> threads;
+  for (volatile int i = 0; i < 10; i++) {
+    for (const auto& q : queries) {
+      threads.emplace_back(
+          [this, q]() {
+            QContext ctx(&mock_series_store_, &mock_column_source_);
+            Parser p(&ctx);
+            Analyzer a(&ctx);
+            SelectStmt* sel;
+            AnalyzedSelectStmt* asel;
+            CHECK_OK(p.ParseSelectStatement(q, &sel));
+            CHECK_OK(a.AnalyzeSelectStmt(sel, &asel));
+          });
+    }
+  }
+
+  for (auto& t : threads) {
+    t.join();
   }
 }
 

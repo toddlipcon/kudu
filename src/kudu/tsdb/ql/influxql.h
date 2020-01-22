@@ -28,10 +28,6 @@
 
 #include "kudu/util/status.h"
 
-namespace peg {
-class parser;
-} // namespace peg
-
 namespace kudu {
 namespace tsdb {
 namespace influxql {
@@ -88,7 +84,6 @@ class Parser {
 
  private:
   QContext* ctx_;
-  std::unique_ptr<peg::parser> parser_;
 };
 
 

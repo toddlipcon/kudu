@@ -22,28 +22,249 @@
 #include <memory>
 #include <vector>
 #include <cstdlib>
-#include <sparsehash/dense_hash_set>
 #include <any>
-#define PEGLIB_USE_STD_ANY 1
-#define PEGLIB_NO_CONSTEXPR_SUPPORT
-#include "peglib.h"
 #include <glog/logging.h>
+#include <sparsehash/dense_hash_set>
+#include <tao/pegtl.hpp>
+#include <tao/pegtl/analyze.hpp>
+#include <tao/pegtl/contrib/parse_tree.hpp>
+#include <tao/pegtl/contrib/parse_tree_to_dot.hpp>
 
+#include "kudu/tsdb/ql/ast_node.h"
 #include "kudu/tsdb/ql/expr.h"
 #include "kudu/tsdb/ql/qcontext.h"
 #include "kudu/gutil/map-util.h"
+#include "kudu/gutil/strings/escaping.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/array_view.h"
 #include "kudu/util/scoped_cleanup.h"
 #include "kudu/util/status.h"
 #include "kudu/util/memory/arena.h"
 
-using peg::Ast;
-using peg::Parser;
 using strings::Substitute;
 using std::shared_ptr;
 using std::string;
 using std::vector;
+
+namespace pegtl = tao::pegtl;
+
+namespace tao {
+namespace TAO_PEGTL_NAMESPACE {
+namespace influxql {
+
+struct tok_group : istring<'g', 'r', 'o', 'u', 'p'> {};
+struct tok_by : istring<'b', 'y'> {};
+struct tok_as : istring<'a', 's'> {};
+struct tok_from : istring<'f', 'r', 'o', 'm'> {};
+struct tok_where : istring<'w', 'h', 'e', 'r', 'e'> {};
+struct tok_and : istring<'a', 'n', 'd'> {};
+struct tok_or : istring<'o', 'r'> {};
+struct tok_select : istring<'s', 'e', 'l', 'e', 'c', 't'> {};
+struct tok_not : istring<'n', 'o', 't'> {};
+struct tok_star : one<'*'> {};
+
+struct comma : one<','> {};
+struct sp : space {};
+struct sps : star<sp> {};
+struct dot : one< '.' > {};
+
+struct comparison_op : sor< string<'<', '='>,
+                            string<'<'>,
+                            string<'='>,
+                            string<'>', '='>,
+                            string<'>'>> {};
+struct add_or_subtract_op : sor< string<'+'>, string<'-'> > {};
+struct product_op : sor<one<'*'>, one<'/'>, one<'%'>> {};
+
+struct duration_unit : sor< one<'u'>,
+// TODO                            one<'µ'>, 
+                            string<'m', 's'>,
+                            one<'m'>,
+                            one<'h'>,
+                            one<'d'>,
+                            one<'w'> > {};
+
+template< typename E >
+struct exponent : opt_must< E, opt< one< '+', '-' > >, plus< digit > > {};
+
+template< typename D, typename E >
+struct numeral_three : seq< if_must< one< '.' >, plus< D > >, exponent< E > > {};
+template< typename D, typename E >
+struct numeral_two : seq< plus< D >, opt< one< '.' >, star< D > >, exponent< E > > {};
+template< typename D, typename E >
+struct numeral_one : sor< numeral_two< D, E >, numeral_three< D, E > > {};
+
+struct decimal : numeral_one< digit, one< 'e', 'E' > > {};
+struct hexadecimal : if_must< istring< '0', 'x' >, numeral_one< xdigit, one< 'p', 'P' > > > {};
+struct numeral : sor< hexadecimal, decimal > {};
+
+struct odigit : range< '0', '7' > {};
+struct hex_escape : if_must< one< 'x', 'X' >, xdigit, xdigit > {};
+struct oct_escape : if_must< odigit, odigit, odigit > {};
+struct char_escape : one< 'a', 'b', 'f', 'n', 'r', 't', 'v', '\\', '\'', '"' > {};
+struct escape : if_must< one< '\\' >, hex_escape, oct_escape, char_escape > {};
+struct char_value : sor< escape, not_one< '\n', '\0' > > {};  // NOTE: No need to exclude '\' from not_one<>, see escape rule.
+template< char Q >
+struct str_impl : if_must< one< Q >, until< one< Q >, char_value > > {};
+struct str_lit : sor< str_impl< '\'' >, str_impl< '"' > > {};
+
+struct duration_lit : seq<numeral, sps, duration_unit> {};
+
+struct expr;
+
+struct var_ref : identifier {};
+struct func_args : list_must<expr, comma, sp> {};
+struct func_call : seq<identifier, sps, one<'('>, sps, func_args, one<')'>> {};
+
+struct expr0 : sor<seq<one<'('>, sps, expr, sps, one<')'>>,
+                   func_call,
+                   var_ref,
+                   str_lit,
+                   duration_lit,
+                   numeral> {};
+struct product : seq<expr0, sps, star<seq<product_op, product>>> {};
+
+struct sum : seq<product, sps, star<seq<add_or_subtract_op, sps, sum>>> {};
+struct comparison : seq<sum, sps, star<seq<comparison_op, sps, sum>>> {};
+struct maybe_negation : sor<comparison, seq<tok_not, sps, maybe_negation>> {};
+struct conjunction : seq<maybe_negation, sps, star<seq<tok_and, sps, conjunction>>> {};
+struct disjunction : seq<conjunction, sps, star<seq<tok_or, sps, disjunction>>> {};
+struct expr : seq<disjunction> {};
+
+
+struct alias : seq<tok_as, sps, identifier> {};
+struct field : sor<seq<expr, opt<alias>>, tok_star> {};
+struct fields : list_must<field, comma, sp> {};
+
+struct measurement : identifier {};
+
+struct from_clause : seq<tok_from, sps, measurement> {};
+struct where_clause : seq<tok_where, sps, expr> {};
+
+struct dimensions : list_must<expr, comma, sp> {};
+struct groupby_clause : seq<tok_group, sps, tok_by, sps, dimensions> {};
+
+struct select_stmt : seq<tok_select, sps,
+                         fields, sps,
+                         from_clause, sps,
+                         opt<where_clause>,sps,
+                         opt<groupby_clause>, sps,
+                         opt<string<';'>>> {};
+
+struct fold_one_keep_content : parse_tree::apply<fold_one_keep_content> {
+            template< typename Node, typename... States >
+            static void transform( std::unique_ptr< Node >& n, States&&... st ) noexcept( noexcept( n->children.size(), n->Node::remove_content( st... ) ) )
+            {
+               if( n->children.size() == 1 ) {
+                  n = std::move( n->children.front() );
+               }
+            }
+};
+
+template<typename Rule>
+using selector = parse_tree::selector<Rule,
+   parse_tree::store_content::on<
+     func_call,
+     var_ref,
+     func_args,
+     fields,
+     duration_lit,
+     select_stmt,
+     from_clause,
+     where_clause,
+     groupby_clause,
+     numeral,
+     str_lit,
+     identifier,
+     duration_unit,
+     comparison_op,
+     tok_not,
+     tok_star,
+     add_or_subtract_op,
+     product_op,
+     measurement>,
+   fold_one_keep_content::on<
+     expr,
+     expr0,
+     disjunction,
+     conjunction,
+     product,
+     sum,
+     maybe_negation,
+     comparison>>;
+
+
+
+}
+}
+}
+
+#ifdef ENABLE_NODE_POOLING
+
+namespace tao {
+namespace TAO_PEGTL_NAMESPACE {
+namespace parse_tree {
+
+namespace internal {
+
+template<>
+struct state<influxql::ast_node>
+{
+  using Node = influxql::ast_node;
+  std::vector< std::unique_ptr< Node > > stack;
+  std::vector< std::unique_ptr< Node > > pool;
+  int pool_hits=0, pool_misses=0;
+  size_t max_stack_size = 0;
+
+  state()
+  {
+    emplace_back();
+  }
+
+  ~state() {
+    VLOG(3) << "hits: " << pool_hits << " misses: " << pool_misses
+            << " max stack: " << max_stack_size;
+  }
+
+  void emplace_back()
+  {
+    std::unique_ptr<Node> inst;
+    if (!pool.empty()) {
+      inst = std::move(pool.back());
+      pool.pop_back();
+      inst->reset(&pool);
+      pool_hits++;
+    } else {
+      inst.reset(new Node);
+      pool_misses++;
+    }
+    stack.emplace_back(std::move(inst));
+    max_stack_size = std::max(stack.size(), max_stack_size);
+  }
+
+  std::unique_ptr< Node >& back() noexcept
+  {
+    assert( !stack.empty() );
+    return stack.back();
+  }
+
+  void pop_back() noexcept
+  {
+    assert( !stack.empty() );
+    auto popped = std::move(stack.back());
+    if (popped) {
+      pool.emplace_back(std::move(popped));
+    }
+    stack.pop_back();
+  }
+};
+
+}
+}
+}
+}
+
+#endif
 
 namespace kudu {
 namespace tsdb {
@@ -51,157 +272,19 @@ namespace influxql {
 
 namespace {
 
-static const char* kGrammar = R"(
-SelectStmt <- 'select'i Fields FromClause WhereClause? GroupByClause? ';'?
+namespace pegql = ::pegtl::influxql;
 
-WhereClause <- 'where'i Expr
+using AstNode = std::unique_ptr< pegql::ast_node >;
 
-Fields <- Field (',' Field)*
-Field <- Expr Alias? / Star
-Alias <- 'AS' Identifier
-
-FromClause <- 'from'i Measurement
-GroupByClause <- 'group by'i Dimensions
-
-Dimension <- Expr
-Dimensions <- Dimension (',' Dimension)*
-
-# Expressions
-VarRef <- Measurement
-FuncCall <- Identifier '(' FuncArgs? ')'
-FuncArgs <- Expr (',' Expr)*
-Expr0 <- '(' Expr ')' / FuncCall / VarRef / StringLiteral / DurationLiteral / DoubleLiteral / IntLiteral
-Product <- Expr0 (ProductOp Product)?
-Sum <- Product (AddOrSubtractOp Sum)?
-Comparison <- Sum (ComparisonOp Sum)?
-MaybeNegation <- Comparison / ('not'i MaybeNegation)
-Conjunction <- MaybeNegation ('and'i Conjunction)*
-Disjunction <- Conjunction ('or' Disjunction)*
-Expr <- Disjunction
-ComparisonOp <-  <'<=' / '<' / '=' / '>=' / '>'>
-AddOrSubtractOp <- <'+' / '-'>
-ProductOp <- <'*' / '/' / '%'>
-
-# Identifiers
-Measurement     <- MeasurementName
-MeasurementName <- Identifier
-UnquotedIdentifier <- < [a-zA-Z][a-zA-Z0-9_]* >
-QuotedIdentifier <- StringLiteral
-Identifier <- UnquotedIdentifier / QuotedIdentifier
-
-# Literals
-doublequote <- '"'
-quote <- '\''
-backslash <- '\\'
-
-StringLiteral <- quote <(!quote Char)*> quote
-Char   <- backslash ( doublequote  # '\' Escapes
-                        / quote
-                        / backslash
-                        / [bfnrt]
-                        / [0-2][0-7][0-7]
-                        / [0-7][0-7]?
-                        / 'x' Hex Hex
-                        / 'u' Hex Hex Hex Hex
-                        / 'U' Hex Hex Hex Hex Hex Hex Hex Hex
-                        )
-             / . # Or any char, really
-Hex     <- [0-9a-fA-F]
-
-DurationLiteral <- IntLiteral DurationUnit
-IntLiteral <- <( '+' / '-' )?[1-9][0-9]*>
-
-DoubleLiteral <- <IntLiteral '.' [0-9]+>
-
-# If adding a new unit, update DurationLiteralExpr::ToMicroseconds()
-# accordingly.
-DurationUnit <- 'u' / 'µ' / 'ms' / 's' / 'm' / 'h' / 'd' / 'w'
-
-Star <- '*'
-
-%whitespace <- [ \t\r\n]*
-)";
-
-static __thread Arena* tls_arena_;
-
-struct AstOptimizer {
-  AstOptimizer() {
-    no_opt.set_empty_key("");
-    for (auto s : {"Fields", "FromClause", "WhereClause", "FuncArgs",
-            "GroupByClause", "Dimensions"}) {
-      no_opt.emplace(s);
-    }
-  }
-
-  bool ShouldEliminateSingleChild(const string& name) {
-    return !ContainsKey(no_opt, name);
-  }
-
-  google::dense_hash_set<string> no_opt;
-};
-
-static AstOptimizer opt;
-
-struct RawAst {
-  static RawAst* NewNodeInTLSArena(peg::SemanticValues& sv) {
-    auto ast = tls_arena_->NewObject<RawAst>();
-    ast->is_token = false;
-    if (sv.size() == 1 && opt.ShouldEliminateSingleChild(sv.name())) {
-      return peg::any_cast<RawAst*>(sv[0]);
-    }
-
-    RawAst** child_storage = static_cast<RawAst**>(
-        tls_arena_->AllocateBytesAligned(sizeof(RawAst*) * sv.size(),
-                                         alignof(RawAst*)));
-    RawAst** dst = child_storage;
-    for (const auto& child : sv) {
-      *dst++ = peg::any_cast<RawAst*>(child);
-    }
-    ast->nodes = {child_storage, sv.size()};
-    tls_arena_->RelocateStringPiece(sv.name(), &ast->name);
-    return ast;
-  }
-  static RawAst* NewTokenInTLSArena(peg::SemanticValues& sv) {
-    auto ast = tls_arena_->NewObject<RawAst>();
-    ast->is_token = true;
-    tls_arena_->RelocateStringPiece(sv.name(), &ast->name);
-    ast->token = {sv.tokens[0].first, (int)sv.tokens[0].second};
-    return ast;
-  }
-
-  // TODO(todd) implement
-  int line() const { return -1; }
-  int column() const { return -1; }
-
-  bool is_token;
-  StringPiece name;
-
-  // TODO(todd) implement parsed exprs using stringpiece to avoid calling as_string()
-  // on this
-  StringPiece token;
-  ArrayView<RawAst*> nodes;
-};
-
-void EnableAstRules(peg::parser* parser) {
-  for (const auto& name : parser->get_rule_names()) {
-    auto& rule = (*parser)[name.c_str()];
-    // how to handle getting arena at runtime? parer needs a context passed
-    if (rule.is_token()) {
-      rule.action = RawAst::NewTokenInTLSArena;
-    } else {
-      rule.action = &RawAst::NewNodeInTLSArena;
-    }
-  }
-}
-
-// Converts a peglib AST into our own parse tree
+// Converts a pegtl AST into our own parse tree
 class AstConverter {
  public:
-  explicit AstConverter(QContext* ctx)
-      : ctx_(ctx) {
+  AstConverter(QContext* ctx, StringPiece input)
+      : ctx_(ctx),
+        input_(input){
   }
 
-  Status ConvertSelect(const RawAst* ast,
+  Status ConvertSelect(const AstNode& ast,
                        SelectStmt** sel) {
     *sel = ctx_->Alloc<SelectStmt>();
     return ParseSelect(ast, *sel);
@@ -210,34 +293,37 @@ class AstConverter {
  private:
   QContext* ctx_;
 
-  static Status CheckAstName(const RawAst* ast, const string& expected) {
-    if (ast->name != expected) {
-      return ParseError(ast, Substitute("unexpected ast node $0, expected $1",
-                                        ast->name, expected));
+  template<class T>
+  Status CheckAstType(const AstNode& ast) {
+    if (!ast->is<T>()) {
+      return ParseError(ast, Substitute(
+          "unexpected ast node $0, expected $1",
+          ast->name(),
+          TAO_PEGTL_NAMESPACE::internal::demangle(typeid(T).name())));
     }
     return Status::OK();
   }
 
-  static Status CheckNodeCount(const RawAst* ast, int n) {
-    if (ast->nodes.size() != n) {
-      return ParseError(ast, Substitute("expected $0 children of node $1",
-                                        n, ast->name));
+  Status CheckNodeCount(const AstNode& ast, int n) {
+    if (ast->children.size() != n) {
+      return ParseError(ast, Substitute("expected $0 children of node $1, got $2",
+                                        n, ast->name(), ast->children.size()));
     }
     return Status::OK();
   }
 
-  Status ParseFields(const RawAst* ast, vector<Expr*>* fields) {
-    RETURN_NOT_OK(CheckAstName(ast, "Fields"));
-    if (ast->nodes.empty()) {
+  Status ParseFields(const AstNode& ast, vector<Expr*>* fields) {
+    RETURN_NOT_OK(CheckAstType<pegql::fields>(ast));
+    if (ast->children.empty()) {
       return ParseError(ast, "expected at least one field");
     }
     return ParseChildrenAsExprs(ast, fields);
   }
 
-  Status ParseChildrenAsExprs(const RawAst* parent,
+  Status ParseChildrenAsExprs(const AstNode& parent,
                               vector<Expr*>* exprs) {
     exprs->clear();
-    for (const auto& n : parent->nodes) {
+    for (const auto& n : parent->children) {
       Expr* e;
       RETURN_NOT_OK(ParseExpr(n, &e));
       exprs->push_back(e);
@@ -245,16 +331,16 @@ class AstConverter {
     return Status::OK();
   }
 
-  Status ParseExpr(const RawAst* ast, Expr** expr) {
+  Status ParseExpr(const AstNode& ast, Expr** expr) {
     // ============================================================
     // Identifier.
     // ============================================================
-    if (ast->name == "UnquotedIdentifier") {
-      *expr = ctx_->Alloc<FieldRefExpr>(ast->token.as_string());
+    if (ast->is<pegql::var_ref>()) {
+      *expr = ctx_->Alloc<FieldRefExpr>(ast->string());
       return Status::OK();
     }
 
-    if (ast->name == "Star") {
+    if (ast->is<pegql::tok_star>()) {
       *expr = ctx_->Alloc<StarExpr>();
       return Status::OK();
     }
@@ -262,34 +348,36 @@ class AstConverter {
     // ============================================================
     // Function call.
     // ============================================================
-    if (ast->name == "FuncCall") {
+    if (ast->is<pegql::func_call>()) {
+      RETURN_NOT_OK(CheckNodeCount(ast, 2));
       vector<Expr*> exprs;
-      RETURN_NOT_OK(ParseChildrenAsExprs(ast->nodes[1], &exprs));
-      *expr = ctx_->Alloc<CallExpr>(ast->nodes[0]->token.as_string(), std::move(exprs));
+      RETURN_NOT_OK(ParseChildrenAsExprs(ast->children[1], &exprs));
+      *expr = ctx_->Alloc<CallExpr>(ast->children[0]->string(), std::move(exprs));
       return Status::OK();
     }
 
     // ============================================================
     // Binary operators.
     // ============================================================
-    if (ast->name == "Sum" ||
-        ast->name == "Product" ||
-        ast->name == "Comparison") {
+    if (ast->is<pegql::sum>() ||
+        ast->is<pegql::product>() ||
+        ast->is<pegql::comparison>()) {
       RETURN_NOT_OK(CheckNodeCount(ast, 3));
       Expr* l;
       Expr* r;
-      RETURN_NOT_OK(ParseExpr(ast->nodes[0], &l));
-      RETURN_NOT_OK(ParseExpr(ast->nodes[2], &r));
-      *expr = ctx_->Alloc<BinaryExpr>(l, r, ast->nodes[1]->token.as_string());
+      RETURN_NOT_OK(ParseExpr(ast->children[0], &l));
+      RETURN_NOT_OK(ParseExpr(ast->children[2], &r));
+      *expr = ctx_->Alloc<BinaryExpr>(l, r, ast->children[1]->string());
       return Status::OK();
     }
 
     // ============================================================
     // AND/OR
     // ============================================================
-    if (ast->name == "Conjunction" ||
-        ast->name == "Disjunction") {
-      auto mode = (ast->name == "Conjunction") ? BooleanExpr::CONJUNCTION : BooleanExpr::DISJUNCTION;
+    if (ast->is<pegql::conjunction>() ||
+        ast->is<pegql::disjunction>()) {
+      auto mode = ast->is<pegql::conjunction>() ?
+                   BooleanExpr::CONJUNCTION : BooleanExpr::DISJUNCTION;
       vector<Expr*> exprs;
       RETURN_NOT_OK(ParseChildrenAsExprs(ast, &exprs));
 
@@ -314,114 +402,136 @@ class AstConverter {
     // ============================================================
     // Literals
     // ============================================================
-    if (ast->name == "IntLiteral") {
-      int64_t val;
-      if (!safe_strto64(ast->token.data(), ast->token.size(), &val)) {
-        return ParseError(ast, "bad int literal");
+    if (ast->is<pegql::numeral>()) {
+      int64_t i_val;
+      if (safe_strto64(ast->string_piece().data(), ast->string_piece().size(), &i_val)) {
+        *expr = ctx_->Alloc<IntLiteralExpr>(i_val);
+        return Status::OK();
       }
-      *expr = ctx_->Alloc<IntLiteralExpr>(val);
-      return Status::OK();
+      double d_val;
+      if (safe_strtod(ast->string(), &d_val)) {
+        *expr = ctx_->Alloc<DoubleLiteralExpr>(d_val);
+        return Status::OK();
+      }
+      return ParseError(ast, "bad numeral literal");
     }
 
-    if (ast->name == "DoubleLiteral") {
-      double val;
-      if (!safe_strtod(ast->token.as_string(), &val)) {
-        return ParseError(ast, "bad int literal");
-      }
-      *expr = ctx_->Alloc<DoubleLiteralExpr>(val);
-      return Status::OK();
-    }
-
-    if (ast->name == "DurationLiteral") {
+    if (ast->is<pegql::duration_lit>()) {
       RETURN_NOT_OK(CheckNodeCount(ast, 2));
-      RETURN_NOT_OK(CheckAstName(ast->nodes[0], "IntLiteral"));
-      RETURN_NOT_OK(CheckAstName(ast->nodes[1], "DurationUnit"));
+      RETURN_NOT_OK(CheckAstType<pegql::numeral>(ast->children[0]));
+      RETURN_NOT_OK(CheckAstType<pegql::duration_unit>(ast->children[1]));
       int64_t val;
-      if (!safe_strto64(ast->nodes[0]->token.data(), ast->nodes[0]->token.size(), &val)) {
-        return ParseError(ast, "bad int literal");
+      if (!safe_strto64(ast->children[0]->string_piece().data(),
+                        ast->children[0]->string_piece().size(), &val)) {
+        return ParseError(ast, "bad int literal in duration"); // TODO is '2.5m' supported?
       }
-      *expr = ctx_->Alloc<DurationLiteralExpr>(val, ast->nodes[1]->token.as_string());
+      *expr = ctx_->Alloc<DurationLiteralExpr>(val, ast->children[1]->string());
       return Status::OK();
     }
 
-    if (ast->name == "StringLiteral") {
-      *expr = ctx_->Alloc<StringLiteralExpr>(ast->token.as_string());
+    if (ast->is<pegql::str_lit>()) {
+      auto sp = ast->string_piece();
+      // Remove the leading and trailing quote characters.
+      CHECK_GE(sp.size(), 2);
+      CHECK_EQ(sp[0], sp[sp.size() - 1]);
+      sp.remove_prefix(1);
+      sp.remove_suffix(1);
+      string unescaped, err;
+      if (!strings::CUnescape(sp, &unescaped, &err)) {
+        return ParseError(ast, Substitute("illegal string literal: $0", err));
+      }
+      *expr = ctx_->Alloc<StringLiteralExpr>(std::move(unescaped));
       return Status::OK();
     }
 
-    return ParseError(ast, Substitute("unexpected expression AST node $0", ast->name));
+    return ParseError(ast, Substitute("unexpected expression AST node $0", ast->name()));
   }
 
-  Status ParseFrom(const RawAst* ast, FromClause* ret) {
+  Status ParseFrom(const AstNode& ast, FromClause* ret) {
     RETURN_NOT_OK(CheckNodeCount(ast, 1));
-    const auto& expr = ast->nodes[0];
-    RETURN_NOT_OK(CheckAstName(expr, "UnquotedIdentifier"));
-    ret->measurement = expr->token.as_string();
+    const auto& expr = ast->children[0];
+    RETURN_NOT_OK(CheckAstType<pegql::measurement>(expr));
+    ret->measurement = expr->string();
     return Status::OK();
   }
 
-  Status ParseSelect(const RawAst* ast, SelectStmt* ret) {
-    for (const auto& n : ast->nodes) {
-      if (n->name == "Fields") {
+  Status ParseSelect(const AstNode& ast, SelectStmt* ret) {
+    if (ast->is_root() && ast->children.size() == 1) {
+      return ParseSelect(ast->children[0], ret);
+    }
+    for (const auto& n : ast->children) {
+      if (n->is<pegql::fields>()) {
         RETURN_NOT_OK(ParseFields(n, &ret->select_exprs_));
-      } else if (n->name == "FromClause") {
+      } else if (n->is<pegql::from_clause>()) {
         RETURN_NOT_OK(ParseFrom(n, &ret->from_));
-      } else if (n->name == "WhereClause") {
+      } else if (n->is<pegql::where_clause>()) {
         RETURN_NOT_OK(CheckNodeCount(n, 1));
-        RETURN_NOT_OK(ParseExpr(n->nodes[0], &ret->where_));
-      } else if (n->name == "GroupByClause") {
-        RETURN_NOT_OK(CheckNodeCount(n, 1));
-        RETURN_NOT_OK(ParseChildrenAsExprs(n->nodes[0], &ret->group_by_));
+        RETURN_NOT_OK(ParseExpr(n->children[0], &ret->where_));
+      } else if (n->is<pegql::groupby_clause>()) {
+        RETURN_NOT_OK(ParseChildrenAsExprs(n, &ret->group_by_));
       } else {
-        return ParseError(n, Substitute("unexpected child $0 of select statement", n->name));
+        return ParseError(n, Substitute("unexpected child $0 of select statement", n->name()));
       }
     }
     return Status::OK();
   }
 
-  static Status ParseError(const RawAst* ast, const string& str) {
+  Status ParseError(const AstNode& ast, const string& err_str) {
+    int err_begin = ast->begin().byte;
+    int ctx_begin = std::max<int>(0, err_begin - 10);
+    int err_end = ast->has_content() ? ast->end().byte : err_begin;
+    int ctx_end = std::min<int>(err_end + 10, input_.size());
+
+    StringPiece ctx(input_, ctx_begin, ctx_end - ctx_begin);
+    string tildes;
+    tildes.append(err_begin - ctx_begin, ' ');
+    if (err_end != err_begin) {
+      tildes.append(err_end - err_begin, '~');
+    } else {
+      tildes.push_back('^');
+    }
+
     return Status::InvalidArgument(Substitute(
-        "parse error at $0:$1 (token '$2'): $3",
-        ast->line(), ast->column(), ast->token, str));
+        "parse error at  $0:$1 (token '$2'): $3\n$4\n$5",
+        ast->begin().line, ast->begin().byte_in_line,
+        ast->has_content() ? ast->string_piece() : "",
+        err_str,
+        ctx,
+        tildes));
   }
+
+  StringPiece input_;
 };
 
-
-peg::parser* GetParser() {
-  static std::once_flag once;
-  static peg::parser* parser;
-  std::call_once(once, []() {
-                         parser = new peg::parser();
-                         CHECK(parser->load_grammar(kGrammar));
-                         EnableAstRules(parser);
-                       });
-  return parser;
-}
 
 } // anonymous namespace
 
 Parser::Parser(QContext* ctx)
     : ctx_(ctx) {
-  parser_.reset(new peg::parser(*GetParser()));
-  parser_->log = [](size_t line, size_t col, const string& msg) {
-                   LOG(WARNING) << line << ":" << col << ": " << msg;
-                 };
-  /*  parser_->enable_trace([](const char* name, const char* s, size_t n, const peg::SemanticValues& sv, const peg::Context& c, const peg::any& dt) {
-                          LOG(INFO) << "trace: " << name << string(s, std::min<size_t>(n, 10));
-                          });*/
 }
 
 Parser::~Parser() {
 }
 
 Status Parser::ParseSelectStatement(const string& q, SelectStmt** sel) {
-  tls_arena_ = ctx_->arena();
-  SCOPED_CLEANUP({ tls_arena_ = nullptr; });
-  RawAst* ast;
-  if (!parser_->parse(q.c_str(), ast)) {
+  pegtl::memory_input<> in(q, __FILE__);
+  using only_select = pegtl::must<pegql::select_stmt, pegtl::eof>;
+  auto ast = pegtl::parse_tree::parse<only_select,
+                                      pegql::ast_node,
+                                      pegql::selector>(in);
+  if (!ast) {
     return Status::InvalidArgument("failed to parse");
   }
-  return AstConverter(ctx_).ConvertSelect(ast, sel);
+  Status s = AstConverter(ctx_, q).ConvertSelect(ast, sel);
+  if (!s.ok()) {
+    pegtl::parse_tree::print_dot(LOG(INFO), *ast);
+
+    LOG(INFO) << "full AST:";
+    pegtl::memory_input<> in2(q, __FILE__);
+    auto full_ast = pegtl::parse_tree::parse<only_select, pegql::ast_node>(in2);
+    pegtl::parse_tree::print_dot(LOG(INFO), *full_ast);
+  }
+  return s;
 }
 
 
