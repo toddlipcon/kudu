@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -28,7 +29,6 @@
 #include <utility>
 #include <vector>
 
-#include <boost/bind.hpp>
 #include <gflags/gflags.h>
 
 #include "kudu/gutil/dynamic_annotations.h"
@@ -192,7 +192,7 @@ MaintenanceManager::~MaintenanceManager() {
 Status MaintenanceManager::Start() {
   CHECK(!monitor_thread_);
   RETURN_NOT_OK(Thread::Create("maintenance", "maintenance_scheduler",
-      boost::bind(&MaintenanceManager::RunSchedulerThread, this),
+      std::bind(&MaintenanceManager::RunSchedulerThread, this),
       &monitor_thread_));
   return Status::OK();
 }
@@ -326,7 +326,7 @@ bool MaintenanceManager::FindAndLaunchOp(std::unique_lock<Mutex>* guard) {
   LOG_AND_TRACE_WITH_PREFIX("maintenance", INFO)
       << Substitute("Scheduling $0: $1", op->name(), note);
   // Run the maintenance operation.
-  CHECK_OK(thread_pool_->SubmitFunc(boost::bind(&MaintenanceManager::LaunchOp, this, op)));
+  CHECK_OK(thread_pool_->SubmitFunc(std::bind(&MaintenanceManager::LaunchOp, this, op)));
 
   return true;
 }

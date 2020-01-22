@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_set>
 
+#include <boost/function.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/intrusive/list_hook.hpp>
 #include <gtest/gtest_prod.h>
@@ -35,11 +36,6 @@
 #include "kudu/util/monotime.h"
 #include "kudu/util/mutex.h"
 #include "kudu/util/status.h"
-
-namespace boost {
-template <typename Signature>
-class function;
-} // namespace boost
 
 namespace kudu {
 

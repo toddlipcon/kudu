@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -35,8 +36,6 @@
 #include <utility>
 #include <vector>
 
-#include <boost/bind.hpp>
-#include <boost/smart_ptr/shared_ptr.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
@@ -64,8 +63,8 @@
 #include "kudu/util/url-coding.h"
 #include "kudu/util/web_callback_registry.h"
 
-using boost::bind;
-using boost::mem_fn;
+using std::bind;
+using std::mem_fn;
 using std::ostringstream;
 using std::pair;
 using std::shared_ptr;
@@ -308,7 +307,7 @@ Status ThreadMgr::StartInstrumentation(const scoped_refptr<MetricEntity>& metric
 
   if (web) {
     auto thread_callback = bind<void>(mem_fn(&ThreadMgr::ThreadPathHandler),
-                                      this, _1, _2);
+                                      this, std::placeholders::_1, std::placeholders::_2);
     DCHECK_NOTNULL(web)->RegisterPathHandler("/threadz", "Threads", thread_callback,
                                              /* is_styled= */ true,
                                              /* is_on_nav_bar= */ true);
