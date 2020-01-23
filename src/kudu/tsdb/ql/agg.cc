@@ -29,6 +29,8 @@
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/strcat.h"
+#include "kudu/tsdb/ql/qcontext.h"
+#include "kudu/util/scoped_cleanup.h"
 #include "kudu/util/status.h"
 
 using std::pair;
@@ -194,10 +196,12 @@ class AggFactory {
 
 class MultiAggExpressionEvaluator : public TSBlockConsumer {
  public:
-  MultiAggExpressionEvaluator(const vector<AggSpec>& agg_specs,
+  MultiAggExpressionEvaluator(QContext* ctx,
+                              const vector<AggSpec>& agg_specs,
                               Bucketer bucketer,
                               TSBlockConsumer* downstream )
-      : bucketer_(std::move(bucketer)),
+      : ctx_(ctx),
+        bucketer_(std::move(bucketer)),
         downstream_(CHECK_NOTNULL(downstream)) {
     static AggFactory* agg_factory = new AggFactory();
     for (const auto& spec : agg_specs) {
@@ -209,7 +213,7 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
     }
   }
 
-  Status Consume(TSBlock* block) override {
+  Status Consume(scoped_refptr<const TSBlock> block) override {
     // TODO(todd) move this to persist across calls instead of reallocating.
     vector<int> bucket_indexes;
     bucket_indexes.resize(block->times.size());
@@ -219,29 +223,29 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
 
     for (const auto& p : aggs_) {
       const auto& agg = p.second;
-      RETURN_NOT_OK(agg->Consume(*block, bucket_indexes));
+      RETURN_NOT_OK(agg->Consume(*block.get(), bucket_indexes));
     }
     return Status::OK();
   }
 
   Status Finish() override {
     CHECK(!done_);
-    TSBlock out_block;
+    scoped_refptr<TSBlock> out_block = ctx_->NewTSBlock();
     // All input blocks have been consumed. Finalize aggregates and
     // output.
-    out_block.times = bucketer_.bucket_times();
+    out_block->times = bucketer_.bucket_times();
     for (const auto& p : aggs_) {
-      out_block.AddColumn(StrCat(p.second->name(), "_", p.first),
+      out_block->AddColumn(StrCat(p.second->name(), "_", p.first),
                           p.second->TakeResults());
     }
-    RETURN_NOT_OK(downstream_->Consume(&out_block));
+    RETURN_NOT_OK(downstream_->Consume(std::move(out_block)));
     RETURN_NOT_OK(downstream_->Finish());
     done_ = true;
     return Status::OK();
   }
 
  private:
-
+  QContext* const ctx_;
   const Bucketer bucketer_;
   TSBlockConsumer* const downstream_;
   vector<pair<string, unique_ptr<Aggregator>>> aggs_;
@@ -250,14 +254,16 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
 };
 
 Status CreateMultiAggExpressionEvaluator(
+    QContext* ctx,
     const vector<AggSpec>& aggs,
     Bucketer bucketer,
     TSBlockConsumer* downstream,
     std::unique_ptr<TSBlockConsumer>* eval) {
-  eval->reset(new MultiAggExpressionEvaluator(aggs, std::move(bucketer), downstream));
+  eval->reset(new MultiAggExpressionEvaluator(ctx, aggs, std::move(bucketer), downstream));
   return Status::OK();
 }
 
 } // namespace influxql
 } // namespace tsdb
 } // namespace kudu
+

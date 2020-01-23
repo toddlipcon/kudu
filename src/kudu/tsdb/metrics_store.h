@@ -57,8 +57,8 @@ class MetricsStore : public MetricsColumnSource {
               SeriesId series_id, int64_t start_time, int64_t end_time,
               const std::vector<StringPiece>& project,
               const std::vector<influxql::Predicate>& preds,
-              std::vector<int64_t>* result_timess,
-              std::vector<InfluxVec>* result_vals);
+              influxql::QContext* ctx,
+              influxql::TSBlockConsumer* consumer);
 
   Status GetColumnsForMeasurement(
       StringPiece measurement,

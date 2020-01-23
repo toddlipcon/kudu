@@ -248,7 +248,7 @@ Status Planner::PlanProjection(const AnalyzedSelectStmt* asel,
     fields.emplace_back(fieldref->field_);
   }
   *factory = [=](TSBlockConsumer* downstream, unique_ptr<TSBlockConsumer>* eval) {
-               return CreateProjectionEvaluator(fields, downstream, eval);
+               return CreateProjectionEvaluator(ctx_, fields, downstream, eval);
              };
   return Status::OK();
 }
@@ -281,7 +281,7 @@ Status Planner::PlanSelectAggregate(const AnalyzedSelectStmt* asel,
                     asel->dimensions->time_granularity_us.value_or(std::numeric_limits<int64_t>::max()));
 
   *factory = [=](TSBlockConsumer* downstream, unique_ptr<TSBlockConsumer>* eval) {
-               return CreateMultiAggExpressionEvaluator(aggs, bucketer, downstream, eval);
+               return CreateMultiAggExpressionEvaluator(ctx_, aggs, bucketer, downstream, eval);
              };
   return Status::OK();
 }

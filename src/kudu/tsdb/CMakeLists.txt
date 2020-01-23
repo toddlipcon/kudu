@@ -40,6 +40,8 @@ target_link_libraries(kudu_tsdb
   webserver
   kudu_client
   kudu_tsdb_common)
+target_compile_options(kudu_tsdb
+  PRIVATE --std=c++14)
 
 add_library(kudu_influxql
   ql/analysis.cc
@@ -48,8 +50,8 @@ add_library(kudu_influxql
   ql/expr.cc
   ql/influxql.cc
   ql/planner.cc )
-set_source_files_properties(ql/influxql.cc
-  PROPERTIES COMPILE_FLAGS --std=c++17)
+target_compile_options(kudu_influxql
+  PRIVATE --std=c++14)
 
 target_link_libraries(kudu_influxql
   gutil
@@ -61,6 +63,8 @@ target_link_libraries(kudu_influxql
 add_executable(kudu-tsdbd tsdbd.cc)
 target_link_libraries(kudu-tsdbd
   kudu_tsdb kudu_influxql)
+target_compile_options(kudu-tsdbd
+  PRIVATE --std=c++14)
 
 SET_KUDU_TEST_LINK_LIBS(kudu_tsdb)
 ADD_KUDU_TEST(influx_wire_protocol-test)

@@ -17,7 +17,10 @@
 #pragma once
 
 #include "kudu/gutil/macros.h"
+#include "kudu/gutil/ref_counted.h"
 #include "kudu/util/memory/arena.h"
+#include "kudu/tsdb/ql/exec.h"
+
 #include <type_traits>
 
 namespace kudu {
@@ -39,9 +42,9 @@ class QContext {
  public:
   explicit QContext(SeriesStore* series_store,
                     MetricsColumnSource* column_source)
-      : arena_(1024),
-        series_store_(series_store),
-        column_source_(column_source) {
+      : series_store_(series_store),
+        column_source_(column_source),
+        arena_(1024) {
   }
   ~QContext();
 
@@ -65,12 +68,19 @@ class QContext {
     arena_.Reset();
   }
 
+  scoped_refptr<TSBlock> NewTSBlock() {
+    return scoped_refptr<TSBlock>(new TSBlock());
+  }
+
+
  private:
+  SeriesStore* const series_store_;
+  MetricsColumnSource* const column_source_;
+
   Arena arena_;
   DtorNodeBase* dtor_head_ = nullptr;
 
-  SeriesStore* const series_store_;
-  MetricsColumnSource* const column_source_;
+  std::vector<scoped_refptr<TSBlock>> block_pool_;
 
   struct DtorNodeBase {
     virtual void destruct() = 0;

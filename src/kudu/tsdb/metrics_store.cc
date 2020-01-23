@@ -26,6 +26,7 @@
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/util.h"
 #include "kudu/tsdb/influx_wire_protocol.h"
+#include "kudu/tsdb/ql/qcontext.h"
 #include "kudu/util/bitmap.h"
 #include "kudu/util/rw_mutex.h"
 
@@ -52,6 +53,7 @@ using std::pair;
 namespace kudu {
 namespace tsdb {
 
+using influxql::TSBlock;
 using influxql::Predicate;
 
 namespace {
@@ -199,13 +201,155 @@ Status MetricsStore::CreateTable(const InfluxMeasurement& measurement) {
   return Status::OK();
 }
 
+Status AddPredicates(KuduTable* table,
+                     const vector<Predicate>& preds,
+                     KuduScanner* scanner) {
+  for (const auto& p : preds) {
+    KuduPredicate::ComparisonOp op;
+    if (p.op == ">") {
+      op = KuduPredicate::GREATER;
+    } else {
+      return Status::InvalidArgument("bad predicate", p.op);
+    }
+    KuduColumnSchema col_schema;
+    if (!table->schema().HasColumn(p.field, &col_schema)) {
+      return Status::InvalidArgument("predicate on missing field", p.field);
+    }
+
+    KuduValue* pval;
+    if (auto* v = boost::get<int64_t>(&p.val)) {
+      switch (col_schema.type()) {
+        case KuduColumnSchema::DataType::INT64:
+          pval = KuduValue::FromInt(*v);
+          break;
+        case KuduColumnSchema::DataType::DOUBLE:
+          pval = KuduValue::FromDouble(static_cast<double>(*v));
+          break;
+        default:
+          // TODO(todd) better error message
+          return Status::NotSupported("mismatched type for predicate on field", p.field);
+      }
+    } else if (auto* v = boost::get<string>(&p.val)) {
+      pval = KuduValue::CopyString(*v);
+    } else if (auto* v = boost::get<double>(&p.val)) {
+      switch (col_schema.type()) {
+        case KuduColumnSchema::DataType::INT64:
+          // TODO(todd): truncating cast is probably wrong here --
+          // eg:
+          //  "< 1.5" should turn into "<= 1" or "< 2".
+          //  ">= 1.1" should turn into "> 1" or ">= 2"
+          pval = KuduValue::FromInt(static_cast<int64_t>(*v));
+          break;
+        case KuduColumnSchema::DataType::DOUBLE:
+          pval = KuduValue::FromDouble(*v);
+          break;
+        default:
+          // TODO(todd) better error message
+          return Status::NotSupported("mismatched type for predicate on field", p.field);
+      }
+    } else {
+      return Status::NotSupported("unknown value for predicate on field", p.field);
+    }
+
+    KUDU_RETURN_NOT_OK(scanner->AddConjunctPredicate(
+        table->NewComparisonPredicate(
+            p.field, op, std::move(pval))));
+  }
+  return Status::OK();
+}
+
+struct ColDesc {
+  KuduColumnSchema::DataType type;
+  int proj_idx;
+  int data_offset;
+  bool nullable;
+};
+
+struct ProjectionInfo {
+  vector<string> col_names;
+  vector<ColDesc> int64_cols;
+  vector<ColDesc> double_cols;
+  vector<ColDesc> all_cols;
+  bool has_nullables = false;
+  int null_bitmap_offset;
+  int row_stride;
+};
+
+Status PrepareProjectionInfo(KuduTable* table,
+                             const std::vector<StringPiece>& project,
+                             ProjectionInfo* proj) {
+  proj->col_names.emplace_back("timestamp");
+
+  int offset = 0;
+  offset += sizeof(int64_t);
+  int i = 0;
+  for (const auto& sel_col_name : project) {
+    string sel_col_name_str = sel_col_name.as_string();
+    KuduColumnSchema cs;
+    if (!table->schema().HasColumn(sel_col_name_str, &cs)) {
+      return Status::InvalidArgument("column not found", sel_col_name);
+    }
+    ColDesc desc;
+    desc.type = cs.type();
+    desc.proj_idx = i + 1;
+    desc.data_offset = offset;
+    desc.nullable = cs.is_nullable();
+
+    switch (cs.type()) {
+      case KuduColumnSchema::INT64:
+        proj->int64_cols.push_back(desc);
+        offset += sizeof(int64_t);
+        break;
+      case KuduColumnSchema::DOUBLE:
+        proj->double_cols.push_back(desc);
+        offset += sizeof(double);
+        break;
+      default:
+        LOG(FATAL) << "bad column type for " << cs.name();
+        break;
+    }
+    proj->all_cols.push_back(desc);
+    proj->has_nullables |= desc.nullable;
+    proj->col_names.emplace_back(std::move(sel_col_name_str));
+    i++;
+  }
+
+  proj->null_bitmap_offset = offset;
+  offset += proj->has_nullables ? BitmapSize(proj->col_names.size()) : 0;
+  proj->row_stride = offset;
+  return Status::OK();
+}
+
+void SetupBlock(influxql::QContext* ctx,
+                const ProjectionInfo& proj_info,
+                int n_rows,
+                TSBlock* tsb) {
+  if (tsb->columns.empty()) {
+    for (auto& c : proj_info.all_cols) {
+      const auto& col_name = proj_info.col_names[c.proj_idx];
+      switch (c.type) {
+        case KuduColumnSchema::INT64:
+          tsb->AddColumn(col_name, InfluxVec::Empty<int64_t>());
+          break;
+        case KuduColumnSchema::DOUBLE:
+          tsb->AddColumn(col_name, InfluxVec::Empty<double>());
+          break;
+        default:
+          LOG(FATAL);
+      }
+    }
+  } else {
+    CHECK_EQ(tsb->columns.size(), proj_info.all_cols.size());
+  }
+  tsb->Reset(n_rows);
+}
 
 Status MetricsStore::Read(StringPiece metric_name,
                           SeriesId series_id, int64_t start_time, int64_t end_time,
                           const std::vector<StringPiece>& project,
                           const std::vector<Predicate>& preds,
-                          std::vector<int64_t>* result_times,
-                          std::vector<InfluxVec>* result_vals) {
+                          influxql::QContext* ctx,
+                          influxql::TSBlockConsumer* consumer) {
   client::sp::shared_ptr<KuduTable> table;
   RETURN_NOT_OK(FindTable(metric_name, &table));
 
@@ -220,172 +364,57 @@ Status MetricsStore::Read(StringPiece metric_name,
      table->NewComparisonPredicate(
       "timestamp", KuduPredicate::LESS_EQUAL, KuduValue::FromInt(end_time))));
 
-  for (const auto& p : preds) {
-      KuduPredicate::ComparisonOp op;
-      if (p.op == ">") {
-        op = KuduPredicate::GREATER;
-      } else {
-        return Status::InvalidArgument("bad predicate", p.op);
-      }
-      KuduColumnSchema col_schema;
-      if (!table->schema().HasColumn(p.field, &col_schema)) {
-        return Status::InvalidArgument("predicate on missing field", p.field);
-      }
+  RETURN_NOT_OK(AddPredicates(table.get(), preds, &scanner));
 
-      KuduValue* pval;
-      if (auto* v = boost::get<int64_t>(&p.val)) {
-        switch (col_schema.type()) {
-          case KuduColumnSchema::DataType::INT64:
-            pval = KuduValue::FromInt(*v);
-            break;
-          case KuduColumnSchema::DataType::DOUBLE:
-            pval = KuduValue::FromDouble(static_cast<double>(*v));
-            break;
-          default:
-            // TODO(todd) better error message
-            return Status::NotSupported("mismatched type for predicate on field", p.field);
-        }
-      } else if (auto* v = boost::get<string>(&p.val)) {
-        pval = KuduValue::CopyString(*v);
-      } else if (auto* v = boost::get<double>(&p.val)) {
-        switch (col_schema.type()) {
-          case KuduColumnSchema::DataType::INT64:
-            // TODO(todd): truncating cast is probably wrong here --
-            // eg:
-            //  "< 1.5" should turn into "<= 1" or "< 2".
-            //  ">= 1.1" should turn into "> 1" or ">= 2"
-            pval = KuduValue::FromInt(static_cast<int64_t>(*v));
-            break;
-          case KuduColumnSchema::DataType::DOUBLE:
-            pval = KuduValue::FromDouble(*v);
-            break;
-          default:
-            // TODO(todd) better error message
-            return Status::NotSupported("mismatched type for predicate on field", p.field);
-        }
-      } else {
-        return Status::NotSupported("unknown value for predicate on field", p.field);
-      }
+  ProjectionInfo proj_info;
+  RETURN_NOT_OK(PrepareProjectionInfo(table.get(), project, &proj_info));
 
-      KUDU_RETURN_NOT_OK(scanner.AddConjunctPredicate(
-          table->NewComparisonPredicate(
-              p.field, op, std::move(pval))));
-  }
-
-  vector<string> proj;
-  proj.emplace_back("timestamp");
-
-  result_times->clear();
-
-  const int n_sel = project.size();
-  result_vals->clear();
-  result_vals->resize(n_sel);
-
-  struct ColDesc {
-    KuduColumnSchema::DataType type;
-    int proj_idx;
-    int data_offset;
-    bool nullable;
-    InfluxVec* vec;
-  };
-  vector<ColDesc> int64_cols;
-  vector<ColDesc> double_cols;
-  int offset = 0;
-  int ts_offset = 0;
-  bool has_nullables = false;
-  offset += sizeof(int64_t);
-  int i = 0;
-  for (const auto& sel_col_name : project) {
-    string sel_col_name_str = sel_col_name.as_string();
-    KuduColumnSchema cs;
-    if (!table->schema().HasColumn(sel_col_name_str, &cs)) {
-      return Status::InvalidArgument("column not found", sel_col_name);
-    }
-    ColDesc desc;
-    desc.type = cs.type();
-    desc.proj_idx = i + 1;
-    desc.data_offset = offset;
-    desc.nullable = cs.is_nullable();
-    desc.vec = &(*result_vals)[i];
-
-    switch (cs.type()) {
-      case KuduColumnSchema::INT64:
-        (*result_vals)[i] = InfluxVec::WithNoNulls<int64_t>({});
-        int64_cols.emplace_back(std::move(desc));
-        offset += sizeof(int64_t);
-        break;
-      case KuduColumnSchema::DOUBLE:
-        (*result_vals)[i] = InfluxVec::WithNoNulls<double>({});
-        double_cols.emplace_back(std::move(desc));
-        offset += sizeof(double);
-        break;
-      default:
-        LOG(FATAL) << "bad column type for " << cs.name();
-        break;
-    }
-    has_nullables |= desc.nullable;
-    proj.emplace_back(std::move(sel_col_name_str));
-    i++;
-  }
-
-  int bitmap_offset = offset;
-  offset += has_nullables ? BitmapSize(proj.size()) : 0;
-  int row_stride = offset;
-
-  KUDU_RETURN_NOT_OK(scanner.SetProjectedColumnNames(proj));
+  KUDU_RETURN_NOT_OK(scanner.SetProjectedColumnNames(proj_info.col_names));
   // TODO(todd): currently the aggregation doesn't rely on order.
   // If we switch that, we need to turn on FaultTolerant.
   // KUDU_RETURN_NOT_OK(scanner.SetFaultTolerant());
   KUDU_RETURN_NOT_OK(scanner.Open());
 
-
   KuduScanBatch batch;
-  int dst_idx = 0;
+  scoped_refptr<TSBlock> ts_block(new TSBlock());
   while (scanner.HasMoreRows()) {
     KUDU_RETURN_NOT_OK(scanner.NextBatch(&batch));
     int n = batch.NumRows();
 
-    if (batch.direct_data().size() != n * row_stride) {
+    if (batch.direct_data().size() != n * proj_info.row_stride) {
       return Status::RuntimeError("unexpected batch data size");
     }
     const uint8_t* row_base = batch.direct_data().data();
-
-    for (auto& p : int64_cols) {
-      auto* v = p.vec->data_as<int64_t>();
-      ResizeForAppend(v, n);
-      ResizeForAppend(&p.vec->nulls, n);
-    }
-    for (auto& p : double_cols) {
-      auto* v = p.vec->data_as<double>();
-      ResizeForAppend(v, n);
-      ResizeForAppend(&p.vec->nulls, n);
-    }
-    ResizeForAppend(result_times, n);
+    CHECK(ts_block->HasOneRef());
+    SetupBlock(ctx, proj_info, n, ts_block.get());
 
     for (int i = 0; i < n; i++) {
-      // TODO(todd) check NULLs.
-      for (const auto& p : int64_cols) {
-        if (p.nullable && BitmapTest(row_base + bitmap_offset, p.proj_idx)) {
-          p.vec->set(dst_idx, nullptr);
+      const uint8_t* null_bitmap = row_base + proj_info.null_bitmap_offset;
+
+      for (const auto& p : proj_info.int64_cols) {
+        auto* v = &ts_block->columns[p.proj_idx - 1];
+        if (p.nullable && BitmapTest(null_bitmap, p.proj_idx)) {
+          v->set(i, nullptr);
         } else {
           int64_t val = UnalignedLoad<int64_t>(row_base + p.data_offset);
-          p.vec->set(dst_idx, val);
+          v->set(i, val);
         }
       }
-      for (const auto& p : double_cols) {
-        if (p.nullable && BitmapTest(row_base + bitmap_offset, p.proj_idx)) {
-          p.vec->set(dst_idx, nullptr);
+      for (const auto& p : proj_info.double_cols) {
+        auto* v = &ts_block->columns[p.proj_idx - 1];
+        if (p.nullable && BitmapTest(null_bitmap, p.proj_idx)) {
+          v->set(i, nullptr);
         } else {
           double val = UnalignedLoad<double>(row_base + p.data_offset);
-          p.vec->set(dst_idx, val);
+          v->set(i, val);
         }
       }
 
-      int64_t ts = UnalignedLoad<int64_t>(row_base + ts_offset);
-      (*result_times)[dst_idx] = ts;
-      dst_idx++;
-      row_base += row_stride;
+      int64_t ts = UnalignedLoad<int64_t>(row_base);
+      ts_block->times[i] = ts;
+      row_base += proj_info.row_stride;
     }
+    RETURN_NOT_OK(consumer->Consume(ts_block));
   }
   return Status::OK();
 }

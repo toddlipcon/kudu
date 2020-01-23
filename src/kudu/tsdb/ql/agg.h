@@ -90,6 +90,7 @@ struct AggSpec {
 };
 
 Status CreateMultiAggExpressionEvaluator(
+    QContext* ctx,
     const std::vector<AggSpec>& aggs,
     Bucketer bucketer,
     TSBlockConsumer* downstream,

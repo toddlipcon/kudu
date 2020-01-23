@@ -23,6 +23,7 @@
 #include <glog/logging.h>
 
 #include "kudu/gutil/bits.h"
+#include "kudu/gutil/ref_counted.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
@@ -56,6 +57,11 @@ struct InfluxVec {
   }
 
   template<class T>
+  static InfluxVec Empty() {
+    return WithNoNulls<T>({});
+  }
+
+  template<class T>
   const std::vector<T>* data_as() const {
     return boost::get<std::vector<T>>(&data);
   }
@@ -79,11 +85,21 @@ struct InfluxVec {
     nulls[i] = true;
     has_nulls = true;
   }
+
+  void Reset(int n_rows) {
+    has_nulls = false;
+    boost::apply_visitor([&](auto& v){
+                           v.resize(n_rows);
+                         }, data);
+    nulls.resize(n_rows);
+  }
 };
 
 namespace influxql {
 
-struct TSBlock {
+class QContext;
+
+struct TSBlock : public RefCounted<TSBlock> {
   InfluxVec& column(const std::string& name) {
     auto it = column_indexes.find(name);
     if (it == column_indexes.end()) {
@@ -115,6 +131,14 @@ struct TSBlock {
     times.clear();
   }
 
+  void Reset(int n_rows) {
+    times.resize(n_rows);
+    for (auto& c : columns) {
+      c.Reset(n_rows);
+    }
+  }
+
+
   std::vector<int64_t> times;
   std::unordered_map<std::string, int> column_indexes;
   std::vector<InfluxVec> columns;
@@ -123,8 +147,7 @@ struct TSBlock {
 
 class TSBlockConsumer {
  public:
-  // TODO(todd): figure out ownership of TSBlocks -- can consumer steal the data? mutate? etc.
-  virtual Status Consume(TSBlock* block) = 0;
+  virtual Status Consume(scoped_refptr<const TSBlock> block) = 0;
   virtual Status Finish() { return Status::OK(); }
 
   virtual ~TSBlockConsumer() = default;
@@ -132,27 +155,28 @@ class TSBlockConsumer {
 
 class BlockBuffer : public TSBlockConsumer {
  public:
-  Status Consume(TSBlock* block) override {
-    blocks_.emplace_back(std::move(*block));
+  Status Consume(scoped_refptr<const TSBlock> block) override {
+    blocks_.emplace_back(std::move(block));
     return Status::OK();
   }
 
-  TSBlock TakeSingleResult() {
+  scoped_refptr<const TSBlock> TakeSingleResult() {
     CHECK_EQ(blocks_.size(), 1);
-    TSBlock ret = std::move(blocks_[0]);
+    auto ret = std::move(blocks_[0]);
     blocks_.clear();
     return ret;
   }
 
-  std::vector<TSBlock> TakeResults() {
+  std::vector<scoped_refptr<const TSBlock>> TakeResults() {
     return std::move(blocks_);
   }
 
  private:
-  std::vector<TSBlock> blocks_;
+  std::vector<scoped_refptr<const TSBlock>> blocks_;
 };
 
 Status CreateProjectionEvaluator(
+    QContext* ctx,
     std::vector<std::string> fields,
     TSBlockConsumer* downstream,
     std::unique_ptr<TSBlockConsumer>* eval);

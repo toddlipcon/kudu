@@ -17,7 +17,10 @@
 
 #include <string>
 #include <vector>
+
 #include "kudu/tsdb/ql/exec.h"
+#include "kudu/tsdb/ql/qcontext.h"
+#include "kudu/util/scoped_cleanup.h"
 
 using std::vector;
 using std::string;
@@ -29,24 +32,26 @@ namespace influxql {
 
 class Projector : public TSBlockConsumer {
  public:
-  Projector(vector<string> fields, TSBlockConsumer* downstream)
-      : fields_(fields),
+  Projector(QContext* ctx, vector<string> fields, TSBlockConsumer* downstream)
+      : ctx_(ctx),
+        fields_(fields),
         downstream_(downstream) {
   }
 
-  Status Consume(TSBlock* block) override {
-    TSBlock projected;
+  Status Consume(scoped_refptr<const TSBlock> block) override {
+    auto projected = ctx_->NewTSBlock();
+
     for (const auto& f : fields_) {
       const auto* src_col = block->column_ptr_or_null(f);
       if (!src_col) {
         return Status::RuntimeError("missing input column to projection", f);
       }
       // TODO(todd): copy-on-write would make sense for column data
-      projected.AddColumn(f, *src_col);
+      // TODO(todd): could move assuming the src col was only referenced once.
+      projected->AddColumn(f, *src_col);
     }
-    // TODO(todd) copy-on-write
-    projected.times = std::move(block->times);
-    return downstream_->Consume(&projected);
+    projected->times = std::move(block->times);
+    return downstream_->Consume(std::move(projected));
   }
 
   Status Finish() override {
@@ -54,15 +59,17 @@ class Projector : public TSBlockConsumer {
   }
 
  private:
+  QContext* const ctx_;
   const vector<string> fields_;
   TSBlockConsumer* const downstream_;
 };
 
 Status CreateProjectionEvaluator(
+    QContext* ctx,
     std::vector<std::string> fields,
     TSBlockConsumer* downstream,
     std::unique_ptr<TSBlockConsumer>* eval) {
-  eval->reset(new Projector(std::move(fields), downstream));
+  eval->reset(new Projector(ctx, std::move(fields), downstream));
   return Status::OK();
 }
 

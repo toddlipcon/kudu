@@ -222,7 +222,7 @@ class Server {
 
   void WriteResponseSeries(const string& measurement_name,
                            const vector<pair<StringPiece,StringPiece>>& tags,
-                           const vector<TSBlock>& blocks,
+                           const vector<scoped_refptr<const TSBlock>>& blocks,
                            TimestampFormat ts_format,
                            JsonWriter* jw) {
     if (blocks.empty()) return;
@@ -242,7 +242,7 @@ class Server {
     jw->String("columns");
     jw->StartArray();
     jw->String("time");
-    for (const auto& m : blocks[0].column_names) {
+    for (const auto& m : blocks[0]->column_names) {
       jw->String(m);
     }
     jw->EndArray(); // columns
@@ -250,10 +250,10 @@ class Server {
     jw->StartArray();
     string ts_str;
     for (const auto& block : blocks) {
-      for (int i = 0; i < block.times.size(); i++) {
+      for (int i = 0; i < block->times.size(); i++) {
         jw->StartArray();
 
-        int64_t ts = block.times[i];
+        int64_t ts = block->times[i];
         switch (ts_format) {
           case TimestampFormat::RFC3339:
             ts_str.clear();
@@ -271,7 +271,7 @@ class Server {
             break;
         }
 
-        for (const auto& col : block.columns) {
+        for (const auto& col : block->columns) {
           if (col.null_at_index(i)) {
             jw->Null();
           } else if (auto* v = col.data_as<int64_t>()) {
@@ -350,7 +350,7 @@ class Server {
     // Group the series by the grouping tag dimensions.
     struct GroupTask {
       vector<SeriesId> series_ids;
-      vector<TSBlock> results;
+      vector<scoped_refptr<const TSBlock>> results;
     };
     map<vector<StringPiece>, GroupTask> grouped_series;
     for (const auto& series_with_tags : series) {
@@ -364,8 +364,6 @@ class Server {
     VLOG(1) << "Result will have " << grouped_series.size() << " series";
 
     // For each group, read the data and perform the aggregate.
-    int64_t count = 0;
-    TSBlock input_block;
     for (auto& p : grouped_series) {
       const auto& series_ids = p.second.series_ids;
 
@@ -375,7 +373,6 @@ class Server {
 
       for (auto series_id : series_ids) {
         const auto& fields = *asel->selected_fields;
-        input_block.Clear();
         std::vector<InfluxVec> vals;
         // TODO(todd) read directly into agg, block-at-a-time
         RETURN_NOT_OK(metrics_store_->Read(
@@ -385,20 +382,13 @@ class Server {
             asel->time_range->max_us.value_or(asel->now_us),
             fields,
             metric_predicates,
-            &input_block.times, &vals));
-
-        for (int i = 0; i < asel->selected_fields->size(); i++) {
-          input_block.AddColumn(fields[i].ToString(), std::move(vals[i]));
-        }
-        count += input_block.times.size();
-        RETURN_NOT_OK(agg->Consume(&input_block));
+            &ctx, agg.get()));
         // TODO(todd) need to handle pass-through of multiple blocks
       }
 
       RETURN_NOT_OK(agg->Finish());
       p.second.results = output.TakeResults();
     }
-    VLOG(1) << "scanned " << count << " rows";
 
     // Output the results.
     WriteResponse(

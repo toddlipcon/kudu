@@ -16,6 +16,7 @@
 // under the License.
 
 #include "kudu/tsdb/ql/agg.h"
+#include "kudu/tsdb/ql/qcontext.h"
 #include "kudu/util/test_util.h"
 #include "kudu/util/test_macros.h"
 
@@ -51,35 +52,37 @@ TEST_F(AggTest, TestMaxAgg) {
   const int kMinTs = 100;
   const int kMaxTs = 199;
 
-  TSBlock block;
+  QContext ctx(nullptr, nullptr);
+  auto block = ctx.NewTSBlock();
   vector<int64_t> cells;
   for (int ts = kMinTs; ts <= kMaxTs; ts++) {
-    block.times.emplace_back(ts);
+    block->times.emplace_back(ts);
     cells.emplace_back(ts % 10);
   }
-  block.AddColumn("usage", InfluxVec::WithNoNulls(std::move(cells)));
+  block->AddColumn("usage", InfluxVec::WithNoNulls(std::move(cells)));
 
   BlockBuffer result_consumer;
 
   unique_ptr<TSBlockConsumer> agg;
   ASSERT_OK(CreateMultiAggExpressionEvaluator(
-      {{"mean", "usage"},
-       {"max", "usage"}},
+      &ctx,
+      {{"mean", "usage", client::KuduColumnSchema::DataType::INT64},
+       {"max", "usage", client::KuduColumnSchema::DataType::INT64}},
       Bucketer(kMinTs, kMaxTs, 10),
       &result_consumer,
       &agg));
-  ASSERT_OK(agg->Consume(&block));
+  ASSERT_OK(agg->Consume(std::move(block)));
   ASSERT_OK(agg->Finish());
 
-  TSBlock result_block = result_consumer.TakeSingleResult();
-  LOG(INFO) << result_block.times;
-  LOG(INFO) << *result_block.column("max_usage").data_as<int64_t>();
-  LOG(INFO) << *result_block.column("mean_usage").data_as<double>();
-  ASSERT_THAT(result_block.times, testing::ElementsAre(
+  auto result_block = result_consumer.TakeSingleResult();
+  LOG(INFO) << result_block->times;
+  LOG(INFO) << *result_block->column("max_usage").data_as<int64_t>();
+  LOG(INFO) << *result_block->column("mean_usage").data_as<double>();
+  ASSERT_THAT(result_block->times, testing::ElementsAre(
       100, 110, 120, 130, 140, 150, 160, 170, 180, 190));
-  ASSERT_THAT(*result_block.column("max_usage").data_as<int64_t>(),
+  ASSERT_THAT(*result_block->column("max_usage").data_as<int64_t>(),
               testing::ElementsAre(9, 9, 9, 9, 9, 9, 9, 9, 9, 9));
-  ASSERT_THAT(*result_block.column("mean_usage").data_as<double>(),
+  ASSERT_THAT(*result_block->column("mean_usage").data_as<double>(),
               testing::ElementsAre(4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5, 4.5));
 
 }
