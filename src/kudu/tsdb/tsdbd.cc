@@ -325,7 +325,12 @@ class Server {
           } else if (auto* v = col.data_as<int64_t>()) {
             jw->Int64((*v)[i]);
           } else if (auto* v = col.data_as<double>()) {
-            jw->Double((*v)[i]);
+            double d_val = (*v)[i];
+            if (std::isnan(d_val)) {
+              jw->Null();
+            } else {
+              jw->Double((*v)[i]);
+            }
           } else {
             LOG(FATAL);
           }
