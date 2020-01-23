@@ -136,13 +136,6 @@ class BucketAggregator {
 
 class Server {
  public:
-  Server()
-      : rng_(123) {
-    for (int i = 0; i < 4000; i++) {
-      all_hosts_.emplace_back(strings::Substitute("host_$0", i));
-    }
-  }
-  
   Status Start() {
     RETURN_NOT_OK(ThreadPoolBuilder("tsdb-query")
                   .set_max_threads(FLAGS_parallel_query_threads)
@@ -198,34 +191,6 @@ class Server {
     }
   }
 
-  std::pair<int64_t, int64_t> get_time_range(MonoDelta range_width) {
-    //Python: (dateutil.parser.parse("2016-01-01T00:00:00") - datetime.datetime(1970,1,1)).total_seconds()*1000000
-    const int64_t kMinTimeInData = 1451606400000000LL;
-    const int64_t kDataDurationUs = 1000000L * 60 * 60 * 24 * 3; // 3 days
-
-    int64_t range_width_us = range_width.ToMicroseconds();
-    CHECK_LT(range_width_us, kDataDurationUs);
-
-    int64_t start_ts = kMinTimeInData + rng_.Uniform64(kDataDurationUs - range_width_us);
-    int64_t end_ts = start_ts + range_width_us;
-    return {start_ts, end_ts};
-  }
-
-  vector<StringPiece> get_cpu_metrics(int num_metrics) {
-    vector<StringPiece> metrics = {
-      "usage_user", "usage_system", "usage_idle", "usage_nice", "usage_iowait",
-      "usage_irq", "usage_softirq", "usage_steal", "usage_guest", "usage_guest_nice"};
-    CHECK_LE(num_metrics, metrics.size());
-    metrics.resize(num_metrics);
-    return metrics;
-  }
-
-  vector<string> get_hosts(int num_hosts) {
-    vector<string> hosts;
-    ReservoirSample(all_hosts_, num_hosts, /*avoid=*/std::unordered_set<string>{}, &rng_, &hosts);
-    return hosts;
-  }
-
   void SubmitFuncToQueryPool(const std::function<Status()>& f, Promise<Status>* promise) {
     if (FLAGS_parallel_query_threads == 1) {
       promise->Set(f());
@@ -255,19 +220,6 @@ class Server {
     return Status::OK();
   }
 
-  void WriteResponseSeries(const vector<StringPiece>& metrics,
-                           vector<int64_t> timestamps,
-                           const vector<pair<StringPiece,StringPiece>>& tags,
-                           vector<vector<int64_t>> results,
-                           JsonWriter* jw) {
-    TSBlock block;
-    block.times = timestamps;
-    for (int i = 0; i < metrics.size(); i++) {
-      block.AddColumn(metrics[i].ToString(), InfluxVec::WithNoNulls(std::move(results[i])));
-    }
-    WriteResponseSeries("cpu", tags, {std::move(block)}, TimestampFormat::RFC3339, jw);
-  }
-  
   void WriteResponseSeries(const string& measurement_name,
                            const vector<pair<StringPiece,StringPiece>>& tags,
                            const vector<TSBlock>& blocks,
@@ -341,52 +293,6 @@ class Server {
     jw->EndArray(); // values
     jw->EndObject(); // first series
   }
- 
-
-  Status DoSingleGroupBy(int num_metrics,
-                         int num_hosts,
-                         int num_hours,
-                         Webserver::PrerenderedWebResponse* resp) {
-
-    vector<string> hosts = get_hosts(num_hosts);
-    vector<StringPiece> metrics = get_cpu_metrics(num_metrics);
-    int64_t start_ts, end_ts;
-    std::tie(start_ts, end_ts) = get_time_range(MonoDelta::FromHours(num_hours));
-
-    // TODO(todd) handle double aggs, etc.
-    BucketAggregator agg(start_ts, end_ts, 60*1000000L);;
-    vector<vector<int64_t>> agg_results(num_metrics);
-    Mutex agg_lock;
-    RETURN_NOT_OK(ParallelMap(
-        hosts.size(),
-        [&](int i) {
-          const auto& host = hosts[i];
-          vector<int32_t> ids;
-          RETURN_NOT_OK(series_store_->FindMatchingSeries("cpu", "hostname", host, &ids));
-
-          for (int32_t id : ids) {
-            std::vector<int64_t> times;
-            std::vector<InfluxVec> vals;
-            RETURN_NOT_OK(metrics_store_->Read("cpu", id, start_ts, end_ts,
-                                               metrics, {},
-                                               &times, &vals));
-            CHECK_EQ(vals.size(), agg_results.size());
-            {
-              MutexLock l(agg_lock);
-              for (int col = 0; col < vals.size(); col++) {
-                agg.MergeAgg(times, *vals[col].data_as<int64_t>(), &agg_results[col]);
-              }
-            }
-          }
-          return Status::OK();
-        }));
-
-    WriteResponse(resp, [&](JsonWriter* jw) {
-                          WriteResponseSeries(metrics, agg.bucket_times(), {},
-                                              std::move(agg_results), jw);
-                  });
-    return Status::OK();
-  }
 
   void WriteResponse(Webserver::PrerenderedWebResponse* resp,
                      const std::function<void(JsonWriter*)> series_writer) {
@@ -405,96 +311,6 @@ class Server {
     jw.EndArray(); // results
     jw.EndObject(); // root
     resp->output << "\n";
-  }
-
-  // Aggregate on across both time and host, giving the average of <N> CPU metric per host per hour for 12 hours
-  Status DoDoubleGroupBy(int num_metrics,
-                         Webserver::PrerenderedWebResponse* resp) {
-    int64_t start_ts, end_ts;
-    std::tie(start_ts, end_ts) = get_time_range(MonoDelta::FromHours(12));
-    vector<StringPiece> metrics = get_cpu_metrics(num_metrics);
-
-    // Fetch all series for the cpu measurement and hostname tag.
-    std::vector<std::pair<std::string, int32_t>> hosts_with_ids;
-    RETURN_NOT_OK(series_store_->FindSeriesWithTag("cpu", "hostname", &hosts_with_ids));
-    std::sort(hosts_with_ids.begin(), hosts_with_ids.end());
-
-    // Verify we only got one measurement per host -- for the benchmark purposes this should
-    // be valid, though a general purpose impl would probably do cross-series grouping here.
-    for (int i = 1; i < hosts_with_ids.size(); i++) {
-      if (hosts_with_ids[i].first == hosts_with_ids[i - 1].first) {
-        return Status::RuntimeError("more than one series for hostname", hosts_with_ids[i].first);
-      }
-    }
-
-    // Set up buckets.
-    BucketAggregator agg(start_ts, end_ts, 60*60*1000000L);;
-
-    vector<vector<vector<int64_t>>> results_by_host;
-    for (int i = 0; i < hosts_with_ids.size(); i++) {
-      results_by_host.emplace_back(num_metrics);
-    }
-
-    RETURN_NOT_OK(ParallelMap(
-        hosts_with_ids.size(),
-        [&](int i) {
-          int32_t series_id = hosts_with_ids[i].second;
-          vector<vector<int64_t>>* agg_results = &results_by_host[i];
-          std::vector<int64_t> times;
-          std::vector<InfluxVec> vals;
-          RETURN_NOT_OK(metrics_store_->Read("cpu", series_id, start_ts, end_ts, metrics, {},
-                                             &times, &vals));
-          CHECK_EQ(vals.size(), agg_results->size());
-          for (int col = 0; col < vals.size(); col++) {
-            agg.MergeAgg(times, *vals[col].data_as<int64_t>(), &(*agg_results)[col]);
-          }
-          return Status::OK();
-        }));
-
-    WriteResponse(
-        resp, [&](JsonWriter* jw) {
-                for (int i = 0; i < hosts_with_ids.size(); i++) {
-                  const auto& hostname = hosts_with_ids[i].first;
-                  auto& agg_results = results_by_host[i];
-                  WriteResponseSeries(metrics,
-                                      agg.bucket_times(),
-                                      {{"hostname", hostname}},
-                                      std::move(agg_results),
-                                      jw);
-                }
-              });
-    
-    return Status::OK();
-  }
-
-  Status DoHighCpu(bool is_all, Webserver::PrerenderedWebResponse* resp) {
-    if (is_all) {
-      return Status::NotSupported("TODO not implemented");
-    }
-    
-    vector<StringPiece> metrics = get_cpu_metrics(10);
-    int64_t start_ts, end_ts;
-    // The docs for tsbs say "all the points" but the implementation seems to do 12 hours.
-    std::tie(start_ts, end_ts) = get_time_range(MonoDelta::FromHours(12));
-
-    vector<int32_t> ids;
-    string host = get_hosts(1)[0];
-    RETURN_NOT_OK(series_store_->FindMatchingSeries("cpu", "hostname", host, &ids));
-    if (ids.size() != 1) {
-      return Status::NotFound("expected one series");
-    }
-    int32_t series_id = ids[0];
-    std::vector<int64_t> times;
-    std::vector<InfluxVec> vals;
-    std::vector<influxql::Predicate> preds = {
-      {"usage_user", ">", 90L}
-    };
-    RETURN_NOT_OK(metrics_store_->Read("cpu", series_id, start_ts, end_ts,
-                                       metrics,
-                                       preds,
-                                       &times, &vals));
-
-    return Status::OK();
   }
 
   Status DoInfluxQL(const Webserver::WebRequest& req, Webserver::PrerenderedWebResponse* resp) {
@@ -603,7 +419,7 @@ class Server {
 
     return Status::OK();
   }
-  
+
   Status DoHandleInfluxQuery(const Webserver::WebRequest& req,
                        Webserver::PrerenderedWebResponse* resp) {
     const std::string& query = FindWithDefault(req.parsed_args, "q", "");
@@ -612,36 +428,8 @@ class Server {
       return Status::OK();
     }
 
-    if (query == "single-groupby-1-1-1") {
-      RETURN_NOT_OK(DoSingleGroupBy(1, 1, 1, resp));
-    } else if (query == "single-groupby-1-1-12") {
-      RETURN_NOT_OK(DoSingleGroupBy(1, 1, 12, resp));
-    } else if (query == "single-groupby-1-8-1") {
-      RETURN_NOT_OK(DoSingleGroupBy(1, 8, 1, resp));
-    } else if (query == "single-groupby-5-1-1") {
-      RETURN_NOT_OK(DoSingleGroupBy(5, 1, 1, resp));
-    } else if (query == "single-groupby-5-1-12") {
-      RETURN_NOT_OK(DoSingleGroupBy(5, 1, 12, resp));
-    } else if (query == "single-groupby-5-8-1") {
-      RETURN_NOT_OK(DoSingleGroupBy(5, 8, 1, resp));
-    } else if (query == "double-groupby-1") {
-      RETURN_NOT_OK(DoDoubleGroupBy(1, resp));
-    } else if (query == "double-groupby-5") {
-      RETURN_NOT_OK(DoDoubleGroupBy(5, resp));
-    } else if (query == "double-groupby-all") {
-      RETURN_NOT_OK(DoDoubleGroupBy(10, resp));
-    } else if (query == "high-cpu-1") {
-      RETURN_NOT_OK(DoHighCpu(false, resp));
-    } else if (query == "high-cpu-all") {
-      RETURN_NOT_OK(DoHighCpu(true, resp));
-    } else {
-      RETURN_NOT_OK(DoInfluxQL(req, resp));
-    }
+    RETURN_NOT_OK(DoInfluxQL(req, resp));
 
-    /*
-    const const char* const kPattern =
-        r"^SELECT max\((.+?)\) from (\w+) where hostname="(.+)" and time 
-    */
     return Status::OK();
   }
 
@@ -688,9 +476,6 @@ class Server {
   unique_ptr<SeriesStoreImpl> series_store_;
   unique_ptr<MetricsStore> metrics_store_;
   unique_ptr<Webserver> webserver_;
-  Random rng_;
-
-  vector<string> all_hosts_;
 
   unique_ptr<ThreadPool> pool_;
 };
