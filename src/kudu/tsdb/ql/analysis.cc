@@ -319,7 +319,8 @@ bool Analyzer::ParseRFC3339(StringPiece s, int64_t* us) {
 
 Status ParseTimeExpr(const LiteralExpr* time_expr, int64_t* time_us) {
   if (auto* lit = time_expr->As<IntLiteralExpr>()) {
-    *time_us = lit->val_;
+    // Int literals are in nanoseconds.
+    *time_us = lit->val_ / 1000;
     return Status::OK();
   }
 

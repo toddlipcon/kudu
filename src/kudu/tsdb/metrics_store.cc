@@ -210,7 +210,6 @@ Status MetricsStore::Read(StringPiece metric_name,
   RETURN_NOT_OK(FindTable(metric_name, &table));
 
   KuduScanner scanner(table.get());
-
   KUDU_RETURN_NOT_OK(scanner.AddConjunctPredicate(
      table->NewComparisonPredicate(
       "series_id", KuduPredicate::EQUAL, KuduValue::FromInt(series_id))));
@@ -219,7 +218,7 @@ Status MetricsStore::Read(StringPiece metric_name,
       "timestamp", KuduPredicate::GREATER_EQUAL, KuduValue::FromInt(start_time))));
   KUDU_RETURN_NOT_OK(scanner.AddConjunctPredicate(
      table->NewComparisonPredicate(
-      "timestamp", KuduPredicate::LESS, KuduValue::FromInt(end_time))));
+      "timestamp", KuduPredicate::LESS_EQUAL, KuduValue::FromInt(end_time))));
 
   for (const auto& p : preds) {
       KuduPredicate::ComparisonOp op;
