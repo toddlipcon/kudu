@@ -16,6 +16,7 @@
 // under the License.
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -301,7 +302,7 @@ void RetriableRpc<Server, RequestPB, ResponsePB>::ReplicaFoundCb(const Status& s
 
   DCHECK_EQ(result.result, RetriableRpcStatus::OK);
   current_ = server;
-  Try(server, boost::bind(&RetriableRpc::SendRpcCb, this, Status::OK()));
+  Try(server, std::bind(&RetriableRpc::SendRpcCb, this, Status::OK()));
 }
 
 template <class Server, class RequestPB, class ResponsePB>
