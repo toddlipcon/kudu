@@ -37,7 +37,6 @@ target_link_libraries(kudu_tsdb
   kudu_util
   glog
   dl
-  webserver
   kudu_client
   kudu_tsdb_common)
 target_compile_options(kudu_tsdb
@@ -62,7 +61,11 @@ target_link_libraries(kudu_influxql
 
 add_executable(kudu-tsdbd tsdbd.cc)
 target_link_libraries(kudu-tsdbd
-  kudu_tsdb kudu_influxql)
+  kudu_tsdb
+  kudu_influxql
+  webserver
+  server_process
+)
 target_compile_options(kudu-tsdbd
   PRIVATE --std=c++14)
 

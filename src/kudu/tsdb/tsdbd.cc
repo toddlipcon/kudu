@@ -32,6 +32,7 @@
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/substitute.h"
+#include "kudu/server/default_path_handlers.h"
 #include "kudu/server/webserver.h"
 #include "kudu/tsdb/influx_wire_protocol.h"
 #include "kudu/tsdb/metrics_store.h"
@@ -48,6 +49,7 @@
 #include "kudu/util/init.h"
 #include "kudu/util/promise.h"
 #include "kudu/util/logging.h"
+#include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/random.h"
 #include "kudu/util/random_util.h"
@@ -71,6 +73,13 @@ DECLARE_int32(webserver_port);
 
 DEFINE_int32(parallel_query_threads, 1,
              "how many threads to use for executing queries");
+
+METRIC_DEFINE_histogram(server, influxql_query_duration,
+                        "InfluxQL Query Duration",
+                        kudu::MetricUnit::kMicroseconds,
+                        "Histogram of the duration of InfluxQL queries",
+                        kudu::MetricLevel::kInfo,
+                        120000000LU, 2);
 
 namespace kudu {
 namespace tsdb {
@@ -136,6 +145,13 @@ class BucketAggregator {
 
 class Server {
  public:
+  Server()
+      : metric_registry_(new MetricRegistry()),
+        metric_entity_(METRIC_ENTITY_server.Instantiate(
+            metric_registry_.get(), "tsdbd")),
+        query_duration_histo_(METRIC_influxql_query_duration.Instantiate(metric_entity_)) {
+  }
+
   Status Start() {
     RETURN_NOT_OK(ThreadPoolBuilder("tsdb-query")
                   .set_max_threads(FLAGS_parallel_query_threads)
@@ -174,6 +190,8 @@ class Server {
         },
         is_styled, is_on_nav_bar);
 
+    RegisterMetricsJsonHandler(webserver_.get(), metric_registry_.get());
+    AddDefaultPathHandlers(webserver_.get());
     RETURN_NOT_OK(webserver_->Start());
     return Status::OK();
   }
@@ -182,6 +200,7 @@ class Server {
 
   void HandleInfluxQuery(const Webserver::WebRequest& req,
                        Webserver::PrerenderedWebResponse* resp) {
+    ScopedLatencyMetric slm(query_duration_histo_.get());
     Status s = DoHandleInfluxQuery(req, resp);
     if (!s.ok()) {
       LOG(WARNING) << s.ToString();
@@ -468,6 +487,10 @@ class Server {
   unique_ptr<Webserver> webserver_;
 
   unique_ptr<ThreadPool> pool_;
+
+  std::unique_ptr<MetricRegistry> metric_registry_;
+  scoped_refptr<MetricEntity> metric_entity_;
+  scoped_refptr<Histogram> query_duration_histo_;
 };
 
 static int Main(int argc, char** argv) {
