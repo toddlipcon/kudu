@@ -438,6 +438,7 @@ int SerializeRowBlockColumnar(
     out->columns.reserve(projection_schema->num_columns());
     for (const auto& col : projection_schema->columns()) {
       out->columns.emplace_back();
+      // TODO(todd) get rid of this hack
       out->columns.back().data.reserve(1024 * 1024);
       if (col.type_info()->physical_type() == BINARY) {
         out->columns.back().indirect_data.emplace();
