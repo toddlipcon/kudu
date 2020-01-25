@@ -176,72 +176,16 @@ class BitmapIterator {
   const uint8_t *map_;
 };
 
-// Iterator which yields the set bits in a bitmap.
-// Example usage:
-//   for (TrueBitIterator iter(bitmap, n_bits);
-//        !iter.done();
-//        ++iter) {
-//     int next_onebit_position = *iter;
-//   }
-class TrueBitIterator {
- public:
-  TrueBitIterator(const uint8_t *bitmap, size_t n_bits)
-    : bitmap_(bitmap),
-      cur_byte_(0),
-      cur_byte_idx_(0),
-      n_bits_(n_bits),
-      n_bytes_(BitmapSize(n_bits_)),
-      bit_idx_(0) {
-    if (n_bits_ == 0) {
-      cur_byte_idx_ = 1; // sets done
-    } else {
-      cur_byte_ = bitmap[0];
-      AdvanceToNextOneBit();
-    }
-  }
+template<class F>
+void ForEachSetBit(const uint8_t* __restrict__ bitmap,
+                   int n_bits,
+                   const F& func);
 
-  TrueBitIterator &operator ++() {
-    DCHECK(!done());
-    DCHECK(cur_byte_ & 1);
-    cur_byte_ &= (~1);
-    AdvanceToNextOneBit();
-    return *this;
-  }
+template<class F>
+void ForEachUnsetBit(const uint8_t* __restrict__ bitmap,
+                     int n_bits,
+                     const F& func);
 
-  bool done() const {
-    return cur_byte_idx_ >= n_bytes_;
-  }
-
-  size_t operator *() const {
-    DCHECK(!done());
-    return bit_idx_;
-  }
-
- private:
-  void AdvanceToNextOneBit() {
-    while (cur_byte_ == 0) {
-      cur_byte_idx_++;
-      if (cur_byte_idx_ >= n_bytes_) return;
-      cur_byte_ = bitmap_[cur_byte_idx_];
-      bit_idx_ = cur_byte_idx_ * 8;
-    }
-    DVLOG(2) << "Found next nonzero byte at " << cur_byte_idx_
-             << " val=" << cur_byte_;
-
-    DCHECK_NE(cur_byte_, 0);
-    int set_bit = Bits::FindLSBSetNonZero(cur_byte_);
-    bit_idx_ += set_bit;
-    cur_byte_ >>= set_bit;
-  }
-
-  const uint8_t *bitmap_;
-  uint8_t cur_byte_;
-  uint8_t cur_byte_idx_;
-
-  const size_t n_bits_;
-  const size_t n_bytes_;
-  size_t bit_idx_;
-};
 
 } // namespace kudu
 

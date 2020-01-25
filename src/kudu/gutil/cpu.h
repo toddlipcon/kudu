@@ -47,6 +47,8 @@ class CPU {
   bool has_avx() const { return has_avx_; }
   bool has_avx2() const { return has_avx2_; }
   bool has_aesni() const { return has_aesni_; }
+  bool has_bmi() const { return has_bmi_; }
+  bool has_bmi2() const { return has_bmi2_; }
   bool has_non_stop_time_stamp_counter() const {
     return has_non_stop_time_stamp_counter_;
   }
@@ -79,6 +81,8 @@ class CPU {
   bool has_avx_;
   bool has_avx2_;
   bool has_aesni_;
+  bool has_bmi_;
+  bool has_bmi2_;
   bool has_non_stop_time_stamp_counter_;
   bool has_broken_neon_;
   std::string cpu_vendor_;

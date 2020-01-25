@@ -34,6 +34,7 @@ set(CLIENT_SRCS
   client.cc
   client_builder-internal.cc
   client-internal.cc
+  columnar_scan_batch.cc
   error_collector.cc
   error-internal.cc
   master_rpc.cc

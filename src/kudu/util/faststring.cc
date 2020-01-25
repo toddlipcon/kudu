@@ -40,6 +40,7 @@ void faststring::GrowArray(size_t newcapacity) {
   if (len_ > 0) {
     memcpy(&newdata[0], &data_[0], len_);
   }
+  auto old_cap = capacity_;
   capacity_ = newcapacity;
   if (data_ != initial_data_) {
     delete[] data_;

@@ -99,6 +99,7 @@
 #include "kudu/tserver/tablet_server_options.h"
 #include "kudu/tserver/ts_tablet_manager.h"
 #include "kudu/tserver/tserver.pb.h"
+#include "kudu/util/array_view.h"
 #include "kudu/util/async_util.h"
 #include "kudu/util/barrier.h"
 #include "kudu/util/countdown_latch.h"
@@ -1030,6 +1031,36 @@ TEST_F(ClientTest, TestScanAtFutureTimestamp) {
   ASSERT_STR_CONTAINS(s.ToString(), "in the future.");
 }
 
+TEST_F(ClientTest, TestColumnarScan) {
+  NO_FATALS(InsertTestRows(client_table_.get(), FLAGS_test_scan_num_rows));
+  KuduScanner scanner(client_table_.get());
+  ASSERT_OK(scanner.SetRowFormatFlags(KuduScanner::COLUMNAR_LAYOUT));
+
+  ASSERT_OK(scanner.Open());
+  KuduColumnarScanBatch batch;
+  int total_rows = 0;
+  while (scanner.HasMoreRows()) {
+    LOG(WARNING) << "more rows";
+    ASSERT_OK(scanner.NextBatch(&batch));
+    // TODO(todd): calling GetDataForColumn on a batch with no data results in
+    // a bad Status. instead it should probably return an empty slice
+    if (batch.NumRows() == 0) continue;
+
+    Slice c0_data;
+    ASSERT_OK(batch.GetDataForColumn(0, &c0_data));
+    ArrayView<const int32_t> c0(reinterpret_cast<const int32_t*>(c0_data.data()), batch.NumRows());
+
+    // TODO(todd) test other columns
+    
+    for (int i = 0; i < c0.size(); i++) {
+      ASSERT_EQ(total_rows + i, c0[i]);
+    }
+
+    total_rows += batch.NumRows();
+  }
+  ASSERT_EQ(FLAGS_test_scan_num_rows, total_rows);
+}
+
 const KuduScanner::ReadMode read_modes[] = {
     KuduScanner::READ_LATEST,
     KuduScanner::READ_AT_SNAPSHOT,
@@ -1709,6 +1740,7 @@ TEST_F(ClientTest, TestNonCoveringRangePartitions) {
     ASSERT_TRUE(rows.empty());
   }
 }
+
 
 // Test that OpenTable calls clear cached non-covered range partitions.
 TEST_F(ClientTest, TestOpenTableClearsNonCoveringRangePartitions) {

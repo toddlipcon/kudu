@@ -89,6 +89,10 @@ class ColumnBlock {
 
   Cell cell(size_t idx) const;
 
+  // Return the bitmap indicating whether each value is null.
+  //
+  // NOTE: this is really a *non-null* bitmap: a set bit indicates
+  // that the value is non-null.
   uint8_t *null_bitmap() const {
     return null_bitmap_;
   }

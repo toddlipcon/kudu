@@ -224,6 +224,7 @@ message ColumnRangePredicateListPB {
 enum RowFormatFlags {
   NO_FLAGS = 0;
   PAD_UNIX_TIME_MICROS_TO_16_BYTES = 1;
+  COLUMNAR_LAYOUT = 2;
 }
 
 message NewScanRequestPB {
@@ -382,6 +383,16 @@ message ResourceMetricsPB {
   optional int64 cpu_system_nanos = 7;
 }
 
+message ColumnarRowBlockPB {
+  message Column {
+    optional int32 data_sidecar = 1;
+    optional int32 indirect_data_sidecar = 2;
+    optional int32 non_null_bitmap_sidecar = 3;
+  }
+  repeated Column columns = 1;
+  optional int64 num_rows = 2;
+}
+
 message ScanResponsePB {
   // The error, if an error occurred with this request.
   optional TabletServerErrorPB error = 1;
@@ -405,6 +416,8 @@ message ScanResponsePB {
   // The schema will match the schema requested by the client when it created
   // the scanner.
   optional RowwiseRowBlockPB data = 4;
+  // Set instead of 'data' if COLUMNAR_LAYOUT is passed.
+  optional ColumnarRowBlockPB columnar_data = 5;
 
   // The snapshot timestamp at which the scan was executed. This is only set
   // in the first response (i.e. the response to the request that had

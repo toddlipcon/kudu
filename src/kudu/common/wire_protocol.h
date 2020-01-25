@@ -21,8 +21,11 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include <boost/optional.hpp>
 
 #include "kudu/util/status.h"
 
@@ -161,7 +164,7 @@ Status ExtraConfigPBToPBMap(const TableExtraConfigPB& pb,
 // Encode the given row block into the provided protobuf and data buffers.
 //
 // All data (both direct and indirect) for each selected row in the RowBlock is
-// copied into the protobuf and faststrings.
+// copied into the given faststrings.
 // The original data may be destroyed safely after this returns.
 //
 // This only converts those rows whose selection vector entry is true.
@@ -172,10 +175,12 @@ Status ExtraConfigPBToPBMap(const TableExtraConfigPB& pb,
 // schema will be padded to the right by 8 (zero'd) bytes for a total of 16 bytes.
 //
 // Requires that block.nrows() > 0
-void SerializeRowBlock(const RowBlock& block, RowwiseRowBlockPB* rowblock_pb,
-                       const Schema* projection_schema,
-                       faststring* data_buf, faststring* indirect_data,
-                       bool pad_unixtime_micros_to_16_bytes = false);
+//
+// Returns the number of selected rows serialized.
+int SerializeRowBlock(const RowBlock& block,
+                      const Schema* projection_schema,
+                      faststring* data_buf, faststring* indirect_data,
+                      bool pad_unixtime_micros_to_16_bytes = false);
 
 // Rewrites the data pointed-to by row data slice 'row_data_slice' by replacing
 // relative indirect data pointers with absolute ones in 'indirect_data_slice'.

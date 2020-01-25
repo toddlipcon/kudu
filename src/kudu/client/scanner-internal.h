@@ -27,6 +27,7 @@
 
 #include <glog/logging.h>
 
+#include "kudu/client/columnar_scan_batch.h"
 #include "kudu/client/client.h"
 #include "kudu/client/resource_metrics.h"
 #include "kudu/client/row_result.h"
@@ -294,7 +295,20 @@ class KuduScanner::Data {
   DISALLOW_COPY_AND_ASSIGN(Data);
 };
 
-class KuduScanBatch::Data {
+namespace internal {
+class ScanBatchDataInterface {
+ public:
+  virtual ~ScanBatchDataInterface() = default;
+  virtual Status Reset(rpc::RpcController* controller,
+                       const Schema* projection,
+                       const KuduSchema* client_projection,
+                       uint64_t row_format_flags,
+                       tserver::ScanResponsePB* response) = 0;
+  virtual void Clear() = 0;
+};
+} // namespace internal
+
+class KuduScanBatch::Data : public internal::ScanBatchDataInterface {
  public:
   Data();
   ~Data();
@@ -303,7 +317,7 @@ class KuduScanBatch::Data {
                const Schema* projection,
                const KuduSchema* client_projection,
                uint64_t row_format_flags,
-               std::unique_ptr<RowwiseRowBlockPB> resp_data);
+               tserver::ScanResponsePB* response) override;
 
   int num_rows() const {
     return resp_data_.num_rows();
@@ -324,7 +338,7 @@ class KuduScanBatch::Data {
 
   void ExtractRows(std::vector<KuduScanBatch::RowPtr>* rows);
 
-  void Clear();
+  void Clear() override;
 
   // Returns the size of a row for the given projection 'proj'.
   static size_t CalculateProjectedRowSize(const Schema& proj);
@@ -353,6 +367,35 @@ class KuduScanBatch::Data {
   // The number of bytes of direct data for each row.
   size_t projected_row_size_;
 };
+
+class KuduColumnarScanBatch::Data : public internal::ScanBatchDataInterface {
+ public:
+  Status Reset(rpc::RpcController* controller,
+                       const Schema* projection,
+                       const KuduSchema* client_projection,
+                       uint64_t row_format_flags,
+                       tserver::ScanResponsePB* response) override;
+  void Clear() override;
+
+  Status CheckColumnIndex(int idx) const;
+
+ private:
+  friend class KuduColumnarScanBatch;
+
+  // The RPC controller for the RPC which returned this batch.
+  // Holding on to the controller ensures we hold on to the
+  // sidecars which contain the actual data.
+  rpc::RpcController controller_;
+
+  // The PB which contains the "direct data" slice.
+  tserver::ColumnarRowBlockPB resp_data_;
+
+  // The projection being scanned.
+  const Schema* projection_;
+  // The KuduSchema version of 'projection_'
+  const KuduSchema* client_projection_;
+};
+
 
 } // namespace client
 } // namespace kudu

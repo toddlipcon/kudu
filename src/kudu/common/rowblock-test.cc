@@ -20,7 +20,13 @@
 #include <cstddef>
 #include <vector>
 
+#include <glog/logging.h>
+#include <glog/stl_logging.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include "kudu/util/random.h"
+#include "kudu/util/test_util.h"
 
 using std::vector;
 
@@ -82,6 +88,36 @@ TEST(TestSelectionVector, TestGetSelectedRows) {
   vector<int> selected;
   sv.GetSelectedRows(&selected);
   ASSERT_EQ(expected, selected);
+}
+
+TEST(TestSelectionVector, TestGetSelectedRuns) {
+  const int kNumTrials = 100;
+
+  Random rng(SeedRandom());
+  for (int i = 0; i < kNumTrials; i++) {
+    vector<int> expected_runs;
+    int sv_size = 1000 + rng.Uniform(20);
+    SelectionVector sv(sv_size);
+    sv.SetAllFalse();
+
+    int index = 0;
+    bool val = true;
+    while (index < sv_size) {
+      int run = std::min<int>(rng.Uniform(100) + 1, sv_size - index);
+      expected_runs.push_back(run);
+      if (val) {
+        for (int i = 0; i < run; i++) {
+          sv.SetRowSelected(index++);
+        }
+      } else {
+        index += run;
+      }
+      val = !val;
+    }
+    vector<int> runs;
+    sv.GetSelectedRuns(&runs);
+    ASSERT_THAT(runs, testing::ElementsAreArray(expected_runs));
+  }
 }
 
 } // namespace kudu

@@ -89,7 +89,8 @@ unique_ptr<RpcSidecar> RpcSidecar::FromSlice(Slice slice) {
 
 Status RpcSidecar::ParseSidecars(
     const ::google::protobuf::RepeatedField<::google::protobuf::uint32>& offsets,
-    Slice buffer, Slice* sidecars) {
+    Slice buffer,
+    SidecarSliceVector* sidecars) {
   if (offsets.size() == 0) return Status::OK();
 
   int last = offsets.size() - 1;
@@ -105,6 +106,7 @@ Status RpcSidecar::ParseSidecars(
             buffer.size(), TransferLimits::kMaxTotalSidecarBytes));
   }
 
+  sidecars->resize(offsets.size());
   for (int i = 0; i < last; ++i) {
     int64_t cur_offset = offsets.Get(i);
     int64_t next_offset = offsets.Get(i + 1);
@@ -120,7 +122,7 @@ Status RpcSidecar::ParseSidecars(
               " but ends before that at offset $1.", i, cur_offset, next_offset));
     }
 
-    sidecars[i] = Slice(buffer.data() + cur_offset, next_offset - cur_offset);
+    (*sidecars)[i] = Slice(buffer.data() + cur_offset, next_offset - cur_offset);
   }
 
   int64_t cur_offset = offsets.Get(last);
@@ -129,7 +131,7 @@ Status RpcSidecar::ParseSidecars(
             "starts at offset $1after message ends (message length $2).", last,
             cur_offset, buffer.size()));
   }
-  sidecars[last] = Slice(buffer.data() + cur_offset, buffer.size() - cur_offset);
+  (*sidecars)[last] = Slice(buffer.data() + cur_offset, buffer.size() - cur_offset);
 
   return Status::OK();
 }

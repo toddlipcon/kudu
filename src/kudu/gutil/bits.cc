@@ -30,8 +30,14 @@ const char Bits::num_bits[] = {
 int Bits::Count(const void *m, int num_bytes) {
   int nbits = 0;
   const uint8 *s = (const uint8 *) m;
-  for (int i = 0; i < num_bytes; i++)
-    nbits += num_bits[*s++];
+  while (num_bytes >= 8) {
+    nbits += __builtin_popcountll(UnalignedLoad<uint64_t>(s));
+    s += 8;
+    num_bytes -= 8;
+  }
+  while (num_bytes--) {
+    nbits += __builtin_popcount(*s++);
+  }
   return nbits;
 }
 

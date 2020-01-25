@@ -105,6 +105,13 @@ class faststring {
     ASAN_UNPOISON_MEMORY_REGION(data_, len_);
   }
 
+  void resize_with_extra_capacity(size_t newsize) {
+    if (newsize > capacity_) {
+      GrowToAtLeast(newsize);
+    }
+    resize(newsize);
+  }
+
   // Releases the underlying array; after this, the buffer is left empty.
   //
   // NOTE: the data pointer returned by release() always points to dynamically
@@ -253,9 +260,6 @@ class faststring {
     }
   }
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(faststring);
-
   // If necessary, expand the buffer to fit at least 'count' more bytes.
   // If the array has to be grown, it is grown by at least 50%.
   void EnsureRoomForAppend(size_t count) {
@@ -267,6 +271,11 @@ class faststring {
     // on the hot path.
     GrowToAtLeast(len_ + count);
   }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(faststring);
+
+
 
   // The slow path of EnsureRoomForAppend. Grows the buffer by either
   // 'count' bytes, or 50%, whichever is more.

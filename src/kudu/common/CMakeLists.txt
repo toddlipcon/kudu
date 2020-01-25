@@ -42,6 +42,7 @@ ADD_EXPORTABLE_LIBRARY(wire_protocol_proto
 set(COMMON_SRCS
   columnblock.cc
   column_predicate.cc
+  columnar_serialization.cc
   encoded_key.cc
   generic_iterators.cc
   id_mapping.cc
@@ -60,7 +61,8 @@ set(COMMON_SRCS
   table_util.cc
   timestamp.cc
   types.cc
-  wire_protocol.cc)
+  wire_protocol.cc
+  zp7.c)
 
 # Workaround for clang bug https://llvm.org/bugs/show_bug.cgi?id=23757
 # in which it incorrectly optimizes key_util.cc and causes incorrect results.

@@ -70,6 +70,7 @@ class RemoteKsckCluster;
 
 namespace client {
 
+class KuduColumnarScanBatch;
 class KuduDelete;
 class KuduInsert;
 class KuduLoggingCallback;
@@ -100,6 +101,7 @@ class RemoteTablet;
 class RemoteTabletServer;
 class ReplicaController;
 class RetrieveAuthzTokenRpc;
+class ScanBatchDataInterface;
 class WriteRpc;
 } // namespace internal
 
@@ -2186,6 +2188,9 @@ class KUDU_EXPORT KuduScanner {
   /// @return Operation result status.
   Status NextBatch(KuduScanBatch* batch);
 
+  // TODO(todd) doc
+  Status NextBatch(KuduColumnarScanBatch* batch);
+
   /// Get the KuduTabletServer that is currently handling the scan.
   ///
   /// More concretely, this is the server that handled the most recent
@@ -2312,6 +2317,9 @@ class KUDU_EXPORT KuduScanner {
   ///   results and might even cause the client to crash.
   static const uint64_t PAD_UNIXTIME_MICROS_TO_16_BYTES = 1 << 0;
 
+  // TODO(todd) doc
+  static const uint64_t COLUMNAR_LAYOUT = 1 << 1;
+
   /// Optionally set row format modifier flags.
   ///
   /// If flags is RowFormatFlags::NO_FLAGS, then no modifications will be made to the row
@@ -2358,6 +2366,8 @@ class KUDU_EXPORT KuduScanner {
 
  private:
   class KUDU_NO_EXPORT Data;
+
+  Status NextBatch(internal::ScanBatchDataInterface* batch);
 
   friend class KuduScanToken;
   FRIEND_TEST(ClientTest, TestBlockScannerHijackingAttempts);

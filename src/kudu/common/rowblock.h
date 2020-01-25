@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include <boost/optional.hpp>
 #include <glog/logging.h>
 
 #include "kudu/common/columnblock.h"
@@ -105,7 +106,17 @@ class SelectionVector {
 
   // Sets '*selected' to the indices of all rows marked as selected
   // in this selection vector.
-  void GetSelectedRows(std::vector<int>* selected) const;
+  void GetSelectedRows(boost::optional<std::vector<uint16_t>>* selected) const;
+
+  // Sets *runs to a sequence of run lengths. The run values
+  // alternate between set bits and unset bits. For example:
+  //
+  // Input:  {1, 1, 1, 0, 0, 1}
+  // Output: {3,       2,    1}
+  //
+  // Input:  {   0, 0, 1, 0, 1, 1}
+  // Output: {0, 2,    1, 1, 2}
+  void GetSelectedRuns(std::vector<int>* runs) const;
 
   uint8_t *mutable_bitmap() {
     return &bitmap_[0];

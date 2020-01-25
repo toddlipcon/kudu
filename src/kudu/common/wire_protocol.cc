@@ -18,10 +18,12 @@
 #include "kudu/common/wire_protocol.h"
 
 #include <time.h>
+#include <immintrin.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <numeric>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -57,12 +59,14 @@
 #include "kudu/util/safe_math.h"
 #include "kudu/util/slice.h"
 
+using boost::optional;
 using google::protobuf::Map;
 using google::protobuf::RepeatedPtrField;
 using kudu::pb_util::SecureDebugString;
 using kudu::pb_util::SecureShortDebugString;
 using std::map;
 using std::string;
+using std::unique_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -259,7 +263,7 @@ void ColumnSchemaToPB(const ColumnSchema& col_schema, ColumnSchemaPB *pb, int fl
   }
 }
 
-Status ColumnSchemaFromPB(const ColumnSchemaPB& pb, boost::optional<ColumnSchema>* col_schema) {
+Status ColumnSchemaFromPB(const ColumnSchemaPB& pb, optional<ColumnSchema>* col_schema) {
   const void *write_default_ptr = nullptr;
   const void *read_default_ptr = nullptr;
   Slice write_default;
@@ -357,25 +361,25 @@ void ColumnSchemaDeltaToPB(const ColumnSchemaDelta& col_delta, ColumnSchemaDelta
 ColumnSchemaDelta ColumnSchemaDeltaFromPB(const ColumnSchemaDeltaPB& pb) {
   ColumnSchemaDelta col_delta(pb.name());
   if (pb.has_new_name()) {
-    col_delta.new_name = boost::optional<string>(pb.new_name());
+    col_delta.new_name = optional<string>(pb.new_name());
   }
   if (pb.has_default_value()) {
-    col_delta.default_value = boost::optional<Slice>(Slice(pb.default_value()));
+    col_delta.default_value = optional<Slice>(Slice(pb.default_value()));
   }
   if (pb.has_remove_default()) {
     col_delta.remove_default = true;
   }
   if (pb.has_encoding()) {
-    col_delta.encoding = boost::optional<EncodingType>(pb.encoding());
+    col_delta.encoding = optional<EncodingType>(pb.encoding());
   }
   if (pb.has_compression()) {
-    col_delta.compression = boost::optional<CompressionType>(pb.compression());
+    col_delta.compression = optional<CompressionType>(pb.compression());
   }
   if (pb.has_block_size()) {
-    col_delta.cfile_block_size = boost::optional<int32_t>(pb.block_size());
+    col_delta.cfile_block_size = optional<int32_t>(pb.block_size());
   }
   if (pb.has_new_comment()) {
-    col_delta.new_comment = boost::optional<string>(pb.new_comment());
+    col_delta.new_comment = optional<string>(pb.new_comment());
   }
   return col_delta;
 }
@@ -913,7 +917,7 @@ static void CopyColumn(
     const ColumnBlock& column_block, int dst_col_idx, uint8_t* __restrict__ dst_base,
     faststring* indirect_data, const Schema* dst_schema, size_t row_stride,
     size_t schema_byte_size, size_t column_offset,
-    const vector<int>& row_idx_select) {
+    const vector<uint16_t>& row_idx_select) {
   DCHECK(dst_schema);
   uint8_t* dst = dst_base + column_offset;
   size_t offset_to_null_bitmap = schema_byte_size - column_offset;
@@ -949,13 +953,29 @@ static void CopyColumn(
 // Because we use a faststring here, ASAN tests become unbearably slow
 // with the extra verifications.
 ATTRIBUTE_NO_ADDRESS_SAFETY_ANALYSIS
-void SerializeRowBlock(const RowBlock& block,
-                       RowwiseRowBlockPB* rowblock_pb,
-                       const Schema* projection_schema,
-                       faststring* data_buf,
-                       faststring* indirect_data,
-                       bool pad_unixtime_micros_to_16_bytes) {
+int SerializeRowBlock(const RowBlock& block,
+                      const Schema* projection_schema,
+                      faststring* data_buf,
+                      faststring* indirect_data,
+                      bool pad_unixtime_micros_to_16_bytes) {
   DCHECK_GT(block.nrows(), 0);
+
+  boost::optional<vector<uint16_t>> selected_row_indexes_opt;
+  block.selection_vector()->GetSelectedRows(&selected_row_indexes_opt);
+  if (selected_row_indexes_opt == boost::none) {
+    // 'none' here indicates that all rows were selected.
+    // TODO: add a fast-path for this in the 'Copy' functions.
+    selected_row_indexes_opt.emplace(block.nrows());
+    std::iota(selected_row_indexes_opt->begin(),
+              selected_row_indexes_opt->end(), 0);
+  }
+  auto& selected_row_indexes = boost::get(selected_row_indexes_opt);
+
+  size_t num_rows = selected_row_indexes.size();
+  // Fast-path empty blocks (eg because the predicate didn't match any rows or
+  // all rows in the block were deleted)
+  if (num_rows == 0) return 0;
+
   const Schema* tablet_schema = block.schema();
 
   if (projection_schema == nullptr) {
@@ -980,7 +1000,6 @@ void SerializeRowBlock(const RowBlock& block,
 
   size_t old_size = data_buf->size();
   size_t row_stride = ContiguousRowHelper::row_size(*projection_schema) + total_padding;
-  size_t num_rows = block.selection_vector()->CountSelected();
   size_t schema_byte_size = projection_schema->byte_size() + total_padding;
   size_t additional_size = row_stride * num_rows;
 
@@ -993,8 +1012,7 @@ void SerializeRowBlock(const RowBlock& block,
     memset(base, 0, additional_size);
   }
 
-  vector<int> selected_row_indexes;
-  block.selection_vector()->GetSelectedRows(&selected_row_indexes);
+  
   size_t t_schema_idx = 0;
   size_t padding_so_far = 0;
   for (int p_schema_idx = 0; p_schema_idx < projection_schema->num_columns(); p_schema_idx++) {
@@ -1031,8 +1049,10 @@ void SerializeRowBlock(const RowBlock& block,
       padding_so_far += 8;
     }
   }
-  rowblock_pb->set_num_rows(rowblock_pb->num_rows() + num_rows);
+
+  return num_rows;
 }
+
 
 string StartTimeToString(const ServerRegistrationPB& reg) {
   string start_time;

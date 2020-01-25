@@ -36,6 +36,8 @@ CPU::CPU()
     has_avx_(false),
     has_avx2_(false),
     has_aesni_(false),
+    has_bmi_(false),
+    has_bmi2_(false),
     has_non_stop_time_stamp_counter_(false),
     has_broken_neon_(false),
     cpu_vendor_("unknown") {
@@ -239,6 +241,8 @@ void CPU::Initialize() {
         (_xgetbv(0) & 6) == 6 /* XSAVE enabled by kernel */;
     has_aesni_ = (cpu_info[2] & 0x02000000) != 0;
     has_avx2_ = has_avx_ && (cpu_info7[1] & 0x00000020) != 0;
+    has_bmi_ = cpu_info7[1] & (1 << 3);
+    has_bmi2_ = cpu_info7[1] & (1 << 8);
   }
 
   // Get the brand string of the cpu.

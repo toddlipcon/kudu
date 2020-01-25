@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include <boost/container/vector.hpp>
 #include <glog/logging.h>
 
 #include "kudu/gutil/macros.h"
@@ -31,6 +32,7 @@
 #include "kudu/rpc/remote_method.h"
 #include "kudu/rpc/rpc_header.pb.h"
 #include "kudu/rpc/service_if.h"
+#include "kudu/rpc/rpc_sidecar.h"
 #include "kudu/rpc/transfer.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/monotime.h"
@@ -264,7 +266,7 @@ class InboundCall {
 
   // Inbound sidecars from the request. The slices are views onto transfer_. There are as
   // many slices as header_.sidecar_offsets_size().
-  Slice inbound_sidecar_slices_[TransferLimits::kMaxSidecars];
+  SidecarSliceVector inbound_sidecar_slices_;
 
   // The trace buffer.
   scoped_refptr<Trace> trace_;

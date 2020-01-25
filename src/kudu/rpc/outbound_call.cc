@@ -512,7 +512,7 @@ Status CallResponse::ParseFrom(unique_ptr<InboundTransfer> transfer) {
 
   // Use information from header to extract the payload slices.
   RETURN_NOT_OK(RpcSidecar::ParseSidecars(header_.sidecar_offsets(),
-          serialized_response_, sidecar_slices_));
+          serialized_response_, &sidecar_slices_));
 
   if (header_.sidecar_offsets_size() > 0) {
     serialized_response_ =
