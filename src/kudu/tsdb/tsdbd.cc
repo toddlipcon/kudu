@@ -383,30 +383,37 @@ class Server {
     VLOG(1) << "Result will have " << grouped_series.size() << " series";
 
     // For each group, read the data and perform the aggregate.
+    vector<GroupTask*> tasks;
     for (auto& p : grouped_series) {
-      const auto& series_ids = p.second.series_ids;
-
-      influxql::BlockBuffer output;
-      unique_ptr<influxql::TSBlockConsumer> agg;
-      RETURN_NOT_OK(agg_factory(&output, &agg));
-
-      for (auto series_id : series_ids) {
-        const auto& fields = *asel->selected_fields;
-        std::vector<InfluxVec> vals;
-        RETURN_NOT_OK(metrics_store_->Read(
-            asel->stmt->from_.measurement,
-            series_id,
-            asel->time_range->min_us.value_or(0),
-            asel->time_range->max_us.value_or(asel->now_us),
-            fields,
-            metric_predicates,
-            &ctx, agg.get()));
-      }
-
-      RETURN_NOT_OK(agg->Finish());
-      p.second.results = output.TakeResults();
+      tasks.push_back(&p.second);
     }
+    ParallelMap(
+        grouped_series.size(),
+        [&](int i) -> Status {
+          GroupTask* task = tasks[i];
+          const auto& series_ids = task->series_ids;
 
+          influxql::BlockBuffer output;
+          unique_ptr<influxql::TSBlockConsumer> agg;
+          RETURN_NOT_OK(agg_factory(&output, &agg));
+
+          for (auto series_id : series_ids) {
+            const auto& fields = *asel->selected_fields;
+            std::vector<InfluxVec> vals;
+            RETURN_NOT_OK(metrics_store_->Read(
+                asel->stmt->from_.measurement,
+                series_id,
+                asel->time_range->min_us.value_or(0),
+                asel->time_range->max_us.value_or(asel->now_us),
+                fields,
+                metric_predicates,
+                &ctx, agg.get()));
+          }
+
+          RETURN_NOT_OK(agg->Finish());
+          task->results = output.TakeResults();
+          return Status::OK();
+        });
     // Output the results.
     WriteResponse(
         resp, [&](JsonWriter* jw) {
