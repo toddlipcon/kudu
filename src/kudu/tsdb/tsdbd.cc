@@ -393,7 +393,6 @@ class Server {
       for (auto series_id : series_ids) {
         const auto& fields = *asel->selected_fields;
         std::vector<InfluxVec> vals;
-        // TODO(todd) read directly into agg, block-at-a-time
         RETURN_NOT_OK(metrics_store_->Read(
             asel->stmt->from_.measurement,
             series_id,
@@ -402,7 +401,6 @@ class Server {
             fields,
             metric_predicates,
             &ctx, agg.get()));
-        // TODO(todd) need to handle pass-through of multiple blocks
       }
 
       RETURN_NOT_OK(agg->Finish());
