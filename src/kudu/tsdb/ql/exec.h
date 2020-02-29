@@ -24,6 +24,7 @@
 
 #include "kudu/gutil/bits.h"
 #include "kudu/gutil/ref_counted.h"
+#include "kudu/util/bitmap.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
@@ -32,25 +33,22 @@ namespace tsdb {
 struct InfluxVec {
   bool has_nulls = false;
   boost::variant<std::vector<double>, std::vector<int64_t>> data;
-  std::vector<bool> nulls;
+  std::vector<uint8_t> null_bitmap;
 
   InfluxVec() {}
 
   template<class T>
-  InfluxVec(std::vector<T> cells, std::vector<bool> nulls)
+  InfluxVec(std::vector<T> cells, std::vector<uint8_t> null_bitmap)
       : data(std::move(cells)),
-        nulls(std::move(nulls)) {
-    CHECK_EQ(cells.size(), nulls.size());
-    has_nulls = false;
-    for (auto b : nulls) {
-      has_nulls |= b;
-    }
+        null_bitmap(std::move(null_bitmap)) {
+    CHECK_EQ(BitmapSize(cells.size()), null_bitmap.size());
+    has_nulls = !BitmapIsAllZero(null_bitmap.data(), 0, cells.size());
   }
 
   template<class T>
   static InfluxVec WithNoNulls(std::vector<T> cells) {
     InfluxVec ret;
-    ret.nulls.assign(cells.size(), false);
+    ret.null_bitmap.assign(BitmapSize(cells.size()), 0);
     ret.has_nulls = false;
     ret.data = std::move(cells);
     return ret;
@@ -72,17 +70,17 @@ struct InfluxVec {
   }
 
   bool null_at_index(int i) const {
-    return has_nulls && nulls[i];
+    return has_nulls && BitmapTest(null_bitmap.data(), i);
   }
 
   template<class T>
   void set(int i, T val) {
     (*data_as<T>())[i] = val;
-    nulls[i] = false;
+    BitmapClear(null_bitmap.data(), i);
   }
 
   void set(int i, std::nullptr_t val) {
-    nulls[i] = true;
+    BitmapSet(null_bitmap.data(), i);
     has_nulls = true;
   }
 
@@ -91,7 +89,7 @@ struct InfluxVec {
     boost::apply_visitor([&](auto& v){
                            v.resize(n_rows);
                          }, data);
-    nulls.resize(n_rows);
+    null_bitmap.resize(BitmapSize(n_rows));
   }
 };
 

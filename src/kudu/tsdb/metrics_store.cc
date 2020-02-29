@@ -19,11 +19,15 @@
 
 #include <unordered_set>
 
+#include <gflags/gflags.h>
+
 #include "kudu/client/client.h"
+#include "kudu/client/columnar_scan_batch.h"
 #include "kudu/client/write_op.h"
 #include "kudu/client/value.h"
 #include "kudu/gutil/bits.h"
 #include "kudu/gutil/map-util.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/strings/util.h"
 #include "kudu/tsdb/influx_wire_protocol.h"
 #include "kudu/tsdb/ql/qcontext.h"
@@ -31,6 +35,7 @@
 #include "kudu/util/rw_mutex.h"
 
 
+using kudu::client::KuduColumnarScanBatch;
 using kudu::client::KuduClient;
 using kudu::client::KuduColumnSchema;
 using kudu::client::KuduPredicate;
@@ -49,6 +54,9 @@ using std::string;
 using std::unique_ptr;
 using std::vector;
 using std::pair;
+
+
+DEFINE_bool(use_columnar_scan, false, "whether to use columnar batch api");
 
 namespace kudu {
 namespace tsdb {
@@ -370,15 +378,28 @@ Status MetricsStore::Read(StringPiece metric_name,
   RETURN_NOT_OK(PrepareProjectionInfo(table.get(), project, &proj_info));
 
   KUDU_RETURN_NOT_OK(scanner.SetProjectedColumnNames(proj_info.col_names));
+
+
+  if (FLAGS_use_columnar_scan) {
+    return ReadFromScannerColumnar(&scanner, proj_info, ctx, consumer);
+  } else {
+    return ReadFromScanner(&scanner, proj_info, ctx, consumer);
+  }
+}
+
+Status MetricsStore::ReadFromScanner(KuduScanner* scanner,
+                                     const ProjectionInfo& proj_info,
+                                     influxql::QContext* ctx,
+                                     influxql::TSBlockConsumer* consumer) {
   // TODO(todd): currently the aggregation doesn't rely on order.
   // If we switch that, we need to turn on FaultTolerant.
-  // KUDU_RETURN_NOT_OK(scanner.SetFaultTolerant());
-  KUDU_RETURN_NOT_OK(scanner.Open());
+  // RETURN_NOT_OK(scanner.SetFaultTolerant());
+  RETURN_NOT_OK(scanner->Open());
 
   KuduScanBatch batch;
   scoped_refptr<TSBlock> ts_block(new TSBlock());
-  while (scanner.HasMoreRows()) {
-    KUDU_RETURN_NOT_OK(scanner.NextBatch(&batch));
+  while (scanner->HasMoreRows()) {
+    KUDU_RETURN_NOT_OK(scanner->NextBatch(&batch));
     int n = batch.NumRows();
 
     if (batch.direct_data().size() != n * proj_info.row_stride) {
@@ -418,6 +439,91 @@ Status MetricsStore::Read(StringPiece metric_name,
   }
   return Status::OK();
 }
+
+template<typename T>
+Status VectorsFromColumnarBatch(const KuduColumnarScanBatch& batch,
+                                int col,
+                                vector<T>* vec,
+                                vector<uint8_t>* null_bitmap) {
+  int n_rows = batch.NumRows();
+  Slice data;
+  RETURN_NOT_OK(batch.GetDataForColumn(col, &data));
+  if (data.size() != n_rows * sizeof(T)) {
+    return Status::Corruption(strings::Substitute(
+        "unexpected data length $0 for $1 entries of column $2",
+        data.size(), n_rows, col));
+  }
+  vec->resize(n_rows);
+  memcpy(vec->data(), data.data(), n_rows * sizeof(T));
+
+  if (null_bitmap) {
+    Slice non_null;
+    RETURN_NOT_OK(batch.GetNonNullBitmapForColumn(col, &non_null));
+    null_bitmap->resize(BitmapSize(n_rows));
+    for (int i = 0; i < BitmapSize(n_rows); i++) {
+      (*null_bitmap)[i] = ~(non_null.data()[i]);
+    }
+  }
+  return Status::OK();
+}
+
+Status MetricsStore::ReadFromScannerColumnar(
+    KuduScanner* scanner,
+    const ProjectionInfo& proj_info,
+    influxql::QContext* ctx,
+    influxql::TSBlockConsumer* consumer) {
+  // TODO(todd): currently the aggregation doesn't rely on order.
+  // If we switch that, we need to turn on FaultTolerant.
+  // RETURN_NOT_OK(scanner.SetFaultTolerant());
+  RETURN_NOT_OK(scanner->SetRowFormatFlags(KuduScanner::COLUMNAR_LAYOUT));
+  RETURN_NOT_OK(scanner->Open());
+
+  KuduColumnarScanBatch batch;
+  scoped_refptr<TSBlock> ts_block(new TSBlock());
+  while (scanner->HasMoreRows()) {
+    KUDU_RETURN_NOT_OK(scanner->NextBatch(&batch));
+    int n = batch.NumRows();
+    if (n == 0) continue;
+    CHECK(ts_block->HasOneRef());
+    SetupBlock(ctx, proj_info, n, ts_block.get());
+
+    // Assign timestamps.
+    RETURN_NOT_OK(VectorsFromColumnarBatch<int64_t>(batch, 0, &ts_block->times, nullptr));
+
+    // Assign other columns.
+    for (const auto& p : proj_info.int64_cols) {
+      vector<int64_t> vals;
+      if (p.nullable) {
+        vector<uint8_t> nulls_bitmap;
+        RETURN_NOT_OK(VectorsFromColumnarBatch<int64_t>(
+            batch, p.proj_idx, &vals, &nulls_bitmap));
+        ts_block->columns[p.proj_idx - 1] = InfluxVec(std::move(vals), std::move(nulls_bitmap));
+      } else {
+        RETURN_NOT_OK(VectorsFromColumnarBatch<int64_t>(
+            batch, p.proj_idx, &vals, nullptr));
+        ts_block->columns[p.proj_idx - 1] = InfluxVec::WithNoNulls(std::move(vals));
+      }
+    }
+
+    for (const auto& p : proj_info.double_cols) {
+      vector<double> vals;
+      if (p.nullable) {
+        vector<uint8_t> nulls_bitmap;
+        RETURN_NOT_OK(VectorsFromColumnarBatch<double>(
+            batch, p.proj_idx, &vals, &nulls_bitmap));
+        ts_block->columns[p.proj_idx - 1] = InfluxVec(std::move(vals), std::move(nulls_bitmap));
+      } else {
+        RETURN_NOT_OK(VectorsFromColumnarBatch<double>(
+            batch, p.proj_idx, &vals, nullptr));
+        ts_block->columns[p.proj_idx - 1] = InfluxVec::WithNoNulls(std::move(vals));
+      }
+    }
+
+    RETURN_NOT_OK(consumer->Consume(ts_block));
+  }
+  return Status::OK();
+}
+
 
 Status MetricsStore::GetColumnsForMeasurement(
     StringPiece measurement,

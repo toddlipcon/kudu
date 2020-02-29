@@ -111,6 +111,7 @@ Status InfluxBatch::Parse(std::string s) {
     // parse ts
     int64_t ts;
     if (!safe_strto64(ts_str.ToString(), &ts)) {
+      LOG(WARNING) << "could not parse input line: " << s;
       return Status::InvalidArgument("invalid ts", ts_str);
     }
 

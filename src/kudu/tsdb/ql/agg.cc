@@ -123,17 +123,17 @@ class AggregatorImpl : public Aggregator {
     DCHECK_EQ(src_vals->size(), n);
     DCHECK_EQ(bucket_indexes.size(), n);
     if (vec->has_nulls) {
-      DCHECK_EQ(vec->nulls.size(), n);
+      DCHECK_EQ(vec->null_bitmap.size(), BitmapSize(n));
       DoMergeAgg<typename Traits::InputType, true>(
           bucket_indexes.data(),
           src_vals->data(),
-          vec->nulls,
+          vec->null_bitmap.data(),
           intermediate_vals_.data(), n);
     } else {
       DoMergeAgg<typename Traits::InputType, false>(
           bucket_indexes.data(),
           src_vals->data(),
-          vec->nulls,
+          nullptr,
           intermediate_vals_.data(), n);
     }
     return Status::OK();
@@ -149,12 +149,12 @@ class AggregatorImpl : public Aggregator {
   template<class T, bool HAS_NULLS>
   void DoMergeAgg(const int* __restrict__ bucket_indexes,
                   const T* __restrict__ src_vals,
-                  const vector<bool>& nulls,
+                  const uint8_t* __restrict__ null_bitmap,
                   typename Traits::IntermediateType* __restrict__ intermediate_vals,
                   int n) {
 #pragma unroll(4)
     for (int i = 0; i < n; i++) {
-      if (HAS_NULLS && nulls[i]) continue;
+      if (HAS_NULLS && BitmapTest(null_bitmap, i)) continue;
       int bucket = *bucket_indexes++;
       Traits::Combine(&intermediate_vals[bucket], src_vals[i]);
     }

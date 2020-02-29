@@ -33,6 +33,8 @@
 namespace kudu {
 namespace tsdb {
 
+struct ProjectionInfo;
+
 class MetricsColumnSource {
  public:
   virtual Status GetColumnsForMeasurement(
@@ -43,8 +45,8 @@ class MetricsColumnSource {
 class MetricsStore : public MetricsColumnSource {
  public:
 
-  MetricsStore(client::sp::shared_ptr<client::KuduClient> client)
-      : client_(client) {
+  explicit MetricsStore(client::sp::shared_ptr<client::KuduClient> client)
+      : client_(std::move(client)) {
   }
   virtual ~MetricsStore();
 
@@ -72,6 +74,15 @@ class MetricsStore : public MetricsColumnSource {
   Status FindTable(StringPiece metric_name,
                    client::sp::shared_ptr<client::KuduTable>* table);
   Status CreateTable(const InfluxMeasurement& measurement);
+
+  static Status ReadFromScanner(client::KuduScanner* scanner,
+                                const ProjectionInfo& proj_info,
+                                influxql::QContext* ctx,
+                                influxql::TSBlockConsumer* consumer);
+  static Status ReadFromScannerColumnar(client::KuduScanner* scanner,
+                                        const ProjectionInfo& proj_info,
+                                        influxql::QContext* ctx,
+                                        influxql::TSBlockConsumer* consumer);
 
   client::sp::shared_ptr<client::KuduClient> client_;
 
