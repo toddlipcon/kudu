@@ -154,11 +154,25 @@ class AggregatorImpl : public Aggregator {
                   const uint8_t* __restrict__ non_null_bitmap,
                   typename Traits::IntermediateType* __restrict__ intermediate_vals,
                   int n) {
-#pragma unroll(4)
-    for (int i = 0; i < n; i++) {
-      if (HAS_NULLS && !BitmapTest(non_null_bitmap, i)) continue;
-      int bucket = *bucket_indexes++;
-      Traits::Combine(&intermediate_vals[bucket], src_vals[i]);
+    // Loop over runs of values with the same bucket. We expect data to come back
+    // mostly clustered into buckets, and we expect aggregations to usually aggregate
+    // many values into the same bucket. Looping here allows us to keep local aggregation
+    // state in registers instead of memory, avoiding store-to-load-forwarding stalls (
+    // typically 5-7 cycles per load).
+    //
+    // This ends up being ~50% faster than a naive loop for the TSBS 'cpu-max-all-8'
+    // benchmark.
+    //
+    // We've stashed a negative "elephant in cairo" sentinel at the end of the array,
+    // which makes this loop simpler (no need to check count).
+    int i = 0;
+    while (bucket_indexes[i] != -1) {
+      int bucket = bucket_indexes[i];
+      auto val = intermediate_vals[bucket];
+      while (bucket_indexes[i] == bucket) {
+        Traits::Combine(&val, src_vals[i++]);
+      }
+      intermediate_vals[bucket] = val;
     }
   }
 
@@ -218,13 +232,14 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
   Status Consume(scoped_refptr<const TSBlock> block) override {
     // TODO(todd) move this to persist across calls instead of reallocating.
     vector<int> bucket_indexes;
-    bucket_indexes.resize(block->times.size());
+    bucket_indexes.resize(block->times.size() + 1);
     const int64_t* ts = &block->times[0];
     int* __restrict__ bucket = &bucket_indexes[0];
     int n_times = block->times.size();
     while (n_times--) {
       *bucket++ = bucketer_.bucket(*ts++);
     }
+    *bucket++ = -1; // "elephant in cairo"
 
     for (const auto& p : aggs_) {
       const auto& agg = p.second;
