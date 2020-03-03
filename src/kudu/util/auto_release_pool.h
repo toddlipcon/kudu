@@ -23,24 +23,31 @@
 
 #include <vector>
 
+#include <boost/signals2/dummy_mutex.hpp>
+
 #include "kudu/gutil/spinlock.h"
 
 namespace kudu {
 
-// Thread-safe.
+
+// Not thread-safe.
 class AutoReleasePool {
  public:
-  AutoReleasePool(): objects_() { }
+  AutoReleasePool() = default;
 
   ~AutoReleasePool() {
+    Reset();
+  }
+
+  void Reset() {
     for (auto& object : objects_) {
       delete object;
     }
+    objects_.clear();
   }
 
   template <class T>
   T *Add(T *t) {
-    base::SpinLockHolder l(&lock_);
     objects_.push_back(new SpecificElement<T>(t));
     return t;
   }
@@ -49,16 +56,12 @@ class AutoReleasePool {
   // Add() except that it will be freed with 'delete[]' instead of 'delete'.
   template<class T>
   T* AddArray(T *t) {
-    base::SpinLockHolder l(&lock_);
     objects_.push_back(new SpecificArrayElement<T>(t));
     return t;
   }
 
   // Donate all objects in this pool to another pool.
   void DonateAllTo(AutoReleasePool* dst) {
-    base::SpinLockHolder l(&lock_);
-    base::SpinLockHolder l_them(&dst->lock_);
-
     dst->objects_.reserve(dst->objects_.size() + objects_.size());
     dst->objects_.insert(dst->objects_.end(), objects_.begin(), objects_.end());
     objects_.clear();
@@ -91,7 +94,6 @@ class AutoReleasePool {
 
   typedef std::vector<GenericElement *> ElementVector;
   ElementVector objects_;
-  base::SpinLock lock_;
 };
 
 
