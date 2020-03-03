@@ -53,8 +53,8 @@ struct MaxTraits {
     *old_val = std::max<ValueType>(*old_val, new_val);
   }
 
-  static vector<OutputType> Finish(vector<IntermediateType> intermediate) {
-    return intermediate;
+  static MaybeOwnedArrayView<OutputType> Finish(vector<IntermediateType> intermediate) {
+    return MaybeOwnedArrayView<OutputType>::ViewOf(&intermediate[0], intermediate.size());
   }
 };
 
@@ -73,8 +73,9 @@ struct MeanTraits {
     old_val->count++;
   }
 
-  static vector<OutputType> Finish(vector<IntermediateType> intermediate) {
-    vector<OutputType> ret(intermediate.size());
+  static MaybeOwnedArrayView<OutputType> Finish(vector<IntermediateType> intermediate) {
+    auto ret = MaybeOwnedArrayView<OutputType>::Owning(new OutputType[intermediate.size()],
+                                                       intermediate.size());;
     for (int i = 0; i < intermediate.size(); i++) {
       ret[i] = static_cast<double>(intermediate[i].total) / intermediate[i].count;
     }
@@ -142,7 +143,8 @@ class AggregatorImpl : public Aggregator {
   InfluxVec TakeResults() override {
     CHECK(!done_);
     done_ = true;
-    return InfluxVec::WithNoNulls(Traits::Finish(std::move(intermediate_vals_)));
+    auto ret_av = Traits::Finish(std::move(intermediate_vals_));
+    return InfluxVec::WithNoNulls(std::move(ret_av));
   }
 
  private:
@@ -217,8 +219,11 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
     // TODO(todd) move this to persist across calls instead of reallocating.
     vector<int> bucket_indexes;
     bucket_indexes.resize(block->times.size());
-    for (int i = 0; i < block->times.size(); i++) {
-      bucket_indexes[i] = bucketer_.bucket(block->times[i]);
+    const int64_t* ts = &block->times[0];
+    int* __restrict__ bucket = &bucket_indexes[0];
+    int n_times = block->times.size();
+    while (n_times--) {
+      *bucket++ = bucketer_.bucket(*ts++);
     }
 
     for (const auto& p : aggs_) {
@@ -233,7 +238,10 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
     scoped_refptr<TSBlock> out_block = ctx_->NewTSBlock();
     // All input blocks have been consumed. Finalize aggregates and
     // output.
-    out_block->times = bucketer_.bucket_times();
+    const auto& times = bucketer_.bucket_times();
+    out_block->times = MaybeOwnedArrayView<int64_t>::ViewOf(
+        const_cast<int64_t*>(times.data()),
+        times.size());
     for (const auto& p : aggs_) {
       out_block->AddColumn(StrCat(p.second->name(), "_", p.first),
                           p.second->TakeResults());

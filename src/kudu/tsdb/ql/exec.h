@@ -24,21 +24,112 @@
 
 #include "kudu/gutil/bits.h"
 #include "kudu/gutil/ref_counted.h"
+#include "kudu/util/array_view.h"
 #include "kudu/util/bitmap.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
 namespace tsdb {
 
+template<class T>
+class MaybeOwnedArrayView {
+ public:
+  static MaybeOwnedArrayView<T> AllocAndZero(size_t size) {
+    T* data = new T[size];
+    memset(data, 0, sizeof(T) * size);
+    return Owning(data, size);
+  }
+
+  static MaybeOwnedArrayView<T> Owning(T* data, size_t size) {
+    return MaybeOwnedArrayView<T>(data, size, true);
+  }
+  static MaybeOwnedArrayView<T> ViewOf(T* data, size_t size) {
+    return MaybeOwnedArrayView<T>(data, size, false);
+  }
+  static MaybeOwnedArrayView<T> ViewOf(const MaybeOwnedArrayView<T>& other) {
+    return MaybeOwnedArrayView<T>(other.data(), other.size(), false);
+  }
+
+  MaybeOwnedArrayView() : owned_(false) {
+  }
+
+  MaybeOwnedArrayView(MaybeOwnedArrayView<T>&& other) noexcept
+      : view_(other.view_),
+        owned_(other.owned_) {
+    other.owned_ = false;
+  }
+
+  MaybeOwnedArrayView& operator=(MaybeOwnedArrayView<T>&& other) {
+    if (&other == this) return *this;
+
+    Reset();
+    view_ = other.view_;
+    owned_ = other.owned_;
+    other.owned_ = false;
+    other.Reset();
+
+    return *this;
+  }
+
+  ~MaybeOwnedArrayView() {
+    Reset();
+  }
+
+  void Reset() {
+    if (owned_) {
+      delete [] view_.data();
+    }
+    view_ = {};
+    owned_ = false;
+  }
+
+  T* data() const {
+    return view_.data();
+  }
+
+  size_t size() const {
+    return view_.size();
+  }
+
+  T& operator[](size_t index) {
+    return view_[index];
+  }
+
+  const T& operator[](size_t index) const {
+    return view_[index];
+  }
+
+ private:
+  MaybeOwnedArrayView(T* data, size_t size, bool owned)
+      : view_(data, size),
+        owned_(owned) {
+  }
+
+  ArrayView<T> view_;
+  bool owned_;
+};
+
 struct InfluxVec {
   bool has_nulls = false;
-  boost::variant<std::vector<double>, std::vector<int64_t>> data;
-  std::vector<uint8_t> null_bitmap;
+  boost::variant<MaybeOwnedArrayView<double>,
+                 MaybeOwnedArrayView<int64_t>> data;
+  MaybeOwnedArrayView<uint8_t> null_bitmap;
 
   InfluxVec() {}
 
+  static InfluxVec ViewOf(const InfluxVec& other) {
+    InfluxVec ret;
+    ret.has_nulls = other.has_nulls;
+    ret.null_bitmap = MaybeOwnedArrayView<uint8_t>::ViewOf(other.null_bitmap);
+    boost::apply_visitor([&](auto& v){
+                           using T = std::remove_reference_t<decltype(v)>;
+                           ret.data = T::ViewOf(v);
+                         }, other.data);
+    return ret;
+  }
+  
   template<class T>
-  InfluxVec(std::vector<T> cells, std::vector<uint8_t> null_bitmap)
+  InfluxVec(MaybeOwnedArrayView<T> cells, MaybeOwnedArrayView<uint8_t> null_bitmap)
       : data(std::move(cells)),
         null_bitmap(std::move(null_bitmap)) {
     CHECK_EQ(BitmapSize(cells.size()), null_bitmap.size());
@@ -46,27 +137,26 @@ struct InfluxVec {
   }
 
   template<class T>
-  static InfluxVec WithNoNulls(std::vector<T> cells) {
+  static InfluxVec WithNoNulls(MaybeOwnedArrayView<T> cells) {
     InfluxVec ret;
-    ret.null_bitmap.assign(BitmapSize(cells.size()), 0);
+    ret.null_bitmap = MaybeOwnedArrayView<uint8_t>::AllocAndZero(BitmapSize(cells.size()));
     ret.has_nulls = false;
     ret.data = std::move(cells);
     return ret;
   }
-
   template<class T>
   static InfluxVec Empty() {
-    return WithNoNulls<T>({});
+    return InfluxVec(MaybeOwnedArrayView<T>(), {});
   }
 
   template<class T>
-  const std::vector<T>* data_as() const {
-    return boost::get<std::vector<T>>(&data);
+  const MaybeOwnedArrayView<T>* data_as() const {
+    return boost::get<MaybeOwnedArrayView<T>>(&data);
   }
 
   template<class T>
-  std::vector<T>* data_as() {
-    return boost::get<std::vector<T>>(&data);
+  MaybeOwnedArrayView<T>* data_as() {
+    return boost::get<MaybeOwnedArrayView<T>>(&data);
   }
 
   bool null_at_index(int i) const {
@@ -87,10 +177,13 @@ struct InfluxVec {
   void Reset(int n_rows) {
     has_nulls = false;
     boost::apply_visitor([&](auto& v){
-                           v.resize(n_rows);
+                           using T = std::remove_reference_t<decltype(v[0])>;
+                           v = MaybeOwnedArrayView<T>::Owning(new T[n_rows], n_rows);
                          }, data);
-    null_bitmap.resize(BitmapSize(n_rows));
+    null_bitmap = MaybeOwnedArrayView<uint8_t>::Owning(
+        new uint8_t[BitmapSize(n_rows)], n_rows);
   }
+
 };
 
 namespace influxql {
@@ -126,18 +219,18 @@ struct TSBlock : public RefCounted<TSBlock> {
     column_indexes.clear();
     columns.clear();
     column_names.clear();
-    times.clear();
+    times = {};
   }
 
   void Reset(int n_rows) {
-    times.resize(n_rows);
+    times = MaybeOwnedArrayView<int64_t>::Owning(new int64_t[n_rows], n_rows);
     for (auto& c : columns) {
       c.Reset(n_rows);
     }
   }
 
 
-  std::vector<int64_t> times;
+  MaybeOwnedArrayView<int64_t> times;
   std::unordered_map<std::string, int> column_indexes;
   std::vector<InfluxVec> columns;
   std::vector<std::string> column_names;

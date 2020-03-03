@@ -441,10 +441,10 @@ Status MetricsStore::ReadFromScanner(KuduScanner* scanner,
 }
 
 template<typename T>
-Status VectorsFromColumnarBatch(const KuduColumnarScanBatch& batch,
-                                int col,
-                                vector<T>* vec,
-                                vector<uint8_t>* null_bitmap) {
+Status ArrayViewsFromColumnarBatch(const KuduColumnarScanBatch& batch,
+                                   int col,
+                                   MaybeOwnedArrayView<T>* vec,
+                                   MaybeOwnedArrayView<uint8_t>* null_bitmap) {
   int n_rows = batch.NumRows();
   Slice data;
   RETURN_NOT_OK(batch.GetDataForColumn(col, &data));
@@ -453,13 +453,15 @@ Status VectorsFromColumnarBatch(const KuduColumnarScanBatch& batch,
         "unexpected data length $0 for $1 entries of column $2",
         data.size(), n_rows, col));
   }
-  vec->resize(n_rows);
-  memcpy(vec->data(), data.data(), n_rows * sizeof(T));
+  *vec = MaybeOwnedArrayView<T>::ViewOf(
+      reinterpret_cast<T*>(data.mutable_data()), n_rows);
 
   if (null_bitmap) {
     Slice non_null;
     RETURN_NOT_OK(batch.GetNonNullBitmapForColumn(col, &non_null));
-    null_bitmap->resize(BitmapSize(n_rows));
+    *null_bitmap = MaybeOwnedArrayView<uint8_t>::Owning(
+        new uint8_t[BitmapSize(n_rows)],
+        BitmapSize(n_rows));
     for (int i = 0; i < BitmapSize(n_rows); i++) {
       (*null_bitmap)[i] = ~(non_null.data()[i]);
     }
@@ -488,32 +490,32 @@ Status MetricsStore::ReadFromScannerColumnar(
     SetupBlock(ctx, proj_info, n, ts_block.get());
 
     // Assign timestamps.
-    RETURN_NOT_OK(VectorsFromColumnarBatch<int64_t>(batch, 0, &ts_block->times, nullptr));
+    RETURN_NOT_OK(ArrayViewsFromColumnarBatch<int64_t>(batch, 0, &ts_block->times, nullptr));
 
     // Assign other columns.
     for (const auto& p : proj_info.int64_cols) {
-      vector<int64_t> vals;
+      MaybeOwnedArrayView<int64_t> vals;
       if (p.nullable) {
-        vector<uint8_t> nulls_bitmap;
-        RETURN_NOT_OK(VectorsFromColumnarBatch<int64_t>(
+        MaybeOwnedArrayView<uint8_t> nulls_bitmap;
+        RETURN_NOT_OK(ArrayViewsFromColumnarBatch<int64_t>(
             batch, p.proj_idx, &vals, &nulls_bitmap));
         ts_block->columns[p.proj_idx - 1] = InfluxVec(std::move(vals), std::move(nulls_bitmap));
       } else {
-        RETURN_NOT_OK(VectorsFromColumnarBatch<int64_t>(
+        RETURN_NOT_OK(ArrayViewsFromColumnarBatch<int64_t>(
             batch, p.proj_idx, &vals, nullptr));
         ts_block->columns[p.proj_idx - 1] = InfluxVec::WithNoNulls(std::move(vals));
       }
     }
 
     for (const auto& p : proj_info.double_cols) {
-      vector<double> vals;
+      MaybeOwnedArrayView<double> vals;
       if (p.nullable) {
-        vector<uint8_t> nulls_bitmap;
-        RETURN_NOT_OK(VectorsFromColumnarBatch<double>(
+        MaybeOwnedArrayView<uint8_t> nulls_bitmap;
+        RETURN_NOT_OK(ArrayViewsFromColumnarBatch<double>(
             batch, p.proj_idx, &vals, &nulls_bitmap));
         ts_block->columns[p.proj_idx - 1] = InfluxVec(std::move(vals), std::move(nulls_bitmap));
       } else {
-        RETURN_NOT_OK(VectorsFromColumnarBatch<double>(
+        RETURN_NOT_OK(ArrayViewsFromColumnarBatch<double>(
             batch, p.proj_idx, &vals, nullptr));
         ts_block->columns[p.proj_idx - 1] = InfluxVec::WithNoNulls(std::move(vals));
       }

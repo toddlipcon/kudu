@@ -66,6 +66,10 @@ class MetricsStore : public MetricsColumnSource {
       StringPiece measurement,
       std::map<std::string, client::KuduColumnSchema::DataType>* cols) override;
 
+  client::KuduClient* client() {
+    return client_.get();
+  }
+
  private:
   constexpr static const char* const kTablePrefix = "metrics.";
 

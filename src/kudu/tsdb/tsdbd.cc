@@ -81,6 +81,8 @@ METRIC_DEFINE_histogram(server, influxql_query_duration,
                         kudu::MetricLevel::kInfo,
                         120000000LU, 2);
 
+DEFINE_int32(tsdbd_num_metrics_store_clients, 4, "number of unique client instances");
+
 namespace kudu {
 namespace tsdb {
 
@@ -152,21 +154,32 @@ class Server {
         query_duration_histo_(METRIC_influxql_query_duration.Instantiate(metric_entity_)) {
   }
 
+
+  MetricsStore* GetMetricsStore() {
+    return metrics_store_shards_[next_metric_store_shard_++ % metrics_store_shards_.size()].get();
+  }
+  
   Status Start() {
     RETURN_NOT_OK(ThreadPoolBuilder("tsdb-query")
                   .set_max_threads(FLAGS_parallel_query_threads)
                   .Build(&pool_));
 
-    RETURN_NOT_OK(KuduClientBuilder()
-                  .master_server_addrs({"localhost"}) // TODO  flag
-                  .default_admin_operation_timeout(MonoDelta::FromSeconds(20))
-                  .Build(&client_));
-
+    auto BuildClient = [&](client::sp::shared_ptr<KuduClient>* client) -> Status {
+                         return KuduClientBuilder()
+                             .master_server_addrs({"localhost"}) // TODO  flag
+                             .default_admin_operation_timeout(MonoDelta::FromSeconds(20))
+                             .Build(client);
+                       };
+    RETURN_NOT_OK(BuildClient(&client_));
     series_store_.reset(new SeriesStoreImpl(client_));
     RETURN_NOT_OK(series_store_->Init());
 
-    metrics_store_.reset(new MetricsStore(client_));
-    RETURN_NOT_OK(metrics_store_->Init());
+    for (int i = 0; i < FLAGS_tsdbd_num_metrics_store_clients; i++) {
+      client::sp::shared_ptr<KuduClient> ms_client;
+      RETURN_NOT_OK(BuildClient(&ms_client));
+      metrics_store_shards_.emplace_back(new MetricsStore(std::move(ms_client)));
+      RETURN_NOT_OK(metrics_store_shards_.back()->Init());
+    }
 
     WebserverOptions opts;
     opts.port = FLAGS_webserver_port;
@@ -336,8 +349,8 @@ class Server {
     const auto& query = FindOrDie(req.parsed_args, "q");
     TimestampFormat timestamp_format;
     RETURN_NOT_OK(ParseTimestampFormat(FindWithDefault(req.parsed_args, "epoch", "rfc3339"), &timestamp_format));
-
-    influxql::QContext ctx(series_store_.get(), metrics_store_.get());
+    auto* ms = GetMetricsStore();
+    influxql::QContext ctx(series_store_.get(), ms);
     influxql::Parser p(&ctx);
     influxql::SelectStmt* sel;
     LOG(INFO) << "q: " << query;
@@ -400,7 +413,7 @@ class Server {
           for (auto series_id : series_ids) {
             const auto& fields = *asel->selected_fields;
             std::vector<InfluxVec> vals;
-            RETURN_NOT_OK(metrics_store_->Read(
+            RETURN_NOT_OK(ms->Read(
                 asel->stmt->from_.measurement,
                 series_id,
                 asel->time_range->min_us.value_or(0),
@@ -462,14 +475,15 @@ class Server {
     InfluxBatch parsed;
     RETURN_NOT_OK_PREPEND(parsed.Parse(req.post_data), "failed to parse");
 
-    auto session = client_->NewSession();
+    auto* ms = GetMetricsStore();
+    auto session = ms->client()->NewSession();
     CHECK_OK(session->SetFlushMode(KuduSession::AUTO_FLUSH_BACKGROUND));
     for (const auto& measurement : parsed.measurements) {
       SeriesId series_id;
       RETURN_NOT_OK_PREPEND(series_store_->FindOrCreateSeries(
           measurement.metric_name, measurement.tags, &series_id),
                             "could not fetch series id");
-      RETURN_NOT_OK_PREPEND(metrics_store_->Write(series_id, measurement, session.get()),
+      RETURN_NOT_OK_PREPEND(ms->Write(series_id, measurement, session.get()),
                             "could not write metrics data");
     }
     Status s = session->Flush();
@@ -488,7 +502,8 @@ class Server {
 
   client::sp::shared_ptr<KuduClient> client_;
   unique_ptr<SeriesStoreImpl> series_store_;
-  unique_ptr<MetricsStore> metrics_store_;
+  std::atomic<uint32_t> next_metric_store_shard_ { 0 };
+  vector<unique_ptr<MetricsStore>> metrics_store_shards_;
   unique_ptr<Webserver> webserver_;
 
   unique_ptr<ThreadPool> pool_;

@@ -48,9 +48,9 @@ class Projector : public TSBlockConsumer {
       }
       // TODO(todd): copy-on-write would make sense for column data
       // TODO(todd): could move assuming the src col was only referenced once.
-      projected->AddColumn(f, *src_col);
+      projected->AddColumn(f, InfluxVec::ViewOf(*src_col));
     }
-    projected->times = std::move(block->times);
+    projected->times = MaybeOwnedArrayView<int64_t>::ViewOf(block->times);
     return downstream_->Consume(std::move(projected));
   }
 
