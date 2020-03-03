@@ -57,13 +57,16 @@ namespace {
 static void nt_memcpy(uint8_t* __restrict__ dst,
                       const uint8_t* __restrict__ src,
                       int size) {
-  while (size >= 16) {
-    __builtin_nontemporal_store(
-        *reinterpret_cast<const __m128i*>(src),
-        reinterpret_cast<__m128i*>(dst));
-    size -= 16;
-    dst += 16;
-    src += 16;
+  if ((reinterpret_cast<uintptr_t>(dst) & 15) == 0 &&
+      (reinterpret_cast<uintptr_t>(src) & 15) == 0) {
+    while (size >= 16) {
+      __builtin_nontemporal_store(
+          *reinterpret_cast<const __m128i*>(src),
+          reinterpret_cast<__m128i*>(dst));
+      size -= 16;
+      dst += 16;
+      src += 16;
+    }
   }
   while (size >= 8) {
     __builtin_nontemporal_store(
@@ -397,7 +400,7 @@ void CopySelectedRowsFromColumn(const ColumnBlock& cblock,
   if (sel_rows == boost::none) {
     // All rows selected: just memcpy
     // TODO(todd) use nt_memcpy
-    memcpy(dst_buf, src_buf, type_size * n_sel);
+    nt_memcpy(dst_buf, src_buf, type_size * n_sel);
   } else {
     CopySelectedRows(boost::get(sel_rows), type_size, src_buf, dst_buf);
   }
