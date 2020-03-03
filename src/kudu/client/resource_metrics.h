@@ -57,6 +57,7 @@ class KUDU_EXPORT ResourceMetrics {
   int64_t GetMetric(const std::string& name) const;
 
  private:
+  friend class KuduScanner;
   class KUDU_NO_EXPORT Data;
   Data* data_;
 };

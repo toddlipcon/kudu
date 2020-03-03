@@ -49,18 +49,29 @@ int64_t ResourceMetrics::GetMetric(const std::string& name) const {
   return data_->GetMetric(name);
 }
 
-ResourceMetrics::Data::Data() {}
+ResourceMetrics::Data::Data() {
+  counters_.set_empty_key("");
+}
 
 ResourceMetrics::Data::~Data() {}
 
 void ResourceMetrics::Data::Increment(const std::string& name, int64_t amount) {
   std::lock_guard<simple_spinlock> l(lock_);
+  owned_strings_.emplace_back(name);
+  counters_[name] += amount;
+}
+void ResourceMetrics::Data::Increment(StringPiece name, int64_t amount) {
+  std::lock_guard<simple_spinlock> l(lock_);
   counters_[name] += amount;
 }
 
 std::map<std::string, int64_t> ResourceMetrics::Data::Get() const {
+  std::map<std::string, int64_t> ret;
   std::lock_guard<simple_spinlock> l(lock_);
-  return counters_;
+  for (const auto& p : counters_) {
+    ret.emplace(p.first.as_string(), p.second);
+  }
+  return ret;
 }
 
 int64_t ResourceMetrics::Data::GetMetric(const std::string& name) const {

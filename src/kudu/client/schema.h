@@ -717,6 +717,7 @@ class KUDU_EXPORT KuduSchema {
 
   // For use by KuduSchema::FromSchema.
   explicit KuduSchema(const Schema& schema);
+  explicit KuduSchema(Schema&& schema);
 
   // Private since we don't want users to rely on the first N columns
   // being the keys.
