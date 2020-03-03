@@ -459,12 +459,8 @@ Status ArrayViewsFromColumnarBatch(const KuduColumnarScanBatch& batch,
   if (null_bitmap) {
     Slice non_null;
     RETURN_NOT_OK(batch.GetNonNullBitmapForColumn(col, &non_null));
-    *null_bitmap = MaybeOwnedArrayView<uint8_t>::Owning(
-        new uint8_t[BitmapSize(n_rows)],
-        BitmapSize(n_rows));
-    for (int i = 0; i < BitmapSize(n_rows); i++) {
-      (*null_bitmap)[i] = ~(non_null.data()[i]);
-    }
+    *null_bitmap = MaybeOwnedArrayView<uint8_t>::ViewOf(
+        non_null.mutable_data(), BitmapSize(n_rows));
   }
   return Status::OK();
 }

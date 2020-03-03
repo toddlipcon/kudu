@@ -34,10 +34,8 @@ namespace tsdb {
 template<class T>
 class MaybeOwnedArrayView {
  public:
-  static MaybeOwnedArrayView<T> AllocAndZero(size_t size) {
-    T* data = new T[size];
-    memset(data, 0, sizeof(T) * size);
-    return Owning(data, size);
+  static MaybeOwnedArrayView<T> Alloc(size_t size) {
+    return Owning(new T[size], size);
   }
 
   static MaybeOwnedArrayView<T> Owning(T* data, size_t size) {
@@ -113,33 +111,36 @@ struct InfluxVec {
   bool has_nulls = false;
   boost::variant<MaybeOwnedArrayView<double>,
                  MaybeOwnedArrayView<int64_t>> data;
-  MaybeOwnedArrayView<uint8_t> null_bitmap;
+  // Set to 1 for non-null cells.
+  MaybeOwnedArrayView<uint8_t> non_null_bitmap;
 
   InfluxVec() {}
 
   static InfluxVec ViewOf(const InfluxVec& other) {
     InfluxVec ret;
     ret.has_nulls = other.has_nulls;
-    ret.null_bitmap = MaybeOwnedArrayView<uint8_t>::ViewOf(other.null_bitmap);
+    ret.non_null_bitmap = MaybeOwnedArrayView<uint8_t>::ViewOf(other.non_null_bitmap);
     boost::apply_visitor([&](auto& v){
                            using T = std::remove_reference_t<decltype(v)>;
                            ret.data = T::ViewOf(v);
                          }, other.data);
     return ret;
   }
-  
+
   template<class T>
-  InfluxVec(MaybeOwnedArrayView<T> cells, MaybeOwnedArrayView<uint8_t> null_bitmap)
+  InfluxVec(MaybeOwnedArrayView<T> cells, MaybeOwnedArrayView<uint8_t> non_null_bitmap)
       : data(std::move(cells)),
-        null_bitmap(std::move(null_bitmap)) {
-    CHECK_EQ(BitmapSize(cells.size()), null_bitmap.size());
-    has_nulls = !BitmapIsAllZero(null_bitmap.data(), 0, cells.size());
+        non_null_bitmap(std::move(non_null_bitmap)) {
+    CHECK_EQ(BitmapSize(cells.size()), non_null_bitmap.size());
+    has_nulls = !BitmapIsAllSet(non_null_bitmap.data(), 0, cells.size());
+    CHECK(!has_nulls);
   }
 
   template<class T>
   static InfluxVec WithNoNulls(MaybeOwnedArrayView<T> cells) {
     InfluxVec ret;
-    ret.null_bitmap = MaybeOwnedArrayView<uint8_t>::AllocAndZero(BitmapSize(cells.size()));
+    ret.non_null_bitmap = MaybeOwnedArrayView<uint8_t>::Alloc(BitmapSize(cells.size()));
+    memset(ret.non_null_bitmap.data(), 0xff, BitmapSize(cells.size()));
     ret.has_nulls = false;
     ret.data = std::move(cells);
     return ret;
@@ -160,17 +161,17 @@ struct InfluxVec {
   }
 
   bool null_at_index(int i) const {
-    return has_nulls && BitmapTest(null_bitmap.data(), i);
+    return has_nulls && !BitmapTest(non_null_bitmap.data(), i);
   }
 
   template<class T>
   void set(int i, T val) {
     (*data_as<T>())[i] = val;
-    BitmapClear(null_bitmap.data(), i);
+    BitmapSet(non_null_bitmap.data(), i);
   }
 
   void set(int i, std::nullptr_t val) {
-    BitmapSet(null_bitmap.data(), i);
+    BitmapClear(non_null_bitmap.data(), i);
     has_nulls = true;
   }
 
@@ -180,8 +181,7 @@ struct InfluxVec {
                            using T = std::remove_reference_t<decltype(v[0])>;
                            v = MaybeOwnedArrayView<T>::Owning(new T[n_rows], n_rows);
                          }, data);
-    null_bitmap = MaybeOwnedArrayView<uint8_t>::Owning(
-        new uint8_t[BitmapSize(n_rows)], n_rows);
+    non_null_bitmap = MaybeOwnedArrayView<uint8_t>::Alloc(BitmapSize(n_rows));
   }
 
 };
