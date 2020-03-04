@@ -53,8 +53,9 @@ struct MaxTraits {
     *old_val = std::max<ValueType>(*old_val, new_val);
   }
 
-  static MaybeOwnedArrayView<OutputType> Finish(vector<IntermediateType> intermediate) {
-    return MaybeOwnedArrayView<OutputType>::ViewOf(&intermediate[0], intermediate.size());
+  static MaybeOwnedArrayView<OutputType> Finish(unique_ptr<IntermediateType[]> intermediate,
+                                                int n_buckets) {
+    return MaybeOwnedArrayView<OutputType>::Owning(intermediate.release(), n_buckets);
   }
 };
 
@@ -73,10 +74,10 @@ struct MeanTraits {
     old_val->count++;
   }
 
-  static MaybeOwnedArrayView<OutputType> Finish(vector<IntermediateType> intermediate) {
-    auto ret = MaybeOwnedArrayView<OutputType>::Owning(new OutputType[intermediate.size()],
-                                                       intermediate.size());;
-    for (int i = 0; i < intermediate.size(); i++) {
+  static MaybeOwnedArrayView<OutputType> Finish(unique_ptr<IntermediateType[]> intermediate,
+                                                int n_buckets) {
+    auto ret = MaybeOwnedArrayView<OutputType>::Owning(new OutputType[n_buckets], n_buckets);
+    for (int i = 0; i < n_buckets; i++) {
       ret[i] = static_cast<double>(intermediate[i].total) / intermediate[i].count;
     }
     return ret;
@@ -101,7 +102,9 @@ class AggregatorImpl : public Aggregator {
 
   AggregatorImpl(string col_name, const Bucketer& bucketer)
       : col_name_(std::move(col_name)),
-        intermediate_vals_(bucketer.num_buckets()) {
+        intermediate_vals_(new typename Traits::IntermediateType[bucketer.num_buckets()]()),
+        n_buckets_(bucketer.num_buckets()) {
+    
   }
 
   string name() const override {
@@ -122,20 +125,20 @@ class AggregatorImpl : public Aggregator {
 
     int n = block.times.size();
     DCHECK_EQ(src_vals->size(), n);
-    DCHECK_EQ(bucket_indexes.size(), n);
+    DCHECK_EQ(bucket_indexes.size(), n + 1); // + 1 for the elephant in cairo
     if (vec->has_nulls) {
       DCHECK_EQ(vec->non_null_bitmap.size(), BitmapSize(n));
       DoMergeAgg<typename Traits::InputType, true>(
           bucket_indexes.data(),
           src_vals->data(),
           vec->non_null_bitmap.data(),
-          intermediate_vals_.data(), n);
+          intermediate_vals_.get(), n);
     } else {
       DoMergeAgg<typename Traits::InputType, false>(
           bucket_indexes.data(),
           src_vals->data(),
           nullptr,
-          intermediate_vals_.data(), n);
+          intermediate_vals_.get(), n);
     }
     return Status::OK();
   }
@@ -143,7 +146,7 @@ class AggregatorImpl : public Aggregator {
   InfluxVec TakeResults() override {
     CHECK(!done_);
     done_ = true;
-    auto ret_av = Traits::Finish(std::move(intermediate_vals_));
+    auto ret_av = Traits::Finish(std::move(intermediate_vals_), n_buckets_);
     return InfluxVec::WithNoNulls(std::move(ret_av));
   }
 
@@ -179,7 +182,8 @@ class AggregatorImpl : public Aggregator {
 
   const string col_name_;
 
-  vector<typename Traits::IntermediateType> intermediate_vals_;
+  unique_ptr<typename Traits::IntermediateType[]> intermediate_vals_;
+  const int n_buckets_;
   bool done_ = false;
 };
 
@@ -254,9 +258,10 @@ class MultiAggExpressionEvaluator : public TSBlockConsumer {
     // All input blocks have been consumed. Finalize aggregates and
     // output.
     const auto& times = bucketer_.bucket_times();
-    out_block->times = MaybeOwnedArrayView<int64_t>::ViewOf(
-        const_cast<int64_t*>(times.data()),
-        times.size());
+    int64_t* times_copy = new int64_t[times.size()];
+    memcpy(times_copy, times.data(), times.size() * sizeof(int64_t));
+    out_block->times = MaybeOwnedArrayView<int64_t>::Owning(
+        times_copy, times.size());
     for (const auto& p : aggs_) {
       out_block->AddColumn(StrCat(p.second->name(), "_", p.first),
                           p.second->TakeResults());

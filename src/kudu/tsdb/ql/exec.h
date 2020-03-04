@@ -247,6 +247,7 @@ class TSBlockConsumer {
 class BlockBuffer : public TSBlockConsumer {
  public:
   Status Consume(scoped_refptr<const TSBlock> block) override {
+    CHECK_GT(block->times[0], 1);
     blocks_.emplace_back(std::move(block));
     return Status::OK();
   }
