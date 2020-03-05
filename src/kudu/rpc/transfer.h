@@ -67,9 +67,10 @@ class InboundTransfer {
  public:
 
   InboundTransfer();
+  explicit InboundTransfer(faststring&& initial_buf);
 
   // read from the socket into our buffer
-  Status ReceiveBuffer(Socket &socket);
+  Status ReceiveBuffer(Socket *socket, faststring* extra_4);
 
   // Return true if any bytes have yet been sent.
   bool TransferStarted() const;
@@ -91,6 +92,7 @@ class InboundTransfer {
 
   faststring buf_;
 
+  // 0 indicates not yet set
   uint32_t total_length_;
   uint32_t cur_offset_;
 
