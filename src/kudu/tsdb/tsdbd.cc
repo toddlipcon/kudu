@@ -33,6 +33,7 @@
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/server/default_path_handlers.h"
+#include "kudu/server/tracing_path_handlers.h"
 #include "kudu/server/webserver.h"
 #include "kudu/tsdb/influx_wire_protocol.h"
 #include "kudu/tsdb/metrics_store.h"
@@ -43,6 +44,7 @@
 #include "kudu/tsdb/ql/qcontext.h"
 #include "kudu/tsdb/series_id.h"
 #include "kudu/tsdb/series_store.h"
+#include "kudu/util/debug/trace_event.h"
 #include "kudu/util/flags.h"
 #include "kudu/util/jsonwriter.h"
 #include "kudu/util/memory/arena.h"
@@ -183,7 +185,7 @@ class Server {
 
     WebserverOptions opts;
     opts.port = FLAGS_webserver_port;
-    opts.enable_doc_root = false;
+    opts.enable_doc_root = true;
     webserver_.reset(new Webserver(opts));
 
     bool is_styled = false;
@@ -205,6 +207,7 @@ class Server {
 
     RegisterMetricsJsonHandler(webserver_.get(), metric_registry_.get());
     AddDefaultPathHandlers(webserver_.get());
+    server::TracingPathHandlers::RegisterHandlers(webserver_.get());
     RETURN_NOT_OK(webserver_->Start());
     return Status::OK();
   }
@@ -213,6 +216,7 @@ class Server {
 
   void HandleInfluxQuery(const Webserver::WebRequest& req,
                        Webserver::PrerenderedWebResponse* resp) {
+    TRACE_EVENT0("tsdb", "HandleInfluxQuery");
     ScopedLatencyMetric slm(query_duration_histo_.get());
     Status s = DoHandleInfluxQuery(req, resp);
     if (!s.ok()) {

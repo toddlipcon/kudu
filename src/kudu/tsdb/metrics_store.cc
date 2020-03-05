@@ -32,6 +32,7 @@
 #include "kudu/tsdb/influx_wire_protocol.h"
 #include "kudu/tsdb/ql/qcontext.h"
 #include "kudu/util/bitmap.h"
+#include "kudu/util/debug/trace_event.h"
 #include "kudu/util/rw_mutex.h"
 
 
@@ -358,6 +359,7 @@ Status MetricsStore::Read(StringPiece metric_name,
                           const std::vector<Predicate>& preds,
                           influxql::QContext* ctx,
                           influxql::TSBlockConsumer* consumer) {
+  TRACE_EVENT0("tsdb", "MetricsStore::Read");
   client::sp::shared_ptr<KuduTable> table;
   RETURN_NOT_OK(FindTable(metric_name, &table));
 
