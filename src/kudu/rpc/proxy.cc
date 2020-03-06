@@ -33,6 +33,7 @@
 #include "kudu/rpc/rpc_controller.h"
 #include "kudu/rpc/user_credentials.h"
 #include "kudu/util/net/sockaddr.h"
+#include "kudu/util/notification.h"
 #include "kudu/util/countdown_latch.h"
 #include "kudu/util/status.h"
 #include "kudu/util/user.h"
@@ -94,11 +95,18 @@ Status Proxy::SyncRequest(const string& method,
                           const google::protobuf::Message& req,
                           google::protobuf::Message* resp,
                           RpcController* controller) const {
-  CountDownLatch latch(1);
+  #if 1
+  Notification note;
   AsyncRequest(method, req, DCHECK_NOTNULL(resp), controller,
-               boost::bind(&CountDownLatch::CountDown, boost::ref(latch)));
+               boost::bind(&Notification::Notify, boost::ref(note)));
 
-  latch.Wait();
+  note.WaitForNotification();
+  #else
+  CountDownLatch l(1);
+  AsyncRequest(method, req, DCHECK_NOTNULL(resp), controller,
+               boost::bind(&CountDownLatch::CountDown, boost::ref(l)));
+  l.Wait();
+  #endif
   return controller->status();
 }
 
