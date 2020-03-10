@@ -45,9 +45,7 @@ class MetricsColumnSource {
 class MetricsStore : public MetricsColumnSource {
  public:
 
-  explicit MetricsStore(client::sp::shared_ptr<client::KuduClient> client)
-      : client_(std::move(client)) {
-  }
+  MetricsStore(client::sp::shared_ptr<client::KuduClient> client);
   virtual ~MetricsStore();
 
   Status Init();
@@ -93,6 +91,7 @@ class MetricsStore : public MetricsColumnSource {
   RWMutex table_lock_;
   std::unordered_map<std::string, client::sp::shared_ptr<client::KuduTable>> tables_;
 
+  const client::KuduColumnStorageAttributes::EncodingType int_encoding_;
 };
 
 } // namespace  tsdb

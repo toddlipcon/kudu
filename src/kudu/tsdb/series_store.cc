@@ -15,12 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include "kudu/tsdb/series_store.h"
+
 #include <algorithm>
 #include <unordered_map>
 #include <vector>
 #include <string>
 
-#include "kudu/tsdb/series_store.h"
+#include <gflags/gflags.h>
 
 #include "kudu/client/client.h"
 #include "kudu/client/scan_batch.h"
@@ -55,6 +57,8 @@ using std::vector;
 using std::pair;
 
 using strings::Substitute;
+
+DECLARE_bool(use_bp128);
 
 namespace kudu {
 namespace tsdb {
@@ -133,7 +137,8 @@ Status SeriesStoreImpl::CreateTagIndexTable() {
   b.AddColumn("tag_key")->Type(KuduColumnSchema::STRING)->NotNull();
   b.AddColumn("tag_value")->Type(KuduColumnSchema::STRING)->NotNull();
   b.AddColumn("series_id")->Type(KuduColumnSchema::INT32)
-      ->Encoding(client::KuduColumnStorageAttributes::BP128)
+      ->Encoding(FLAGS_use_bp128 ? client::KuduColumnStorageAttributes::BP128 :
+                                   client::KuduColumnStorageAttributes::BIT_SHUFFLE)
       ->NotNull();
   // TODO: change order of measurement here?
   b.SetPrimaryKey({"measurement", "tag_key", "tag_value", "series_id"});

@@ -58,6 +58,7 @@ using std::pair;
 
 
 DEFINE_bool(use_columnar_scan, false, "whether to use columnar batch api");
+DEFINE_bool(use_bp128, false, "whether to use BP128 encoding");
 
 namespace kudu {
 namespace tsdb {
@@ -77,6 +78,12 @@ void ResizeForAppend(vector<T>* v, int n) {
 
 } // anonymous namespace
 
+MetricsStore::MetricsStore(client::sp::shared_ptr<client::KuduClient> client)
+    : client_(std::move(client)),
+      int_encoding_(FLAGS_use_bp128 ?
+            client::KuduColumnStorageAttributes::BP128 :
+            client::KuduColumnStorageAttributes::BIT_SHUFFLE) {
+}
 MetricsStore::~MetricsStore() = default;
 
 Status MetricsStore::Init() {
@@ -159,7 +166,7 @@ Status MetricsStore::CreateTable(const InfluxMeasurement& measurement) {
   KuduSchemaBuilder b;
   b.AddColumn("series_id")->Type(KuduColumnSchema::INT32)->NotNull();
   b.AddColumn("timestamp")->Type(KuduColumnSchema::TIMESTAMP)->NotNull()
-      ->Encoding(client::KuduColumnStorageAttributes::BP128);
+      ->Encoding(int_encoding_);
 
   unordered_set<string> added_fields;
   for (const auto& field : measurement.fields) {
@@ -176,7 +183,7 @@ Status MetricsStore::CreateTable(const InfluxMeasurement& measurement) {
         break;
       case kValTypeInt64:
         b.AddColumn(name.as_string())->Type(KuduColumnSchema::INT64)
-            ->Encoding(client::KuduColumnStorageAttributes::BP128);
+            ->Encoding(int_encoding_);
         break;
       default:
         LOG(FATAL) << "bad index";
