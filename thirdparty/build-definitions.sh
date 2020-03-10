@@ -1021,3 +1021,13 @@ build_gumbo_query() {
   ${NINJA:-make} -j$PARALLEL $EXTRA_MAKEFLAGS install
   popd
 }
+
+build_pegtl() {
+  # just installing it into our prefix
+  rsync -av --delete $PEGTL_SOURCE/include/tao/ $PREFIX/include/tao/
+}
+
+build_libdivide() {
+  # just installing it into our prefix
+  cp $LIBDIVIDE_SOURCE/libdivide.h $PREFIX/include/
+}

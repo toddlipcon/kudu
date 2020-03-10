@@ -444,5 +444,17 @@ fetch_and_patch \
  $GUMBO_QUERY_PATCHLEVEL \
  "patch -p1 < $TP_DIR/patches/gumbo-query-namespace.patch"
 
+LIBDIVIDE_PATCHLEVEL=0
+fetch_and_patch \
+ $LIBDIVIDE_NAME.tar.gz \
+ $LIBDIVIDE_SOURCE \
+ $LIBDIVIDE_PATCHLEVEL
+
+PEGTL_PATCHLEVEL=0
+fetch_and_patch \
+ $PEGTL_NAME.tar.gz \
+ $PEGTL_SOURCE \
+ $PEGTL_PATCHLEVEL
+
 echo "---------------"
 echo "Thirdparty dependencies downloaded successfully"

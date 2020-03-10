@@ -246,10 +246,18 @@ GUMBO_PARSER_SOURCE=$TP_SOURCE_DIR/$GUMBO_PARSER_NAME
 # Hash of the gumbo-query git revision to use.
 # (from https://github.com/lazytiger/gumbo-query)
 #
-# To re-build this tarball use the following in the sparsepp repo:
+# To re-build this tarball use the following in the gumbo repo:
 #  export NAME=gumbo-query-$(git rev-parse HEAD)
 #  git archive HEAD --prefix=$NAME/ -o /tmp/$NAME.tar.gz
 #  s3cmd put -P /tmp/$NAME.tar.gz s3://cloudera-thirdparty-libs/$NAME.tar.gz
 GUMBO_QUERY_VERSION=c9f10880b645afccf4fbcd11d2f62a7c01222d2e
 GUMBO_QUERY_NAME=gumbo-query-$GUMBO_QUERY_VERSION
 GUMBO_QUERY_SOURCE=$TP_SOURCE_DIR/$GUMBO_QUERY_NAME
+
+LIBDIVIDE_VERSION=3.0
+LIBDIVIDE_NAME=libdivide-$LIBDIVIDE_VERSION
+LIBDIVIDE_SOURCE=$TP_SOURCE_DIR/$LIBDIVIDE_NAME
+
+PEGTL_VERSION=2.8.1
+PEGTL_NAME=PEGTL-$PEGTL_VERSION
+PEGTL_SOURCE=$TP_SOURCE_DIR/$PEGTL_NAME

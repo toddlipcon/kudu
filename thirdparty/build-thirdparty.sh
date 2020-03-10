@@ -103,6 +103,8 @@ else
       "chrony")       F_CHRONY=1 ;;
       "gumbo-parser") F_GUMBO_PARSER=1 ;;
       "gumbo-query")  F_GUMBO_QUERY=1 ;;
+      "pegtl")        F_PEGTL=1 ;;
+      "libdivide")    F_LIBDIVIDE=1 ;;
       *)              echo "Unknown module: $arg"; exit 1 ;;
     esac
   done
@@ -272,6 +274,15 @@ if [ -n "$F_COMMON" -o -n "$F_SENTRY" ]; then
   rm -rf $SENTRY_SOURCE/lib/hadoop-[a-z-]*.jar
   ln -nsf $SENTRY_SOURCE $PREFIX/opt/sentry
 fi
+
+if [ -n "$F_COMMON" -o -n "$F_PEGTL" ]; then
+  build_pegtl
+fi
+
+if [ -n "$F_COMMON" -o -n "$F_LIBDIVIDE" ]; then
+  build_libdivide
+fi
+
 
 ### Build C dependencies without instrumentation
 
