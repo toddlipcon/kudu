@@ -144,6 +144,10 @@ class Sockaddr {
     return family() == AF_INET;
   }
 
+  bool is_unix() const {
+    return family() == AF_UNIX;
+  }
+
   // Returns the stringified address in '1.2.3.4:<port>' format.
   std::string ToString() const;
 
