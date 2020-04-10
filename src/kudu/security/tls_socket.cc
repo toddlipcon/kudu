@@ -25,6 +25,7 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <glog/logging.h>
 
@@ -35,7 +36,12 @@
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/net/socket.h"
 
+namespace kudu {
+class FileDescriptor;
+}  // namespace kudu
+
 using std::string;
+using std::vector;
 using strings::Substitute;
 
 namespace kudu {
@@ -91,7 +97,12 @@ Status TlsSocket::Write(const uint8_t *buf, int32_t amt, int32_t *nwritten) {
   return Status::OK();
 }
 
-Status TlsSocket::Writev(const struct ::iovec *iov, int iov_len, int64_t *nwritten) {
+Status TlsSocket::Writev(const struct ::iovec *iov, int iov_len, int64_t *nwritten,
+                         const vector<int>& fds) {
+  if (!fds.empty()) {
+    return Status::NotSupported("TLS sockets do not support sending file descriptors");
+  }
+
   SCOPED_OPENSSL_NO_PENDING_ERRORS;
   CHECK(ssl_);
   *nwritten = 0;
@@ -123,7 +134,8 @@ Status TlsSocket::Writev(const struct ::iovec *iov, int iov_len, int64_t *nwritt
   return write_status;
 }
 
-Status TlsSocket::Recv(uint8_t *buf, int32_t amt, int32_t *nread) {
+Status TlsSocket::Recv(uint8_t *buf, int32_t amt, int32_t *nread,
+                       vector<FileDescriptor>* fds) {
   SCOPED_OPENSSL_NO_PENDING_ERRORS;
 
   CHECK(ssl_);

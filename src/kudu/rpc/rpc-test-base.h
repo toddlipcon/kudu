@@ -23,6 +23,12 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <emmintrin.h>
+#include <xmmintrin.h>
+
 #include "kudu/gutil/walltime.h"
 #include "kudu/rpc/acceptor_pool.h"
 #include "kudu/rpc/messenger.h"
@@ -50,6 +56,7 @@
 #include "kudu/util/random.h"
 #include "kudu/util/random_util.h"
 #include "kudu/util/stopwatch.h"
+#include "kudu/util/string_case.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
 #include "kudu/util/trace.h"
@@ -81,10 +88,13 @@ using kudu::rpc_test::SleepWithSidecarRequestPB;
 using kudu::rpc_test::SleepWithSidecarResponsePB;
 using kudu::rpc_test::TestInvalidResponseRequestPB;
 using kudu::rpc_test::TestInvalidResponseResponsePB;
+using kudu::rpc_test::SendBackDataRequestPB;
+using kudu::rpc_test::SendBackDataResponsePB;
 using kudu::rpc_test::WhoAmIRequestPB;
 using kudu::rpc_test::WhoAmIResponsePB;
 using kudu::rpc_test_diff_package::ReqDiffPackagePB;
 using kudu::rpc_test_diff_package::RespDiffPackagePB;
+
 
 // Implementation of CalculatorService which just implements the generic
 // RPC handler (no generated code).
@@ -359,6 +369,115 @@ class CalculatorService : public CalculatorServiceIf {
     resp->set_current_time_micros(GetCurrentTimeMicros());
     context->RespondSuccess();
   }
+
+  static void setbytes_nt(char *p, int c)
+  {
+    __m128i i = _mm_set_epi8(c, c, c, c,
+                             c, c, c, c,
+                             c, c, c, c,
+                             c, c, c, c);
+    _mm_stream_si128((__m128i *)&p[0], i);
+    _mm_stream_si128((__m128i *)&p[16], i);
+    _mm_stream_si128((__m128i *)&p[32], i);
+    _mm_stream_si128((__m128i *)&p[48], i);
+  }
+  static void setbytes(char *p, int c)
+  {
+    __m128i i = _mm_set_epi8(c, c, c, c,
+                             c, c, c, c,
+                             c, c, c, c,
+                             c, c, c, c);
+    _mm_store_si128((__m128i *)&p[0], i);
+    _mm_store_si128((__m128i *)&p[16], i);
+    _mm_store_si128((__m128i *)&p[32], i);
+    _mm_store_si128((__m128i *)&p[48], i);
+  }
+
+  static void DoMemset(const SendBackDataRequestPB* req, void* dst) {
+    char* dst_c = (char*)dst;
+    if (req->non_temporal()) {
+      for (int i = 0; i < req->num_bytes(); i+= 64) {
+        setbytes_nt(dst_c, 'x');
+        dst_c += 64;
+      }
+      _mm_sfence();
+    } else {
+      for (int i = 0; i < req->num_bytes(); i+= 64) {
+        setbytes(dst_c, 'x');
+        dst_c += 64;
+      }
+    }
+  }
+
+  void SendBackData(const SendBackDataRequestPB* req,
+                    SendBackDataResponsePB* resp,
+                    RpcContext* context) override {
+    switch (req->method()) {
+      case SendBackDataRequestPB::WRITE_TO_FILE_DESCRIPTOR:
+      case SendBackDataRequestPB::MMAP_FILE_DESCRIPTOR: {
+        const auto& fds = context->received_fds();
+        CHECK_EQ(fds.size(), 1);
+        int fd = fds[0].get();
+
+        if (req->method() == SendBackDataRequestPB::WRITE_TO_FILE_DESCRIPTOR) {
+          std::string buf(4096, 'x');
+          PCHECK(lseek(fd, 0, SEEK_SET) == 0);
+          for (int written = 0; written < req->num_bytes(); written += buf.size()) {
+            PCHECK(write(fd, buf.data(), buf.size()) == buf.size());
+          }
+        } else {
+          CHECK_ERR(ftruncate(fd, req->num_bytes()));
+          bool do_map_cache = req->reuse_mmaps();
+          struct stat s;
+          void* map = nullptr;
+          if (do_map_cache) {
+            CHECK_ERR(fstat(fd, &s));
+            if (s.st_dev == map_cache_stat_.st_dev &&
+                s.st_ino == map_cache_stat_.st_ino &&
+                req->num_bytes() == map_cache_size_) {
+              map = map_cache_;
+            }
+          }
+          if (!map) {
+            // TODO(todd) does MAP_POPULATE do anything with memfds?
+            // TODO(todd) for a real application need to protect against the client
+            // truncating the mmap, eg by enforcing F_SEAL_SHRINK.
+            map = mmap(nullptr, req->num_bytes(), PROT_READ | PROT_WRITE,
+                             MAP_SHARED | MAP_POPULATE, fd, 0);
+            PCHECK(map != MAP_FAILED);
+          }
+          DoMemset(req, map);
+          if (do_map_cache) {
+            if (map_cache_ && map_cache_ != map) {
+              CHECK_ERR(munmap(map_cache_, map_cache_size_));
+            }
+            map_cache_ = map;
+            map_cache_size_ = req->num_bytes();
+            map_cache_stat_ = s;
+          } else {
+            CHECK_ERR(munmap(map, req->num_bytes()));
+          }
+        }
+        break;
+      }
+      case SendBackDataRequestPB::SEND_BACK_SIDECAR: {
+        faststring buf;
+        buf.resize(req->num_bytes());
+        DoMemset(req, buf.data());
+        int idx;
+        CHECK_OK(context->AddOutboundSidecar(RpcSidecar::FromFaststring(std::move(buf)), &idx));
+        break;
+      }
+      default:
+        LOG(FATAL);
+    }
+
+    context->RespondSuccess();
+  }
+
+  void* map_cache_ = nullptr;
+  int map_cache_size_ = 0;
+  struct stat map_cache_stat_;
 
   bool AuthorizeDisallowAlice(const google::protobuf::Message* /*req*/,
                               google::protobuf::Message* /*resp*/,

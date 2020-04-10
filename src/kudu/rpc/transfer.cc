@@ -25,6 +25,7 @@
 #include <iostream>
 #include <limits>
 #include <set>
+#include <vector>
 
 #include <boost/container/vector.hpp>
 #include <gflags/gflags.h>
@@ -34,6 +35,7 @@
 #include "kudu/gutil/port.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/constants.h"
+#include "kudu/util/fd.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/logging.h"
 #include "kudu/util/net/socket.h"
@@ -72,6 +74,7 @@ namespace rpc {
 using std::ostringstream;
 using std::set;
 using std::string;
+using std::vector;
 using strings::Substitute;
 
 #define RETURN_ON_ERROR_OR_SOCKET_NOT_READY(status)               \
@@ -94,14 +97,18 @@ InboundTransfer::InboundTransfer()
   buf_.resize(kMsgLengthPrefixLength);
 }
 
-InboundTransfer::InboundTransfer(faststring initial_buf)
+InboundTransfer::InboundTransfer(faststring initial_buf,
+                                 vector<FileDescriptor> initial_fds)
   : buf_(std::move(initial_buf)),
     total_length_(0),
-    cur_offset_(buf_.size()) {
+    cur_offset_(buf_.size()),
+    received_fds_(std::move(initial_fds)) {
   buf_.resize(std::max<size_t>(kMsgLengthPrefixLength, buf_.size()));
 }
 
-Status InboundTransfer::ReceiveBuffer(Socket* socket, faststring* extra_4) {
+Status InboundTransfer::ReceiveBuffer(Socket* socket,
+                                      faststring* extra_4,
+                                      vector<FileDescriptor>* extra_fds) {
   static constexpr int kExtraReadLength = kMsgLengthPrefixLength;
   if (total_length_ == 0) {
     // We haven't yet parsed the message length. It's possible that the
@@ -110,7 +117,7 @@ Status InboundTransfer::ReceiveBuffer(Socket* socket, faststring* extra_4) {
       // receive uint32 length prefix
       int32_t rem = kMsgLengthPrefixLength - cur_offset_;
       int32_t nread;
-      Status status = socket->Recv(&buf_[cur_offset_], rem, &nread);
+      Status status = socket->Recv(&buf_[cur_offset_], rem, &nread, &received_fds_);
       RETURN_ON_ERROR_OR_SOCKET_NOT_READY(status);
       if (nread == 0) {
         return Status::OK();
@@ -151,9 +158,14 @@ Status InboundTransfer::ReceiveBuffer(Socket* socket, faststring* extra_4) {
   // INT_MAX. The message will be split across multiple Recv() calls.
   // Note that this is only needed when rpc_max_message_size > INT_MAX, which is
   // currently only used for unit tests.
+
+  // NOTE: we handle the case where the 'extra read length' is the start of the
+  // next call, and that call may have file descriptors passed. In that case,
+  // return the FDs along with the 'extra 4' to be passed into the next transfer.
+  // See https://gist.github.com/kentonv/bc7592af98c68ba2738f4436920868dc
   int32_t rem = std::min(total_length_ - cur_offset_ + kExtraReadLength,
       static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
-  Status status = socket->Recv(&buf_[cur_offset_], rem, &nread);
+  Status status = socket->Recv(&buf_[cur_offset_], rem, &nread, extra_fds);
   RETURN_ON_ERROR_OR_SOCKET_NOT_READY(status);
   cur_offset_ += nread;
 
@@ -184,21 +196,29 @@ string InboundTransfer::StatusAsString() const {
   return Substitute("$0/$1 bytes received", cur_offset_, total_length_);
 }
 
+std::vector<FileDescriptor> InboundTransfer::TakeReceivedFds() {
+  return std::move(received_fds_);
+}
+
+
 OutboundTransfer* OutboundTransfer::CreateForCallRequest(int32_t call_id,
                                                          TransferPayload payload,
+                                                         vector<int> send_fds,
                                                          TransferCallbacks *callbacks) {
-  return new OutboundTransfer(call_id, std::move(payload), callbacks);
+  return new OutboundTransfer(call_id, std::move(payload), std::move(send_fds), callbacks);
 }
 
 OutboundTransfer* OutboundTransfer::CreateForCallResponse(TransferPayload payload,
                                                           TransferCallbacks *callbacks) {
-  return new OutboundTransfer(kInvalidCallId, std::move(payload), callbacks);
+  return new OutboundTransfer(kInvalidCallId, std::move(payload), {}, callbacks);
 }
 
 OutboundTransfer::OutboundTransfer(int32_t call_id,
                                    TransferPayload payload,
+                                   vector<int> send_fds,
                                    TransferCallbacks *callbacks)
   : payload_slices_(std::move(payload)),
+    send_fds_(std::move(send_fds)),
     cur_slice_idx_(0),
     cur_offset_in_slice_(0),
     callbacks_(callbacks),
@@ -239,8 +259,14 @@ Status OutboundTransfer::SendBuffer(Socket &socket) {
   }
 
   int64_t written;
-  Status status = socket.Writev(iovec, n_iovecs, &written);
+  Status status = socket.Writev(iovec, n_iovecs, &written, send_fds_);
   RETURN_ON_ERROR_OR_SOCKET_NOT_READY(status);
+
+  if (written > 0) {
+    // If we were able to write at least one byte, the file descriptors got
+    // sent, and we don't need to send them again in a further loop.
+    send_fds_.clear();
+  }
 
   // Adjust our accounting of current writer position.
   for (int i = cur_slice_idx_; i < payload_slices_.size(); i++) {

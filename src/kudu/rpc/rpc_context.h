@@ -16,9 +16,11 @@
 // under the License.
 #pragma once
 
-#include <memory>
 #include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <vector>
 
 #include <glog/logging.h>
 
@@ -35,6 +37,7 @@ class Message;
 
 namespace kudu {
 
+class FileDescriptor;
 class Slice;
 class Sockaddr;
 class Trace;
@@ -168,6 +171,9 @@ class RpcContext {
   // Fills 'sidecar' with a sidecar sent by the client. Returns an error if 'idx' is out
   // of bounds.
   Status GetInboundSidecar(int idx, Slice* slice) const;
+
+  // Return the list of file descriptors that were provided by the client.
+  const std::vector<FileDescriptor>& received_fds() const;
 
   // Return the identity of remote user who made this call.
   const RemoteUser& remote_user() const;

@@ -198,6 +198,10 @@ class ReactorThread {
   // Must be called from the reactor thread.
   Status GetMetrics(ReactorMetrics *metrics);
 
+  int pid_for_tests() const {
+    return thread_->tid();
+  }
+
  private:
   friend class AssignOutboundCallTask;
   friend class CancellationTask;
@@ -401,6 +405,10 @@ class Reactor {
   // Is this reactor's thread the current thread?
   bool IsCurrentThread() const {
     return thread_.IsCurrentThread();
+  }
+
+  int pid_for_tests() const {
+    return thread_.pid_for_tests();
   }
 
  private:

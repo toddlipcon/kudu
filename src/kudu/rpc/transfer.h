@@ -19,6 +19,7 @@
 #include <climits>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <boost/container/small_vector.hpp>
 #include <boost/intrusive/list_hook.hpp>
@@ -28,6 +29,7 @@
 #include "kudu/gutil/macros.h"
 #include "kudu/rpc/constants.h"
 #include "kudu/util/faststring.h"
+#include "kudu/util/fd.h"
 #include "kudu/util/slice.h"
 #include "kudu/util/status.h"
 
@@ -67,15 +69,18 @@ class InboundTransfer {
  public:
 
   InboundTransfer();
-  explicit InboundTransfer(faststring initial_buf);
+  InboundTransfer(faststring initial_buf,
+                  std::vector<FileDescriptor> initial_fds);
 
   // Read from the socket into our buffer.
   //
   // If this is the last read of the transfer (i.e. if TransferFinished() is true
   // after this call returns OK), up to 4 extra bytes may have been read
   // from the socket and stored in 'extra_4'. In that case, any previous content of
-  // 'extra_4' is replaced by this extra bytes.
-  Status ReceiveBuffer(Socket *socket, faststring* extra_4);
+  // 'extra_4' is replaced by this extra bytes. If any file descriptors are passed
+  // with those extra bytes, they will be stored in 'extra_fds'
+  Status ReceiveBuffer(Socket *socket, faststring* extra_4,
+                       std::vector<FileDescriptor>* extra_fds);
 
   // Return true if any bytes have yet been sent.
   bool TransferStarted() const;
@@ -91,6 +96,8 @@ class InboundTransfer {
   // suitable for logging.
   std::string StatusAsString() const;
 
+  std::vector<FileDescriptor> TakeReceivedFds();
+
  private:
 
   Status ProcessInboundHeader();
@@ -100,6 +107,9 @@ class InboundTransfer {
   // 0 indicates not yet set
   uint32_t total_length_;
   uint32_t cur_offset_;
+
+  // Any file descriptors received.
+  std::vector<FileDescriptor> received_fds_;
 
   DISALLOW_COPY_AND_ASSIGN(InboundTransfer);
 };
@@ -128,6 +138,7 @@ class OutboundTransfer : public boost::intrusive::list_base_hook<> {
   // Create an outbound transfer for a call request.
   static OutboundTransfer* CreateForCallRequest(int32_t call_id,
                                                 TransferPayload payload,
+                                                std::vector<int> send_fds,
                                                 TransferCallbacks *callbacks);
 
   // Create an outbound transfer for a call response.
@@ -171,10 +182,14 @@ class OutboundTransfer : public boost::intrusive::list_base_hook<> {
  private:
   OutboundTransfer(int32_t call_id,
                    TransferPayload payload,
+                   std::vector<int> send_fds,
                    TransferCallbacks *callbacks);
 
   // Slices to send.
   TransferPayload payload_slices_;
+
+  // Any file descriptors to send with the first byte of the message.
+  std::vector<int> send_fds_;
 
   // The current slice that is being sent.
   int32_t cur_slice_idx_;

@@ -34,6 +34,7 @@
 #include "kudu/rpc/service_if.h"
 #include "kudu/rpc/transfer.h"
 #include "kudu/util/faststring.h"
+#include "kudu/util/fd.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/slice.h"
 #include "kudu/util/status.h"
@@ -216,6 +217,10 @@ class InboundCall {
   // not exist (e.g. GetTransferSize() is called after DiscardTransfer()), returns 0.
   size_t GetTransferSize();
 
+  const std::vector<FileDescriptor>& received_fds() const {
+    return received_fds_;
+  }
+
  private:
   friend class RpczStore;
 
@@ -249,6 +254,9 @@ class InboundCall {
   // This is kept around because it retains the memory referred to
   // by 'serialized_request_' above.
   std::unique_ptr<InboundTransfer> transfer_;
+
+  // Any file descriptors sent to us by the client.
+  std::vector<FileDescriptor> received_fds_;
 
   // The buffers for serialized response. Set by SerializeResponseBuffer().
   faststring response_hdr_buf_;

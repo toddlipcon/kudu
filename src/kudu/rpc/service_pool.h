@@ -90,6 +90,10 @@ class ServicePool : public RpcService {
 
   const std::string service_name() const;
 
+  std::vector<scoped_refptr<kudu::Thread>> GetWorkerThreadsForTests() const {
+    return threads_;
+  }
+
  private:
   void RunThread();
   void RejectTooBusy(InboundCall* c);

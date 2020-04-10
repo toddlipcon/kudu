@@ -100,8 +100,10 @@ Status InboundCall::ParseFrom(unique_ptr<InboundTransfer> transfer) {
     serialized_request_ = Slice(serialized_request_.data(), header_.sidecar_offsets(0));
   }
 
+  received_fds_ = transfer->TakeReceivedFds();
+
   // Retain the buffer that we have a view into.
-  transfer_.swap(transfer);
+  transfer_ = std::move(transfer);
   return Status::OK();
 }
 

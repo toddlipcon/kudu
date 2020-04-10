@@ -20,6 +20,7 @@
 #include <memory>
 #include <ostream>
 #include <utility>
+#include <vector>
 
 #include <glog/logging.h>
 #include <google/protobuf/message.h>
@@ -39,6 +40,7 @@ using google::protobuf::Message;
 using kudu::pb_util::SecureDebugString;
 using std::string;
 using std::unique_ptr;
+using std::vector;
 
 namespace kudu {
 
@@ -157,6 +159,10 @@ Status RpcContext::GetInboundSidecar(int idx, Slice* slice) const {
 
 const RemoteUser& RpcContext::remote_user() const {
   return call_->remote_user();
+}
+
+const vector<FileDescriptor>& RpcContext::received_fds() const {
+  return call_->received_fds();
 }
 
 bool RpcContext::is_confidential() const {

@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "kudu/gutil/macros.h"
 #include "kudu/util/status.h"
@@ -27,6 +28,7 @@ struct iovec;
 
 namespace kudu {
 
+class FileDescriptor;
 class MonoDelta;
 class MonoTime;
 class Sockaddr;
@@ -136,7 +138,16 @@ class Socket {
   // If there is an error, that error needs to be resolved before calling again.
   // If there was no error, but not all the bytes were written, the unwritten
   // bytes must be retried. See writev(2) for more information.
-  virtual Status Writev(const struct ::iovec *iov, int iov_len, int64_t *nwritten);
+  //
+  // 'send_fds' is a list of file descriptors to send over the socket. This is only
+  // available for UNIX domain sockets. In the case that these are specified, they
+  // will be sent only if *nwritten indicates that at least one byte was written
+  // successfully.
+  virtual Status Writev(const struct ::iovec *iov, int iov_len, int64_t *nwritten,
+                        const std::vector<int>& send_fds);
+
+  // See above.
+  virtual Status Writev(const struct ::iovec *iov, int iov_len, int64_t *nwritten) final;
 
   // Blocking Write call, returns IOError unless full buffer is sent.
   // Underlying Socket expected to be in blocking mode. Fails if any Write() sends 0 bytes.
@@ -146,7 +157,8 @@ class Socket {
   Status BlockingWrite(const uint8_t *buf, size_t buflen, size_t *nwritten,
       const MonoTime& deadline);
 
-  virtual Status Recv(uint8_t *buf, int32_t amt, int32_t *nread);
+  virtual Status Recv(uint8_t *buf, int32_t amt, int32_t *nread,
+                      std::vector<FileDescriptor>* fds = nullptr);
 
   // Blocking Recv call, returns IOError unless requested amt bytes are read.
   // Underlying Socket expected to be in blocking mode. Fails if any Recv() reads 0 bytes.

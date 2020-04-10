@@ -27,9 +27,12 @@
 #include <cerrno>
 #include <cinttypes>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <ostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -40,6 +43,7 @@
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/errno.h"
+#include "kudu/util/fd.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/net/net_util.h"
@@ -61,6 +65,7 @@ TAG_FLAG(socket_inject_short_recvs, hidden);
 TAG_FLAG(socket_inject_short_recvs, unsafe);
 
 using std::string;
+using std::vector;
 using strings::Substitute;
 
 namespace kudu {
@@ -429,8 +434,31 @@ Status Socket::Write(const uint8_t *buf, int32_t amt, int32_t *nwritten) {
   return Status::OK();
 }
 
+static constexpr int kMaxPassedFds = 1;
+// Our auxillary data setup.
+//
+// See man 3 cmsg for more information about auxillary socket data on UNIX.
+//
+// We use __attribute__((packed)) to ensure that the compiler doesn't insert any
+// padding between 'hdr' and 'fds'.
+struct cmsghdr_with_fds {
+  struct cmsghdr hdr;
+  int fds[kMaxPassedFds];
+}  ATTRIBUTE_PACKED;
+
+
 Status Socket::Writev(const struct ::iovec *iov, int iov_len,
                       int64_t *nwritten) {
+  return Writev(iov, iov_len, nwritten, {});
+}
+
+Status Socket::Writev(const struct ::iovec *iov, int iov_len,
+                      int64_t *nwritten,
+                      const std::vector<int>& send_fds) {
+  if (send_fds.size() > kMaxPassedFds) {
+    return Status::NetworkError(Substitute("cannot send more than $0 fds", kMaxPassedFds));
+  }
+
   if (PREDICT_FALSE(iov_len <= 0)) {
     return Status::NetworkError(
                 StringPrintf("writev: invalid io vector length of %d",
@@ -443,6 +471,23 @@ Status Socket::Writev(const struct ::iovec *iov, int iov_len,
   memset(&msg, 0, sizeof(struct msghdr));
   msg.msg_iov = const_cast<iovec *>(iov);
   msg.msg_iovlen = iov_len;
+
+  // Set up file descriptors.
+  cmsghdr_with_fds aux;
+  if (!send_fds.empty()) {
+    int aux_len = CMSG_LEN(send_fds.size() * sizeof(int));
+    msg.msg_control = &aux;
+    msg.msg_controllen = aux_len;
+    aux.hdr.cmsg_level = SOL_SOCKET;
+    aux.hdr.cmsg_type = SCM_RIGHTS;
+    aux.hdr.cmsg_len = aux_len;
+    int* dst = &aux.fds[0];
+    for (int fd : send_fds) {
+      DCHECK_GE(fd, 0);
+      *dst++ = fd;
+    }
+  }
+
   ssize_t res;
   RETRY_ON_EINTR(res, ::sendmsg(fd_, &msg, MSG_NOSIGNAL));
   if (PREDICT_FALSE(res < 0)) {
@@ -497,7 +542,8 @@ Status Socket::BlockingWrite(const uint8_t *buf, size_t buflen, size_t *nwritten
   return Status::OK();
 }
 
-Status Socket::Recv(uint8_t *buf, int32_t amt, int32_t *nread) {
+Status Socket::Recv(uint8_t *buf, int32_t amt, int32_t *nread,
+                    vector<FileDescriptor>* fds) {
   if (amt <= 0) {
     return Status::NetworkError(
           StringPrintf("invalid recv of %d bytes", amt), Slice(), EINVAL);
@@ -512,9 +558,23 @@ Status Socket::Recv(uint8_t *buf, int32_t amt, int32_t *nread) {
     amt = 1 + r.Uniform(amt - 1);
   }
 
+  struct iovec iov[1];
+  iov[0].iov_base = buf;
+  iov[0].iov_len = amt;
+
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = iov;
+  msg.msg_iovlen = 1;
+
+  char aux[sizeof(cmsghdr_with_fds)];
+  msg.msg_control = aux;
+  msg.msg_controllen = arraysize(aux);
+
   DCHECK_GE(fd_, 0);
   int res;
-  RETRY_ON_EINTR(res, recv(fd_, buf, amt, 0));
+
+  RETRY_ON_EINTR(res, recvmsg(fd_, &msg, MSG_CMSG_CLOEXEC));
   if (res <= 0) {
     Sockaddr remote;
     Status get_addr_status = GetPeerAddress(&remote);
@@ -527,6 +587,26 @@ Status Socket::Recv(uint8_t *buf, int32_t amt, int32_t *nread) {
     string error_message = Substitute("recv error from $0", remote_str);
     return Status::NetworkError(error_message, ErrnoToString(err), err);
   }
+  for (auto cmsg = CMSG_FIRSTHDR(&msg);
+       cmsg != nullptr;
+       cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+    if (cmsg->cmsg_level == SOL_SOCKET &&
+        cmsg->cmsg_type == SCM_RIGHTS) {
+      const int* recv_fds = reinterpret_cast<const int*>(CMSG_DATA(cmsg));
+      int num_fds = (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
+      vector<FileDescriptor> fds_vec(num_fds);
+      for (int i = 0; i < num_fds; i++) {
+        FileDescriptor fd(recv_fds[i]);
+        fds_vec[i] = std::move(fd);
+      }
+      if (fds) {
+        std::move(fds_vec.begin(), fds_vec.end(), std::back_inserter(*fds));
+      } else if (!fds_vec.empty()) {
+        LOG(WARNING) << "Received " << fds_vec.size() << " unexpected fd(s)";
+      }
+    }
+  }
+
   *nread = res;
   return Status::OK();
 }

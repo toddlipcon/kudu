@@ -30,6 +30,7 @@
 #include "kudu/rpc/rpc_header.pb.h"
 #include "kudu/rpc/rpc_sidecar.h"
 #include "kudu/rpc/transfer.h"
+#include "kudu/util/fd.h"
 
 using std::unique_ptr;
 using strings::Substitute;
@@ -57,6 +58,7 @@ void RpcController::Swap(RpcController* other) {
 
   std::swap(outbound_sidecars_, other->outbound_sidecars_);
   std::swap(outbound_sidecars_total_bytes_, other->outbound_sidecars_total_bytes_);
+  std::swap(outbound_fds_, other->outbound_fds_);
   std::swap(timeout_, other->timeout_);
   std::swap(credentials_policy_, other->credentials_policy_);
   std::swap(call_, other->call_);
@@ -159,9 +161,19 @@ Status RpcController::AddOutboundSidecar(unique_ptr<RpcSidecar> car, int* idx) {
   return Status::OK();
 }
 
+Status RpcController::SendFileDescriptor(const FileDescriptor& fd, int* idx) {
+  DCHECK(!call_);
+  if (!fd.is_valid()) {
+    return Status::InvalidArgument("fd is not open");
+  }
+  *idx = outbound_fds_.size();
+  outbound_fds_.emplace_back(fd.get());
+  return Status::OK();
+}
+
 void RpcController::SetRequestParam(const google::protobuf::Message& req) {
   DCHECK(call_ != nullptr);
-  call_->SetRequestPayload(req, std::move(outbound_sidecars_));
+  call_->SetRequestPayload(req, std::move(outbound_sidecars_), std::move(outbound_fds_));
 }
 
 void RpcController::Cancel() {

@@ -34,6 +34,7 @@ class Message;
 
 namespace kudu {
 
+class FileDescriptor;
 class Slice;
 
 namespace rpc {
@@ -224,6 +225,17 @@ class RpcController {
   // exceed TransferLimits::kMaxTotalSidecarBytes.
   Status AddOutboundSidecar(std::unique_ptr<RpcSidecar> car, int* idx);
 
+  // Send a the given file descriptor to the remote peer as part of this RPC.
+  // This is only possible when the Proxy used for this RPC is connected to a local
+  // server via a UNIX domain socket. Attempting to use this when connected via TCP
+  // will result in the RPC failing with Status::NotSupported at invocation time.
+  //
+  // The index of the descriptor to be sent is returned in 'idx'.
+  //
+  // NOTE: the file descriptor contained within 'fd' must remain valid until the RPC
+  // completes.
+  Status SendFileDescriptor(const FileDescriptor& fd, int* idx);
+
   // Cancel the call associated with the RpcController. This function should only be
   // called when there is an outstanding outbound call. It's always safe to call
   // Cancel() after you've sent a call, so long as you haven't called Reset() yet.
@@ -272,6 +284,8 @@ class RpcController {
   // Total size of sidecars in outbound_sidecars_. This is limited to a maximum
   // of TransferLimits::kMaxTotalSidecarBytes.
   int32_t outbound_sidecars_total_bytes_ = 0;
+
+  std::vector<int> outbound_fds_;
 
   DISALLOW_COPY_AND_ASSIGN(RpcController);
 };

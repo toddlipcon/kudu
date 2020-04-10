@@ -1246,6 +1246,9 @@ struct kernel_statfs {
 #ifndef __NR_fallocate
 #define __NR_fallocate          285
 #endif
+#ifndef __NR_memfd_create
+#define __NR_memfd_create       319
+#endif
 /* End of x86-64 definitions                                                 */
 #elif defined(__mips__)
 #if _MIPS_SIM == _MIPS_SIM_ABI32

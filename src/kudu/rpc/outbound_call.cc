@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -27,7 +28,6 @@
 #include <vector>
 
 #include <boost/container/vector.hpp>
-#include <boost/function.hpp>
 #include <gflags/gflags.h>
 #include <google/protobuf/message.h>
 
@@ -136,12 +136,16 @@ void OutboundCall::SerializeTo(TransferPayload* slices) {
   }
 }
 
-void OutboundCall::SetRequestPayload(const Message& req,
-    vector<unique_ptr<RpcSidecar>>&& sidecars) {
+void OutboundCall::SetRequestPayload(
+    const Message& req,
+    vector<unique_ptr<RpcSidecar>> sidecars,
+    vector<int> outbound_fds) {
   DCHECK_EQ(-1, sidecar_byte_size_);
 
   sidecars_ = move(sidecars);
   DCHECK_LE(sidecars_.size(), TransferLimits::kMaxSidecars);
+
+  outbound_fds_ = move(outbound_fds);
 
   // Compute total size of sidecar payload so that extra space can be reserved as part of
   // the request body.

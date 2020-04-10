@@ -21,6 +21,7 @@
 #include <ostream>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gflags/gflags_declare.h>
@@ -92,7 +93,8 @@ class OutboundCall {
   // Because the request data is fully serialized by this call, 'req' may be subsequently
   // mutated with no ill effects.
   void SetRequestPayload(const google::protobuf::Message& req,
-      std::vector<std::unique_ptr<RpcSidecar>>&& sidecars);
+                         std::vector<std::unique_ptr<RpcSidecar>> sidecars,
+                         std::vector<int> outbound_fds);
 
   // Assign the call ID for this call. This is called from the reactor
   // thread once a connection has been assigned. Must only be called once.
@@ -104,6 +106,11 @@ class OutboundCall {
   // Serialize the call for the wire. Requires that SetRequestPayload()
   // is called first. This is called from the Reactor thread.
   void SerializeTo(TransferPayload* slices);
+
+  // Take the list of file descriptors to be sent with this call.
+  std::vector<int> TakeOutboundFds() {
+    return std::move(outbound_fds_);
+  }
 
   // Mark in the call that cancellation has been requested. If the call hasn't yet
   // started sending or has finished sending the RPC request but is waiting for a
@@ -183,6 +190,10 @@ class OutboundCall {
   bool ShouldInjectCancellation() const {
     return FLAGS_rpc_inject_cancellation_state != -1 &&
         FLAGS_rpc_inject_cancellation_state == state();
+  }
+
+  bool has_outbound_fds() const {
+    return !outbound_fds_.empty();
   }
 
  private:
@@ -272,6 +283,9 @@ class OutboundCall {
   // Total size in bytes of all sidecars in 'sidecars_'. Set in SetRequestPayload().
   // This cannot exceed TransferLimits::kMaxTotalSidecarBytes.
   int32_t sidecar_byte_size_ = -1;
+
+  // All file descriptors to be sent with this call.
+  std::vector<int> outbound_fds_;
 
   // True if cancellation was requested on this call.
   bool cancellation_requested_;

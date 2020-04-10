@@ -16,18 +16,29 @@
 // under the License.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <initializer_list>
+#include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
-#include <ostream>
+#include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
+#include <linux/memfd.h>
+#include <sched.h>
+#include <stdint.h>
+#include <sys/mman.h>
+#include <syscall.h>
+#include <unistd.h>
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -35,9 +46,20 @@
 #include <gtest/gtest.h>
 
 #include "kudu/gutil/atomicops.h"
+#include "kudu/gutil/macros.h"
+#include "kudu/gutil/map-util.h"
 #include "kudu/gutil/ref_counted.h"
+#include "kudu/gutil/stringprintf.h"
+#include "kudu/gutil/strings/join.h"
+#include "kudu/gutil/strings/numbers.h"
+#include "kudu/gutil/strings/split.h"
+#include "kudu/gutil/strings/stringpiece.h"
+#include "kudu/gutil/strings/strip.h"
+#include "kudu/gutil/strings/substitute.h"
+#include "kudu/gutil/strings/util.h"
 #include "kudu/rpc/messenger.h"
 #include "kudu/rpc/proxy.h"
+#include "kudu/rpc/reactor.h"
 #include "kudu/rpc/rpc-test-base.h"
 #include "kudu/rpc/rpc_controller.h"
 #include "kudu/rpc/rpc_header.pb.h"
@@ -49,30 +71,64 @@
 #include "kudu/rpc/user_credentials.h"
 #include "kudu/util/countdown_latch.h"
 #include "kudu/util/env.h"
+#include "kudu/util/faststring.h"
+#include "kudu/util/fd.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/pb_util.h"
 #include "kudu/util/random.h"
+#include "kudu/util/slice.h"
 #include "kudu/util/status.h"
+#include "kudu/util/stopwatch.h"
 #include "kudu/util/subprocess.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
+#include "kudu/util/thread.h"
 #include "kudu/util/thread_restrictions.h"
 #include "kudu/util/user.h"
 
 DEFINE_bool(is_panic_test_child, false, "Used by TestRpcPanic");
 DECLARE_bool(socket_inject_short_recvs);
 
+DEFINE_string(benchmark_setup_pattern, "*", "Which tests to run for the data transfer benchmark");
+DEFINE_string(benchmark_method_pattern, "*", "Which methods to run for the data transfer benchmark");
+DEFINE_int64(benchmark_total_mb, 1024, "how many MB to benchmark");
+
+using base::subtle::NoBarrier_Load;
 using kudu::pb_util::SecureDebugString;
+using std::array;
+using std::cout;
+using std::endl;
+using std::map;
+using std::pair;
+using std::set;
 using std::shared_ptr;
 using std::string;
 using std::unique_ptr;
 using std::vector;
-using base::subtle::NoBarrier_Load;
 
 namespace kudu {
 namespace rpc {
+
+class ScopedSetCpuAffinity {
+ public:
+  ScopedSetCpuAffinity(int tid, int target_cpu)
+      : tid_(tid) {
+    CHECK_ERR(sched_getaffinity(tid_, sizeof(orig_cpus_), &orig_cpus_));
+    cpu_set_t new_cpus;
+    CPU_ZERO(&new_cpus);
+    CPU_SET(target_cpu, &new_cpus);
+    CHECK_ERR(sched_setaffinity(tid_, sizeof(new_cpus), &new_cpus));
+  }
+  ~ScopedSetCpuAffinity() {
+    CHECK_ERR(sched_setaffinity(tid_, sizeof(orig_cpus_), &orig_cpus_));
+  }
+private:
+  const int tid_;
+  cpu_set_t orig_cpus_;
+  DISALLOW_COPY_AND_ASSIGN(ScopedSetCpuAffinity);
+};
 
 class RpcStubTest : public RpcTestBase {
  public:
@@ -740,6 +796,339 @@ TEST_F(RpcStubTest, DontTimeOutWhenReactorIsBlocked) {
   req.set_sleep_micros(800 * 1000);
   controller.set_timeout(MonoDelta::FromMilliseconds(1200));
   ASSERT_OK(p.Sleep(req, &resp, &controller));
+}
+
+class RpcStubTestUnixSocket : public RpcStubTest {
+ public:
+  void SetUp() override {
+    n_server_reactor_threads_ = 1;
+    CHECK_OK(server_addr_.ParseUnixDomainPath(strings::Substitute("@test-$0", getpid())));
+    RpcStubTest::SetUp();
+
+    CHECK(server_addr_.is_unix());
+  }
+};
+
+class DataTransferMethod {
+ public:
+  virtual ~DataTransferMethod() {}
+  virtual void SetupRequest(RpcController* rpc,
+                            SendBackDataRequestPB* req) = 0;
+  virtual const uint8_t* ResponseData(RpcController* rpc) = 0;
+  virtual string ToString() const = 0;
+};
+
+class FdBasedMethod : public DataTransferMethod {
+ public:
+  FdBasedMethod(int num_bytes,
+                SendBackDataRequestPB::Method method,
+                bool client_reuse,
+                bool server_reuse,
+                bool non_temporal)
+      : num_bytes_(num_bytes),
+        method_(method),
+        client_reuse_(client_reuse),
+        server_reuse_(server_reuse),
+        non_temporal_(non_temporal) {
+  }
+
+  void SetupRequest(RpcController* rpc,
+                    SendBackDataRequestPB* req) override {
+    if (!client_reuse_) {
+      fd_.Close();
+      Unmap();
+    }
+    if (fd_.get() == -1) {
+      int fd_num = syscall(__NR_memfd_create, "test", MFD_CLOEXEC);
+      PCHECK(fd_num > 0);
+
+      fd_ = FileDescriptor(fd_num);
+    }
+    int idx;
+    ASSERT_OK(rpc->SendFileDescriptor(fd_, &idx));
+    req->set_method(method_);
+    req->set_reuse_mmaps(server_reuse_);
+    req->set_non_temporal(non_temporal_);
+  }
+
+  const uint8_t* ResponseData(RpcController*) override {
+    if (!map_) {
+      map_ = reinterpret_cast<uint8_t*>(mmap(
+          nullptr, num_bytes_, PROT_READ | PROT_WRITE,
+          MAP_SHARED | MAP_POPULATE, fd_.get(), 0));
+      PCHECK(map_ != MAP_FAILED);
+    }
+    return map_;
+  }
+  string ToString() const override {
+    const char* method_str;
+    switch (method_) {
+      case SendBackDataRequestPB::WRITE_TO_FILE_DESCRIPTOR:
+        method_str = "s-write";
+        break;
+      case SendBackDataRequestPB::MMAP_FILE_DESCRIPTOR:
+        method_str = "s-mmap";
+        break;
+      default:
+        LOG(FATAL);
+    }
+    vector<string> flags { method_str };
+    if (client_reuse_) flags.emplace_back("c-reuse");
+    if (server_reuse_) flags.emplace_back("s-reuse");
+    if (non_temporal_) flags.emplace_back("nt");
+
+    return strings::Substitute("fd($0)", JoinStrings(flags, ","));
+  }
+
+  ~FdBasedMethod() {
+    Unmap();
+  }
+ private:
+  void Unmap() {
+    if (map_) {
+      CHECK_ERR(munmap(map_, num_bytes_));
+      map_ = nullptr;
+    }
+  }
+  const int num_bytes_;
+  const SendBackDataRequestPB::Method method_;
+  const bool client_reuse_;
+  const bool server_reuse_;
+  const bool non_temporal_;
+  FileDescriptor fd_;
+  uint8_t* map_ = nullptr;
+};
+
+class SidecarBasedMethod : public DataTransferMethod {
+ public:
+  explicit SidecarBasedMethod(bool non_temporal)
+      : non_temporal_(non_temporal) {
+  }
+  void SetupRequest(RpcController* rpc,
+                    SendBackDataRequestPB* req) override {
+    req->set_method(SendBackDataRequestPB::SEND_BACK_SIDECAR);
+    req->set_non_temporal(non_temporal_);
+  }
+
+  const uint8_t* ResponseData(RpcController* rpc) override {
+    Slice sidecar;
+    CHECK_OK(rpc->GetInboundSidecar(0, &sidecar));
+    return sidecar.data();
+  }
+  string ToString() const override {
+    string ret = "sidecar";
+    if (non_temporal_) {
+      ret += ",nt";
+    }
+    return ret;
+  }
+ private:
+  const bool non_temporal_;
+};
+
+// Parse the contents of /proc/cpuinfo to determine the NUMA topology
+// of the current system. Returns a map of CPU names to CPU identifiers.
+// The names here are "S<socket>C<core>T<thread>" with the socket, core, and
+// thread numbers being zero-indexed.
+map<string, int> ParseCpuList() {
+  map<string, int> ret;
+
+  faststring buf;
+  CHECK_OK(ReadFileToString(Env::Default(), "/proc/cpuinfo", &buf));
+  StringPiece buf_sp(reinterpret_cast<const char*>(buf.data()), buf.size());
+  vector<StringPiece> stanzas = strings::Split(buf_sp, "\n\n",
+                                               strings::SkipWhitespace());
+  map<string, int> thread_counts;
+  for (const auto& stanza : stanzas) {
+    int phys_id = -1;
+    int core_id = -1;
+    int processor = -1;
+    for (const auto& line : strings::Split(stanza, "\n")) {
+      pair<StringPiece, string> kv = strings::Split(line, ": ");
+      StripWhiteSpace(&kv.first);
+      StripWhiteSpace(&kv.second);
+      if (kv.first == "physical id") {
+        CHECK(SimpleAtoi(kv.second, &phys_id));
+      } else if (kv.first == "core id") {
+        CHECK(SimpleAtoi(kv.second, &core_id));
+      } else if (kv.first == "processor") {
+        CHECK(SimpleAtoi(kv.second, &processor));
+      }
+    }
+    CHECK_NE(phys_id, -1);
+    CHECK_NE(core_id, -1);
+    CHECK_NE(processor, -1);
+    string core = strings::Substitute("S$0C$1", phys_id, core_id);
+    string thread = strings::Substitute("$0T$1", core, thread_counts[core]++);
+    ret[thread] = processor;
+  }
+  return ret;
+}
+
+// Return true if the given data consists fully of the character 'x'.
+bool IsAllXs(const uint8_t* data, size_t len) {
+  bool ok = true;
+  for (int i = 0; i < len; i++) {
+    // NOTE: we don't early-return here -- doing so makes the loop harder
+    // to vectorize since it doesn't have a constant trip count.
+    ok &= data[i] == 'x';
+  }
+  return ok;
+}
+
+// Compute a baseline for how long it takes to perform the same work as our
+// benchmark, but in a local thread that just memsets and verifies it.
+void ComputeSpeedLimit(int bytes_per_call, int total_bytes) {
+  faststring buf;
+  buf.resize(bytes_per_call);
+
+  Stopwatch sw(Stopwatch::ALL_THREADS);
+  sw.start();
+  for (int i = 0; i < total_bytes / bytes_per_call; i++) {
+    memset(buf.data(), 'x', bytes_per_call);
+    base::subtle::MemoryBarrier();
+    CHECK(IsAllXs(buf.data(), bytes_per_call));
+    base::subtle::MemoryBarrier();
+  }
+  sw.stop();
+  double cpu_secs = sw.elapsed().user_cpu_seconds() + sw.elapsed().system_cpu_seconds();
+  cout << StringPrintf("Speed-limit (optimal) performance: %.1f MB/sec",
+                       total_bytes / 1024 / 1024 / cpu_secs) << endl;
+}
+
+TEST_F(RpcStubTestUnixSocket, BenchmarkDataTransfer) {
+  auto cpu_by_name = ParseCpuList();
+/*
+have four threads: client, client reactor, server reactor, server worker
+four levels of possible collocation:
+ - same hyperthread (T)
+ - same core different thread (C)
+ - same socket different core (S)
+ - remote socket (R)
+*/
+
+  map<string, array<string, 3>> setups {
+    { "all-same-core",              { "S0C0T0", "S0C0T0", "S0C0T0" }},
+    { "client-server-cross-core",   { "S0C0T0", "S0C1T0", "S0C1T0" }},
+    { "client-server-cross-socket", { "S0C0T0", "S1C0T0", "S1C0T0" }},
+    { "every-hop-crosses-socket",   { "S1C0T0", "S0C0T0", "S1C0T0" }},
+    { "every-hop-crosses-core",     { "S0C1T0", "S0C2T0", "S0C3T0" }},
+  };
+
+  CalculatorServiceProxy p(client_messenger_, server_addr_, "localhost");
+  constexpr int64_t kBytesPerCall = 2 * 1024 * 1024;
+  const int64_t kTotalBytes = FLAGS_benchmark_total_mb * 1024 * 1024;
+
+  cout << "Legend\n"
+       << "===================\n"
+       << "Methods:\n"
+       << "  fd:      client sends a file descriptor for the server to fill\n"
+       << "  s-write: server writes data the passed fd using write() syscall\n"
+       << "  s-mmap:  server mmaps() the passed fd and writes using memset()\n"
+       << "  s-reuse: server holds on to the mmapped region across calls\n"
+       << "  c-reuse: client holds on to the mmapped region across calls\n"
+       << "  sidecar: server sends back data over unix socket\n"
+       << "  nt:      server uses nontemporal store instructions to write\n"
+       << "\n"
+       << "NOTE: s-reuse without c-reuse isn't very effective since the server\n"
+       << "will detect that it cant actually reuse the mapped buffer, since the\n"
+       << "client provided a new one."
+       << "\n"
+       << "Columns designate which core each thread is bound to:\n"
+       << "  client: the client 'user' thread\n"
+       << "  c-rx:   the client reactor thread\n"
+       << "  s-rx:   the server reactor thread\n"
+       << "  worker: the server RPC worker thread\n"
+       << "\n"
+       << "Core notation:\n"
+       << "  SaCbTc: socket a core b thread c\n"
+       << endl;
+
+  vector<unique_ptr<DataTransferMethod>> methods;
+  for (bool client_reuse : {false, true}) {
+    methods.emplace_back(
+        new FdBasedMethod(kBytesPerCall, SendBackDataRequestPB::WRITE_TO_FILE_DESCRIPTOR,
+                          client_reuse, false, false));
+    for (bool server_reuse : {false, true}) {
+      for (bool non_temporal : { false, true }) {
+        methods.emplace_back(
+            new FdBasedMethod(kBytesPerCall, SendBackDataRequestPB::MMAP_FILE_DESCRIPTOR,
+                              client_reuse, server_reuse, non_temporal));
+      }
+    }
+  }
+  methods.emplace_back(new SidecarBasedMethod(false));
+  methods.emplace_back(new SidecarBasedMethod(true));
+
+  methods.erase(std::remove_if(
+      methods.begin(), methods.end(),
+      [](const unique_ptr<DataTransferMethod>& m) {
+        return !MatchPattern(m->ToString(), FLAGS_benchmark_method_pattern);
+      }), methods.end());
+  CHECK(!methods.empty());
+
+  CHECK_EQ(1, client_messenger_->num_reactors());
+  CHECK_EQ(1, server_messenger_->num_reactors());
+  int client_reactor_pid = client_messenger_->reactors_[0]->pid_for_tests();
+  int server_reactor_pid = server_messenger_->reactors_[0]->pid_for_tests();
+
+  const char* client_cpu = "S0C0T0";
+  ScopedSetCpuAffinity set_client_cpu(0, FindOrDie(cpu_by_name, client_cpu));
+  ComputeSpeedLimit(kBytesPerCall, 1024 * 1024 * 1024);
+
+  cout << StringPrintf(
+      "%30s%7s%7s%7s%7s\t%s",
+      "method", "client", "c-rx", "s-rx", "worker", "MB/sec") << endl;
+  for (const auto& setup_pair : setups) {
+    const auto& setup_name = setup_pair.first;
+    if (!MatchPattern(setup_name, FLAGS_benchmark_setup_pattern)) continue;
+
+    cout << "# " << setup_name << endl;
+    const auto& setup = setup_pair.second;
+    int client_reactor_cpu = FindWithDefault(cpu_by_name, setup[0], -1);
+    int server_reactor_cpu = FindWithDefault(cpu_by_name, setup[1], -1);
+    int server_worker_cpu = FindWithDefault(cpu_by_name, setup[2], -1);
+    if (client_reactor_cpu == -1 ||
+        server_reactor_cpu == -1 ||
+        server_worker_cpu == -1) {
+      LOG(WARNING) << "Local system doesn't have appropriate CPU topology "
+                   << "to execute test scenario " << setup_name;
+      continue;
+    }
+
+
+    vector<unique_ptr<ScopedSetCpuAffinity>> affinities;
+    for (const auto& worker : service_pool_->GetWorkerThreadsForTests()) {
+      affinities.emplace_back(new ScopedSetCpuAffinity(worker->tid(), server_worker_cpu));
+    }
+    ScopedSetCpuAffinity set_client_reactor_cpu(client_reactor_pid, client_reactor_cpu);
+    ScopedSetCpuAffinity set_server_reactor_cpu(server_reactor_pid, server_reactor_cpu);
+
+    for (const auto& method : methods) {
+      Stopwatch sw(Stopwatch::ALL_THREADS);
+      sw.start();
+      for (int i = 0; i < kTotalBytes / kBytesPerCall; i++) {
+        RpcController rpc;
+        SendBackDataRequestPB req;
+        SendBackDataResponsePB resp;
+        req.set_num_bytes(kBytesPerCall);
+
+        method->SetupRequest(&rpc, &req);
+
+        ASSERT_OK(p.SendBackData(req, &resp, &rpc));
+
+        const uint8_t* ret_data = method->ResponseData(&rpc);
+        ASSERT_TRUE(IsAllXs(ret_data, req.num_bytes()));
+      }
+      sw.stop();
+      double cpu_secs = sw.elapsed().user_cpu_seconds() + sw.elapsed().system_cpu_seconds();
+      cout << StringPrintf(
+          "%30s%7s%7s%7s%7s\t%.1f",
+          method->ToString().c_str(),
+          client_cpu, setup[0].c_str(), setup[1].c_str(), setup[2].c_str(),
+          kTotalBytes / 1024 / 1024 / cpu_secs) << endl;
+    }
+  }
 }
 
 } // namespace rpc

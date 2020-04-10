@@ -21,12 +21,16 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "kudu/gutil/port.h"
 #include "kudu/security/openssl_util.h" // IWYU pragma: keep
 #include "kudu/util/net/socket.h"
 #include "kudu/util/status.h"
 
+namespace kudu {
+class FileDescriptor;
+}  // namespace kudu
 struct iovec;
 
 typedef struct ssl_st SSL;
@@ -43,9 +47,11 @@ class TlsSocket : public Socket {
 
   Status Writev(const struct ::iovec *iov,
                 int iov_len,
-                int64_t *nwritten) override WARN_UNUSED_RESULT;
+                int64_t *nwritten,
+                const std::vector<int>& fds) override WARN_UNUSED_RESULT;
 
-  Status Recv(uint8_t *buf, int32_t amt, int32_t *nread) override WARN_UNUSED_RESULT;
+  Status Recv(uint8_t *buf, int32_t amt, int32_t *nread,
+              std::vector<FileDescriptor>* fds) override WARN_UNUSED_RESULT;
 
   Status Close() override WARN_UNUSED_RESULT;
 

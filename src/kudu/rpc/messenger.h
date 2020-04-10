@@ -325,6 +325,7 @@ class Messenger {
   FRIEND_TEST(TestRpc, TestCredentialsPolicy);
   FRIEND_TEST(TestRpc, TestConnectionNetworkPlane);
   FRIEND_TEST(TestRpc, TestReopenOutboundConnections);
+  FRIEND_TEST(RpcStubTestUnixSocket, BenchmarkDataTransfer);
 
   explicit Messenger(const MessengerBuilder &bld);
 

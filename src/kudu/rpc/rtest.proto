@@ -140,6 +140,21 @@ message ExactlyOnceResponsePB {
   required fixed64 current_time_micros = 2;
 }
 
+message SendBackDataRequestPB {
+  enum Method {
+    WRITE_TO_FILE_DESCRIPTOR = 1;
+    MMAP_FILE_DESCRIPTOR = 2;
+    SEND_BACK_SIDECAR = 3;
+  }
+  required Method method = 1;
+  required uint32 num_bytes = 2;
+  optional bool reuse_mmaps = 3;
+  optional bool non_temporal = 4;
+}
+
+message SendBackDataResponsePB {
+}
+
 service CalculatorService {
   option (kudu.rpc.default_authz_method) = "AuthorizeDisallowAlice";
 
@@ -156,4 +171,7 @@ service CalculatorService {
     option (kudu.rpc.track_rpc_result) = true;
   }
   rpc TestInvalidResponse(TestInvalidResponseRequestPB) returns (TestInvalidResponseResponsePB);
+
+  rpc SendBackData(SendBackDataRequestPB)
+      returns (SendBackDataResponsePB);
 }

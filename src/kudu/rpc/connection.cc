@@ -26,6 +26,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <boost/intrusive/detail/list_iterator.hpp>
 #include <boost/intrusive/list.hpp>
@@ -44,6 +45,7 @@
 #include "kudu/rpc/rpc_introspection.pb.h"
 #include "kudu/rpc/transfer.h"
 #include "kudu/util/faststring.h"
+#include "kudu/util/fd.h"
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/net/socket.h"
 #include "kudu/util/slice.h"
@@ -59,6 +61,7 @@ using std::includes;
 using std::set;
 using std::shared_ptr;
 using std::unique_ptr;
+using std::vector;
 using strings::Substitute;
 
 namespace kudu {
@@ -466,6 +469,14 @@ void Connection::QueueOutboundCall(shared_ptr<OutboundCall> call) {
     return;
   }
 
+  if (call->has_outbound_fds() && !remote_.is_unix()) {
+    call->SetFailed(Status::NotSupported(
+        "cannot send file descriptors: RPC connection is not via UNIX domain socket"),
+                    negotiation_complete_ ? Phase::REMOTE_CALL
+                                          : Phase::CONNECTION_NEGOTIATION);
+    return;
+  }
+
   // At this point the call has a serialized request, but no call header, since we haven't
   // yet assigned a call ID.
   DCHECK(!call->call_id_assigned());
@@ -533,11 +544,12 @@ void Connection::QueueOutboundCall(shared_ptr<OutboundCall> call) {
     car->timeout_timer.set(time, 0);
     car->timeout_timer.start();
   }
+  auto fds = call->TakeOutboundFds();
 
   TransferCallbacks *cb = new CallTransferCallbacks(std::move(call), this);
   awaiting_response_[call_id] = car.release();
   QueueOutbound(unique_ptr<OutboundTransfer>(
-      OutboundTransfer::CreateForCallRequest(call_id, tmp_slices, cb)));
+      OutboundTransfer::CreateForCallRequest(call_id, tmp_slices, std::move(fds), cb)));
 }
 
 // Callbacks for sending an RPC call response from the server.
@@ -648,11 +660,12 @@ void Connection::ReadHandler(ev::io &watcher, int revents) {
   last_activity_time_ = reactor_thread_->cur_time();
 
   faststring extra_buf;
+  vector<FileDescriptor> extra_fds;
   while (true) {
     if (!inbound_) {
       inbound_.reset(new InboundTransfer());
     }
-    Status status = inbound_->ReceiveBuffer(socket_.get(), &extra_buf);
+    Status status = inbound_->ReceiveBuffer(socket_.get(), &extra_buf, &extra_fds);
     if (PREDICT_FALSE(!status.ok())) {
       if (status.posix_code() == ESHUTDOWN) {
         VLOG(1) << ToString() << " shut down by remote end.";
@@ -677,8 +690,11 @@ void Connection::ReadHandler(ev::io &watcher, int revents) {
     }
 
     if (extra_buf.size() > 0) {
-      inbound_.reset(new InboundTransfer(std::move(extra_buf)));
+      inbound_.reset(new InboundTransfer(std::move(extra_buf),
+                                         std::move(extra_fds)));
     } else {
+      // We should never have FDs received without data.
+      DCHECK(extra_fds.empty());
       break;
     }
   }
